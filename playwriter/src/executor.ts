@@ -41,6 +41,7 @@ import {
   type SnapshotFormat,
   type SnapshotMode,
   type SnapshotReference,
+  NAVIGATION_RACE_ERROR,
 } from './aria-snapshot.js'
 export type { SnapshotFormat }
 import { getCleanHTML, type GetCleanHTMLOptions } from './clean-html.js'
@@ -490,6 +491,7 @@ const SNAPSHOT_SEARCH_MAX_MATCHES = 10
 const SNAPSHOT_SEARCH_CONTEXT_LINES = 5
 const DEFAULT_SNAPSHOT_MAX_CHARS = 4000
 const MIN_SNAPSHOT_MAX_CHARS = 100
+const SNAPSHOT_NAVIGATION_RETRY_MS = 5000
 
 /**
  * Bound the rendered tree on whole lines, keeping ancestor paths and giving
@@ -500,9 +502,22 @@ export function limitSnapshotOutput({ snapshot, maxChars }: { snapshot: string; 
     return snapshot
   }
 
-  const lines = snapshot.split('\n')
-  const notice = (omitted: number) => `[${omitted} snapshot lines omitted. Use locator or search to narrow the snapshot.]`
-  let remaining = maxChars - notice(lines.length).length
+  const originalLineCount = snapshot.split('\n').length
+  const condensed = condenseSnapshotLines(snapshot.split('\n'))
+  const lines = condensed.lines
+  const dropped = [
+    condensed.disabled ? `${condensed.disabled} disabled` : '',
+    condensed.repeated ? `${condensed.repeated} repeated` : '',
+    condensed.empty ? `${condensed.empty} empty` : '',
+  ].filter(Boolean)
+  const notice = (omitted: number) => {
+    const detail = dropped.length ? ` (${dropped.join(', ')})` : ''
+    return `[${omitted} snapshot lines omitted${detail}. Use locator or search to narrow the snapshot.]`
+  }
+  if (lines.join('\n').length + 1 + notice(originalLineCount).length <= maxChars) {
+    return [...lines, notice(originalLineCount - lines.length)].join('\n')
+  }
+  let remaining = maxChars - notice(originalLineCount).length
   const parents: number[] = []
   const ancestors: Array<{ index: number; indent: number }> = []
   const priority: number[] = []
@@ -548,7 +563,98 @@ export function limitSnapshotOutput({ snapshot, maxChars }: { snapshot: string; 
     include(index)
   }
 
-  return [...lines.filter((_, i) => included.has(i)), notice(lines.length - included.size)].join('\n')
+  return [...lines.filter((_, i) => included.has(i)), notice(originalLineCount - included.size)].join('\n')
+}
+
+const SNAPSHOT_LINE = /^(\s*)- ([^\s"]+)(?: "((?:[^"\\]|\\.)*)")?(.*)$/
+const EMPTY_LEAF_ROLES = new Set(['status', 'alert', 'log', 'labeltext'])
+const EMPTY_CONTAINER_ROLES = new Set(['group', 'generic', 'toolbar', 'tablist', 'tabpanel', 'list', 'region', 'navigation'])
+const MAX_CONDENSED_NAME_CHARS = 120
+const REPEATED_CONTROLS_KEPT = 3
+
+/**
+ * Make room in a snapshot that does not fit its budget. Large web apps spend most of it on toolbars: disabled
+ * buttons, the same per-row button on every row, empty status regions and deep indentation. Only lines without
+ * children are dropped, so every kept control still sits under its real ancestors.
+ */
+export function condenseSnapshotLines(input: string[]): { lines: string[]; disabled: number; repeated: number; empty: number } {
+  const counts = { disabled: 0, repeated: 0, empty: 0 }
+  type Node = { body: string; role: string; name?: string; rest: string; children: Node[] }
+
+  // Parents come from indentation: the nearest line above with a smaller indent.
+  const roots: Node[] = []
+  const stack: Array<{ indent: number; node: Node }> = []
+  for (const line of input) {
+    const body = line.trimStart()
+    const indent = line.length - body.length
+    const match = SNAPSHOT_LINE.exec(body)
+    const node: Node = { body, role: (match?.[2] ?? '').replace(/:$/, ''), name: match?.[3], rest: match?.[4] ?? '', children: [] }
+    while (stack.length && stack.at(-1)!.indent >= indent) {
+      stack.pop()
+    }
+    ;(stack.at(-1)?.node.children ?? roots).push(node)
+    stack.push({ indent, node })
+  }
+
+  const hasRef = (node: Node) => /@\w+/.test(node.rest)
+  const seen = new Map<string, number>()
+  const condense = (nodes: Node[], parent?: Node): Node[] => {
+    return nodes.flatMap((node) => {
+      // A disabled control cannot be used, and neither can its tooltip text.
+      if (/\[disabled\]/.test(node.rest)) {
+        counts.disabled++
+        return []
+      }
+      node.children = condense(node.children, node)
+      if (node.children.length === 0) {
+        const isEmptyRegion = node.name === undefined && EMPTY_LEAF_ROLES.has(node.role) && !hasRef(node)
+        // Text that is only an ellipsis or a separator.
+        const isEmptyText = node.role === 'text' && node.name !== undefined && !/[\p{L}\p{N}]/u.test(node.name)
+        // An icon or label that repeats the name of the control it sits in, or a part of it.
+        const repeatsParent = !!node.name && !hasRef(node) && !!parent?.name?.includes(node.name)
+        // A group left with nothing in it, such as a toolbar section whose buttons are all disabled.
+        const isEmptyContainer = EMPTY_CONTAINER_ROLES.has(node.role) && !hasRef(node)
+        if (isEmptyRegion || isEmptyText || repeatsParent || isEmptyContainer) {
+          counts.empty++
+          return []
+        }
+        if (node.name !== undefined && hasRef(node)) {
+          const key = `${node.role} ${node.name}`
+          const count = (seen.get(key) ?? 0) + 1
+          seen.set(key, count)
+          if (count > REPEATED_CONTROLS_KEPT) {
+            counts.repeated++
+            return []
+          }
+        }
+      }
+      // A wrapper that only repeats the name of its single child adds a line and a level.
+      const [only] = node.children
+      if (node.children.length === 1 && node.name !== undefined && !hasRef(node) && only!.name === node.name) {
+        return [only!]
+      }
+      return [node]
+    })
+  }
+
+  const lines: string[] = []
+  const render = (nodes: Node[], depth: number) => {
+    for (const node of nodes) {
+      let body = node.body
+      if (node.role !== 'text') {
+        if (node.name !== undefined && node.name.length > MAX_CONDENSED_NAME_CHARS) {
+          const head = node.name.slice(0, MAX_CONDENSED_NAME_CHARS).replace(/\\$/, '')
+          body = body.replace(`"${node.name}"`, () => `"${head}…"`)
+        }
+        body = body.replace(/:$/, '') + (node.children.length ? ':' : '')
+      }
+      lines.push('  '.repeat(depth) + body)
+      render(node.children, depth + 1)
+    }
+  }
+  render(condense(roots), 0)
+
+  return { lines, ...counts }
 }
 
 /** Matching snapshot lines with context. Strings match case-insensitively. */
@@ -1596,33 +1702,50 @@ export class PlaywrightExecutor {
           const boundedUrl = maxChars !== undefined && url.length > 512 ? `${url.slice(0, 512)}…` : url
           return `URL: ${boundedUrl}\n${maxChars === undefined ? body : limitSnapshotOutput({ snapshot: body, maxChars })}`
         }
-        const documentGeneration = this.pageDocumentGenerations.get(resolvedPage) || 0
-        const checkDocument = () => {
-          if ((this.pageDocumentGenerations.get(resolvedPage) || 0) !== documentGeneration) {
-            throw new Error('Page navigated while the accessibility snapshot was being captured. Try again.')
+        const navigatedMessage = 'Page navigated while the accessibility snapshot was being captured. Try again.'
+        const capture = async () => {
+          const documentGeneration = this.pageDocumentGenerations.get(resolvedPage) || 0
+          const checkDocument = () => {
+            if ((this.pageDocumentGenerations.get(resolvedPage) || 0) !== documentGeneration) {
+              throw new Error(navigatedMessage)
+            }
+          }
+          const result = await getAriaSnapshot({
+            page: resolvedPage,
+            frame,
+            locator,
+            interactiveOnly,
+            mode,
+            maxDepth,
+            reference: mode && mode !== 'full'
+              ? (reference) => {
+                  checkDocument()
+                  return this.rememberSnapshotReference(resolvedPage, reference)
+                }
+              : undefined,
+          })
+          checkDocument()
+          return result
+        }
+        // A redirect right after goto() swaps the document mid-capture. Take the snapshot of the page that
+        // loads next instead of handing the agent a retry.
+        const retryUntil = Date.now() + SNAPSHOT_NAVIGATION_RETRY_MS
+        let captured: Awaited<ReturnType<typeof capture>>
+        while (true) {
+          try {
+            captured = await capture()
+            break
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            const navigated = message === navigatedMessage || NAVIGATION_RACE_ERROR.test(message)
+            if (!navigated || locator || Date.now() >= retryUntil) {
+              throw error
+            }
+            await sleep(200)
           }
         }
-
-        const {
-          snapshot: rawSnapshot,
-          refs,
-          getSelectorForRef,
-        } = await getAriaSnapshot({
-          page: resolvedPage,
-          frame,
-          locator,
-          interactiveOnly,
-          mode,
-          maxDepth,
-          reference: mode && mode !== 'full'
-            ? (reference) => {
-                checkDocument()
-                return this.rememberSnapshotReference(resolvedPage, reference)
-              }
-            : undefined,
-        })
+        const { snapshot: rawSnapshot, refs, getSelectorForRef } = captured
         const snapshotStr = rawSnapshot.toWellFormed?.() ?? rawSnapshot
-        checkDocument()
 
         const refToLocator = new Map<string, string>()
         for (const entry of refs) {
@@ -2343,6 +2466,13 @@ export class PlaywrightExecutor {
           return '\n\n[HINT: Navigation failed. Check page.url() and the network error before retrying. Do not reset the session or replay a script that may have submitted a form or changed data.]'
         }
         if (isTimeoutError) return ''
+        if (NAVIGATION_RACE_ERROR.test(message)) {
+          return '\n\n[HINT: The page navigated while this ran. Wait for it to load, then run the step again. Do not reset the session.]'
+        }
+        // A script's own error (a TypeError, a denied file path) is not a connection problem: no reset advice.
+        if (!/Protocol error|Target closed|has been closed|WebSocket|Connection closed|Session closed|not connected|ECONNREFUSED|ECONNRESET|socket hang up|Internal error/i.test(message)) {
+          return ''
+        }
         return '\n\n[HINT: If this is an internal Playwright error, page/browser closed, or connection issue, call reset to reconnect.]'
       })()
 

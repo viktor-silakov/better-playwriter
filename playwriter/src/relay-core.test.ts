@@ -1233,6 +1233,44 @@ describe('Relay Core Tests', () => {
     }
   }, 30000)
 
+  it('takes a snapshot while the page is still redirecting', async () => {
+    await ensureConnectedTabForExecute()
+    const sessionId = await createCliSession()
+    const redirect = (to: string) => `<title>moving</title><script>location.replace(${JSON.stringify(to)})</script>`
+    const server = await createSimpleServer({
+      routes: {
+        '/start': redirect('/hop'),
+        '/hop': redirect('/done'),
+        '/done': '<title>done</title><button>Arrived</button>',
+      },
+    })
+
+    try {
+      // The redirects replace the document right after goto() returns: the snapshot must wait for the next one
+      // instead of failing with "Cannot find context with specified id".
+      const result = await executeCli({
+        sessionId,
+        timeout: 30000,
+        code: `
+          const target = context.pages()[0]
+          const seen = []
+          for (let i = 0; i < 6; i++) {
+            await target.goto(${JSON.stringify(server.baseUrl)} + '/start', { waitUntil: 'commit' })
+            await snapshot({ page: target, showDiffSinceLastCall: false })
+            await target.getByRole('button', { name: 'Arrived' }).waitFor()
+            seen.push((await snapshot({ page: target, showDiffSinceLastCall: false })).includes('Arrived'))
+          }
+          await target.goto('about:blank')
+          return seen.join(',')
+        `,
+      })
+      expect(result).toMatchObject({ isError: false, text: expect.stringContaining('true,true,true,true,true,true') })
+    } finally {
+      await server.close()
+      await deleteCliSession(sessionId)
+    }
+  }, 60000)
+
   it('restores the page UI when a screenshot capture fails', async () => {
     await ensureConnectedTabForExecute()
     const sessionId = await createCliSession()

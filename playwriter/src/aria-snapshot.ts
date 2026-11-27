@@ -493,7 +493,13 @@ function limitSnapshotTree(nodes: SnapshotNode[], compact: boolean, depth: numbe
     if (compact && !node.name && !node.baseLocator && !CONTEXT_ROLES.has(node.role) && !SIGNAL_ROLES.has(node.role)) {
       return limitSnapshotTree(node.children, compact, depth)
     }
-    return { ...node, children: depth === 0 ? [] : limitSnapshotTree(node.children, compact, depth - 1) }
+    // Compact drops unnamed wrappers, so offsets that stood for skipped levels would leave children
+    // indented deeper or shallower than their siblings. The tree itself gives the depth.
+    return {
+      ...node,
+      ...(compact && { indentOffset: 0 }),
+      children: depth === 0 ? [] : limitSnapshotTree(node.children, compact, depth - 1),
+    }
   })
 }
 
@@ -906,7 +912,8 @@ export function finalizeSnapshotOutput(
         } else {
           text = buildLocatorLineText({ line, locator })
         }
-        if (hint) text += ` (in ${JSON.stringify(hint)})`
+        // A hint that only repeats the control's own name tells nothing.
+        if (hint && hint !== line.name) text += ` (in ${JSON.stringify(hint)})`
       }
       if (line.hasChildren) {
         text += ':'
@@ -1163,20 +1170,37 @@ function waitForRenderedFrame(): Promise<void> {
   })
 }
 
+/** Errors Chrome returns when the document changes between creating a world and evaluating in it. */
+export const NAVIGATION_RACE_ERROR =
+  /Cannot find context with specified id|Execution context was destroyed|Cannot find default execution context|Inspected target navigated or closed/i
+const SNAPSHOT_WORLD_RETRY_MS = 5000
+
 async function waitForSnapshotWorld(session: ICDPSession, frame: Frame): Promise<number> {
-  const { executionContextId } = await session.send('Page.createIsolatedWorld', {
-    frameId: frame.frameId(),
-    worldName: PLAYWRITER_WORLD_NAME,
-  })
-  const { exceptionDetails } = await session.send('Runtime.evaluate', {
-    expression: `(${waitForRenderedFrame.toString()})()`,
-    contextId: executionContextId,
-    awaitPromise: true,
-    returnByValue: true,
-    silent: true,
-  })
-  if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text)
-  return executionContextId
+  const deadline = Date.now() + SNAPSHOT_WORLD_RETRY_MS
+  // A redirect right after goto() replaces the document under the snapshot. Take the world of the new one.
+  while (true) {
+    try {
+      const { executionContextId } = await session.send('Page.createIsolatedWorld', {
+        frameId: frame.frameId(),
+        worldName: PLAYWRITER_WORLD_NAME,
+      })
+      const { exceptionDetails } = await session.send('Runtime.evaluate', {
+        expression: `(${waitForRenderedFrame.toString()})()`,
+        contextId: executionContextId,
+        awaitPromise: true,
+        returnByValue: true,
+        silent: true,
+      })
+      if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text)
+      return executionContextId
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (!NAVIGATION_RACE_ERROR.test(message) || Date.now() >= deadline) {
+        throw error
+      }
+      await new Promise((resolve) => setTimeout(resolve, 150))
+    }
+  }
 }
 
 /**

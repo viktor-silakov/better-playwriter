@@ -6,6 +6,7 @@ import {
   formatConsoleLogs,
   boundExecuteOutput,
   limitSnapshotOutput,
+  condenseSnapshotLines,
   searchSnapshot,
 } from './executor.js'
 
@@ -30,6 +31,71 @@ describe('limitSnapshotOutput', () => {
     for (const line of out.split('\n').slice(0, -1)) {
       expect(snapshot.split('\n')).toContain(line)
     }
+  })
+})
+
+describe('condenseSnapshotLines', () => {
+  it('drops disabled, repeated and empty leaves and indents by real depth', () => {
+    const rows = Array.from({ length: 5 }, (_, i) => [
+      `        - option "Message ${i}" @e${10 + i * 2}:`,
+      `              - button "Mark as read" @e${11 + i * 2}`,
+    ]).flat()
+    const out = condenseSnapshotLines([
+      '- region "Ribbon":',
+      '    - button "New" @e1',
+      '    - button "Delete" [disabled] @e2',
+      '    - labeltext',
+      '    - button "Archive" [disabled] @e3',
+      '- group "Respond":',
+      '    - button "Reply" [disabled] @e4:',
+      '        - text: "to this message"',
+      '- treeitem "Chat Ada Away" @e5:',
+      '    - generic "Away"',
+      '- status',
+      '- status:',
+      '    - text: "Saved"',
+      '- listbox "Messages":',
+      ...rows,
+      '      - generic "Calendar":',
+      '          - button "Calendar" @e30',
+      '      - text: "…"',
+      `      - button "${'Long name '.repeat(20)}" @e31`,
+    ])
+    expect(out.lines.join('\n')).toMatchInlineSnapshot(`
+      "- region "Ribbon":
+        - button "New" @e1
+      - treeitem "Chat Ada Away" @e5
+      - status:
+        - text: "Saved"
+      - listbox "Messages":
+        - option "Message 0" @e10:
+          - button "Mark as read" @e11
+        - option "Message 1" @e12:
+          - button "Mark as read" @e13
+        - option "Message 2" @e14:
+          - button "Mark as read" @e15
+        - option "Message 3" @e16
+        - option "Message 4" @e18
+        - button "Calendar" @e30
+        - button "Long name Long name Long name Long name Long name Long name Long name Long name Long name Long name Long name Long name …" @e31"
+    `)
+    expect({ disabled: out.disabled, repeated: out.repeated, empty: out.empty }).toMatchInlineSnapshot(`
+      {
+        "disabled": 3,
+        "empty": 5,
+        "repeated": 2,
+      }
+    `)
+  })
+
+  it('is applied only when the snapshot is over its budget', () => {
+    const snapshot = ['- button "Delete" [disabled] @e1', '- status', '- button "Save" @e2'].join('\n')
+    expect(limitSnapshotOutput({ snapshot, maxChars: 4000 })).toBe(snapshot)
+    expect(limitSnapshotOutput({ snapshot: [snapshot, ...Array.from({ length: 30 }, () => '- labeltext')].join('\n'), maxChars: 200 }))
+      .toMatchInlineSnapshot(`
+        "- button "Save" @e2
+        [32 snapshot lines omitted (1 disabled, 31 empty). Use locator or search to narrow the snapshot.]"
+      `)
   })
 })
 
