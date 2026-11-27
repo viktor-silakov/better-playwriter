@@ -531,13 +531,28 @@ export async function describeChildFrames(page: Page): Promise<string> {
  * Bound the rendered tree on whole lines, keeping ancestor paths and giving
  * dialogs and status messages priority over other parts of a large page.
  */
-export function limitSnapshotOutput({ snapshot, maxChars }: { snapshot: string; maxChars: number }): string {
+export function limitSnapshotOutput({
+  snapshot,
+  maxChars,
+  condense = true,
+}: {
+  snapshot: string
+  maxChars: number
+  /** Off for diffs and search results: their lines are not a tree. */
+  condense?: boolean
+}): string {
   if (snapshot.length <= maxChars) {
     return snapshot
   }
 
   const originalLineCount = snapshot.split('\n').length
-  const condensed = condenseSnapshotLines(snapshot.split('\n'))
+  // Condensing reads the @ref notation. Legacy locator lines (role=button[name="Save"i]) carry no ref, so
+  // a control would look like a plain label and could be dropped.
+  const isRefTree = / @e\d+\b/.test(snapshot) && !/^\s*- (?:\[[^\]]*\] )*role=/m.test(snapshot)
+  const condensed =
+    condense && isRefTree
+      ? condenseSnapshotLines(snapshot.split('\n'))
+      : { lines: snapshot.split('\n'), disabled: 0, repeated: 0, empty: 0 }
   const lines = condensed.lines
   const dropped = [
     condensed.disabled ? `${condensed.disabled} disabled` : '',
@@ -1799,11 +1814,20 @@ export class PlaywrightExecutor {
                 return !body || (body.innerText.trim().length === 0 && !body.querySelector('a[href],button,input,select,textarea,[contenteditable]'))
               },
               // A redirect destroyed the document under the check: the next one is still on its way.
-            }).catch(() => !resolvedPage.isClosed())
+            }).catch((error: unknown) => {
+              return NAVIGATION_RACE_ERROR.test(error instanceof Error ? error.message : String(error))
+            })
           }
           let wasBlank = false
+          const blankSince = Date.now()
           while (Date.now() < settleUntil && (await isBlank())) {
             wasBlank = true
+            // An image, a canvas or an empty document stays blank for good. Once nothing has been
+            // fetched for a second, this is the page.
+            const network = getNetworkActivity(resolvedPage)
+            if (Date.now() - blankSince >= 1000 && network.inFlight === 0 && network.quietForMs >= 1000) {
+              break
+            }
             await sleep(200)
           }
           if (wasBlank) {
@@ -1811,10 +1835,13 @@ export class PlaywrightExecutor {
           }
         }
         const frameNotes = !frame && !locator && mode !== undefined ? await describeChildFrames(resolvedPage).catch(() => '') : ''
-        const withPageUrl = (body: string) => {
+        const withPageUrl = (body: string, { condense = false }: { condense?: boolean } = {}) => {
           const url = resolvedPage.url()
           const boundedUrl = maxChars !== undefined && url.length > 512 ? `${url.slice(0, 512)}…` : url
-          const bounded = maxChars === undefined ? body : limitSnapshotOutput({ snapshot: body, maxChars })
+          // The iframe notes are part of the answer, so they come out of the same budget.
+          const budget =
+            maxChars === undefined ? undefined : Math.max(MIN_SNAPSHOT_MAX_CHARS, maxChars - (frameNotes ? frameNotes.length + 1 : 0))
+          const bounded = budget === undefined ? body : limitSnapshotOutput({ snapshot: body, maxChars: budget, condense })
           return `URL: ${boundedUrl}\n${bounded}${frameNotes ? `\n${frameNotes}` : ''}`
         }
         const navigatedMessage = 'Page navigated while the accessibility snapshot was being captured. Try again.'
@@ -1908,7 +1935,7 @@ export class PlaywrightExecutor {
           const body = mode
             ? snapshotStr
             : `${snapshotStr}\n\nuse refToLocator({ ref: 'e3', page: state.page }) to get locators for ref strings.`
-          return withPageUrl(body)
+          return withPageUrl(body, { condense: true })
         }
 
         return withPageUrl(searchSnapshot({ snapshot: snapshotStr, search }))

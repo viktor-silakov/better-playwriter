@@ -137,6 +137,21 @@ describe('condenseSnapshotLines', () => {
     expect(out.repeated).toBe(18)
   })
 
+  it('leaves diffs and legacy locator lines alone', () => {
+    const filler = Array.from({ length: 30 }, (_, i) => `  - button "Item ${i}" @e${i + 10}`)
+    const diff = ['- main "Inbox":', '-  - button "Delete" [disabled] @e1', '+  - button "Delete" @e1', '   - status', ...filler].join('\n')
+    const bounded = limitSnapshotOutput({ snapshot: diff, maxChars: 300, condense: false })
+    expect(bounded).toContain('-  - button "Delete" [disabled] @e1')
+    expect(bounded).toContain('   - status')
+    expect(bounded).not.toContain('disabled,')
+
+    // Without @refs a control line looks like a label. It must survive under a parent that shares its name.
+    const legacy = ['- generic "Save":', '  - role=button[name="Save"i]', '  - [disabled] role=button[name="Undo"i]', ...filler.map((line) => line.replace(/ @e\d+/, ''))].join('\n')
+    const legacyBounded = limitSnapshotOutput({ snapshot: legacy, maxChars: 300 })
+    expect(legacyBounded).toContain('  - role=button[name="Save"i]')
+    expect(legacyBounded).toContain('  - [disabled] role=button[name="Undo"i]')
+  })
+
   it('is applied only when the snapshot is over its budget', () => {
     const snapshot = ['- button "Delete" [disabled] @e1', '- status', '- button "Save" @e2'].join('\n')
     expect(limitSnapshotOutput({ snapshot, maxChars: 4000 })).toBe(snapshot)
