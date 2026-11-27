@@ -65,10 +65,10 @@ const pageLogs = await getLatestLogs({ page: state.page, count: 100 })
 const hydrationErrors = await getLatestLogs({ page: state.page, search: /hydration|pageerror|React/i })
 ```
 
-**waitForPageLoad** - smart load detection that ignores analytics/ads:
+**waitForPageLoad** - waits until the document is complete and the page has stopped fetching and changing for `quietMs` (500), at most 5 seconds past complete. Ignores analytics and ads:
 
 ```js
-await waitForPageLoad({ page: state.page, timeout?, pollInterval?, minWait? })
+await waitForPageLoad({ page: state.page, timeout?, pollInterval?, minWait?, quietMs? })
 // Returns: { success, readyState, pendingRequests, waitTimeMs, timedOut }
 ```
 

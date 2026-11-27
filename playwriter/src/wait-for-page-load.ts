@@ -47,7 +47,15 @@ export interface WaitForPageLoadOptions {
   timeout?: number
   pollInterval?: number
   minWait?: number
+  /**
+   * After the document is complete, wait until no request has finished for this long. A single-page app
+   * fires `load` on an empty shell and fetches its content afterwards. Default 500, 0 turns it off.
+   */
+  quietMs?: number
 }
+
+/** A page that never goes quiet (a heartbeat every 200 ms) counts as loaded after this long. */
+const MAX_QUIET_WAIT_MS = 5000
 
 export interface WaitForPageLoadResult {
   success: boolean
@@ -58,14 +66,45 @@ export interface WaitForPageLoadResult {
 }
 
 export async function waitForPageLoad(options: WaitForPageLoadOptions): Promise<WaitForPageLoadResult> {
-  const { page, timeout = 30000, pollInterval = 100, minWait = 500 } = options
+  try {
+    return await waitForPageLoadInner(options)
+  } finally {
+    // The observer only serves this call. Leaving it would run on every DOM change of the page.
+    if ((options.quietMs ?? 500) > 0) {
+      await evaluateIsolated({
+        target: options.page,
+        fn: () => {
+          const scope = globalThis as any
+          scope.__playwriterDomWatch?.observer?.disconnect()
+          delete scope.__playwriterDomWatch
+        },
+      }).catch(() => {})
+    }
+  }
+}
+
+async function waitForPageLoadInner(options: WaitForPageLoadOptions): Promise<WaitForPageLoadResult> {
+  const { page, timeout = 30000, pollInterval = 100, minWait = 500, quietMs = 500 } = options
 
   const startTime = Date.now()
   let timedOut = false
   let lastReadyState = ''
   let lastPendingRequests: string[] = []
 
+  let completeSince: number | undefined
   const checkPageReady = async (): Promise<{ ready: boolean; readyState: string; pendingRequests: string[] }> => {
+    const result = await checkPageState()
+    if (!result.ready || quietMs <= 0) {
+      return result
+    }
+    completeSince ??= Date.now()
+    if (result.quietForMs >= quietMs || Date.now() - completeSince >= MAX_QUIET_WAIT_MS) {
+      return result
+    }
+    return { ...result, ready: false, pendingRequests: ['requests finished in the last moments: the page is still fetching'] }
+  }
+
+  const checkPageState = async (): Promise<{ ready: boolean; readyState: string; pendingRequests: string[]; quietForMs: number }> => {
     const result = await evaluateIsolated({
       target: page,
       fn: ({
@@ -73,24 +112,51 @@ export async function waitForPageLoad(options: WaitForPageLoadOptions): Promise<
         filteredExtensions,
         stuckThreshold,
         slowResourceThreshold,
+        watchDom,
       }): {
         ready: boolean
         readyState: string
         pendingRequests: string[]
+        quietForMs: number
       } => {
         const doc = globalThis.document as { readyState: string }
         const readyState = doc.readyState
 
         if (readyState !== 'complete') {
-          return { ready: false, readyState, pendingRequests: [`document.readyState: ${readyState}`] }
+          return { ready: false, readyState, pendingRequests: [`document.readyState: ${readyState}`], quietForMs: 0 }
         }
 
         const resources = (performance as any).getEntriesByType('resource') as Array<{
           name: string
           startTime: number
           responseEnd: number
+          initiatorType?: string
         }>
         const now = (performance as any).now() as number
+
+        // Time since the last request that matters finished. Beacons and trackers do not show content.
+        const lastFinished = resources.reduce((latest, r) => {
+          const url = r.name.toLowerCase()
+          const ignored =
+            r.responseEnd <= 0 ||
+            r.initiatorType === 'beacon' ||
+            r.initiatorType === 'ping' ||
+            filteredDomains.some((domain) => url.includes(domain))
+          return ignored ? latest : Math.max(latest, r.responseEnd)
+        }, 0)
+        // Chrome stops recording resources once its buffer is full (250 entries, less than a mail app loads),
+        // so the content arriving in the DOM is the second sign that the page is still building itself.
+        const scope = globalThis as any
+        if (watchDom && !scope.__playwriterDomWatch) {
+          const watch = { last: now, observer: undefined as any }
+          watch.observer = new scope.MutationObserver(() => {
+            watch.last = (performance as any).now()
+          })
+          watch.observer.observe(globalThis.document, { subtree: true, childList: true, characterData: true })
+          scope.__playwriterDomWatch = watch
+        }
+        const domQuietForMs = scope.__playwriterDomWatch ? now - scope.__playwriterDomWatch.last : Infinity
+        const quietForMs = Math.min(now - lastFinished, domQuietForMs)
 
         const pendingRequests = resources
           .filter((r) => {
@@ -125,6 +191,7 @@ export async function waitForPageLoad(options: WaitForPageLoadOptions): Promise<
           ready: pendingRequests.length === 0,
           readyState,
           pendingRequests,
+          quietForMs,
         }
       },
       arg: {
@@ -132,6 +199,7 @@ export async function waitForPageLoad(options: WaitForPageLoadOptions): Promise<
         filteredExtensions: FILTERED_EXTENSIONS,
         stuckThreshold: 10000,
         slowResourceThreshold: 3000,
+        watchDom: quietMs > 0,
       },
     })
 
@@ -175,14 +243,19 @@ export async function waitForPageLoad(options: WaitForPageLoadOptions): Promise<
         }
       }
     } catch (e) {
-      console.error('[waitForPageLoad] page.evaluate failed:', e)
-      return {
-        success: false,
-        readyState: 'error',
-        pendingRequests: ['page.evaluate failed - page may have closed or navigated'],
-        waitTimeMs: Date.now() - startTime,
-        timedOut: false,
+      if (page.isClosed()) {
+        return {
+          success: false,
+          readyState: 'error',
+          pendingRequests: ['page.evaluate failed - the page closed'],
+          waitTimeMs: Date.now() - startTime,
+          timedOut: false,
+        }
       }
+      // A redirect replaced the document under the check. The page it leads to is the one to wait for.
+      completeSince = undefined
+      lastReadyState = 'loading'
+      lastPendingRequests = ['the page navigated during the wait']
     }
 
     await sleep(pollInterval)

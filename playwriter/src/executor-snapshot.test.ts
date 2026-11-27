@@ -102,6 +102,59 @@ describe('agent snapshot views', () => {
     expect(domEvents).toBeLessThan(2000)
   })
 
+  it('waits for a single-page app to stop fetching before calling the page loaded', async () => {
+    const fetching = (script: string) => `<title>App</title><div id="root"></div><script>${script}</script>`
+    const server = await createSimpleServer({
+      routes: {
+        '/data': 'ok',
+        // The shell fires load at once, then fetches for about a second before it shows anything.
+        '/app': fetching(`
+          let left = 7
+          const next = () => fetch('/data?' + left).then(() => {
+            if (--left > 0) return setTimeout(next, 150)
+            document.querySelector('#root').innerHTML = '<button>Loaded</button>'
+          })
+          next()
+        `),
+        '/heartbeat': fetching(`setInterval(() => fetch('/data?' + Date.now()), 100)`),
+        // A sign-in hop: the first document is complete and quiet, then leaves for the real app.
+        '/hop': '<title>Hop</title><script>setTimeout(() => location.replace("/app"), 300)</script>',
+      },
+    })
+    try {
+      const result = await executor.execute(`
+        const appPage = await context.newPage()
+        const loadedButtons = () => appPage.getByRole('button', { name: 'Loaded' }).count()
+        await appPage.goto(${JSON.stringify(server.baseUrl)} + '/app')
+        const shell = await waitForPageLoad({ page: appPage, quietMs: 0 })
+        const shellButtons = await loadedButtons()
+        await appPage.goto(${JSON.stringify(server.baseUrl)} + '/app')
+        const app = await waitForPageLoad({ page: appPage })
+        const appButtons = await loadedButtons()
+        await appPage.goto(${JSON.stringify(server.baseUrl)} + '/hop')
+        const hop = await waitForPageLoad({ page: appPage })
+        const hopButtons = await loadedButtons()
+        await appPage.goto(${JSON.stringify(server.baseUrl)} + '/heartbeat')
+        const heartbeat = await waitForPageLoad({ page: appPage, timeout: 20000 })
+        await appPage.close()
+        return JSON.stringify({ shell, shellButtons, app, appButtons, hop, hopButtons, heartbeat })
+      `, { timeout: 40000 })
+      expect(result.isError).toBe(false)
+      const { shell, shellButtons, app, appButtons, hop, hopButtons, heartbeat } = JSON.parse(result.text.replace('[return value] ', ''))
+      // Without the quiet wait the page counts as loaded while it is still empty.
+      expect({ success: shell.success, shellButtons }).toEqual({ success: true, shellButtons: 0 })
+      expect({ success: app.success, appButtons }).toEqual({ success: true, appButtons: 1 })
+      // A redirect in the middle of the wait leads to the page that counts.
+      expect({ success: hop.success, hopButtons }).toEqual({ success: true, hopButtons: 1 })
+      // A page that never stops fetching is still reported as loaded, after a bounded wait.
+      expect(heartbeat).toMatchObject({ success: true, timedOut: false })
+      expect(heartbeat.waitTimeMs).toBeGreaterThan(4000)
+      expect(heartbeat.waitTimeMs).toBeLessThan(9000)
+    } finally {
+      await server.close()
+    }
+  }, 60000)
+
   it('names visible iframes that a page snapshot does not include', async () => {
     const server = await createSimpleServer({
       routes: {
