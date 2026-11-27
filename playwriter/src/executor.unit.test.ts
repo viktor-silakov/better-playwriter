@@ -88,6 +88,35 @@ describe('condenseSnapshotLines', () => {
     `)
   })
 
+  it('keeps three cells of a date grid and drops row names made of their cell names', () => {
+    const week = (start: number) => {
+      const days = Array.from({ length: 7 }, (_, i) => `${start + i}, May, 2030`)
+      return [`  - row "${days.join(' ')}":`, ...days.map((day, i) => `    - button "${day}" @e${start + i}`)]
+    }
+    const out = condenseSnapshotLines([
+      '- navigation "Date picker":',
+      '  - row "Sunday Monday Tuesday"',
+      ...week(1),
+      ...week(8),
+      ...week(15),
+      '- main "Agenda":',
+      '  - button "Review, 2:00 PM, May 4, 2030" @e40',
+      '  - button "Planning, 3:00 PM, May 5, 2030" @e41',
+    ])
+    expect(out.lines.join('\n')).toMatchInlineSnapshot(`
+      "- navigation "Date picker":
+        - row "Sunday Monday Tuesday"
+        - row:
+          - button "1, May, 2030" @e1
+          - button "2, May, 2030" @e2
+          - button "3, May, 2030" @e3
+      - main "Agenda":
+        - button "Review, 2:00 PM, May 4, 2030" @e40
+        - button "Planning, 3:00 PM, May 5, 2030" @e41"
+    `)
+    expect(out.repeated).toBe(18)
+  })
+
   it('is applied only when the snapshot is over its budget', () => {
     const snapshot = ['- button "Delete" [disabled] @e1', '- status', '- button "Save" @e2'].join('\n')
     expect(limitSnapshotOutput({ snapshot, maxChars: 4000 })).toBe(snapshot)

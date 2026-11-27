@@ -493,12 +493,21 @@ function limitSnapshotTree(nodes: SnapshotNode[], compact: boolean, depth: numbe
     if (compact && !node.name && !node.baseLocator && !CONTEXT_ROLES.has(node.role) && !SIGNAL_ROLES.has(node.role)) {
       return limitSnapshotTree(node.children, compact, depth)
     }
+    const children = depth === 0 ? [] : limitSnapshotTree(node.children, compact, depth - 1)
+    if (compact && node.name && !node.ref) {
+      // A cell inside a cell inside a cell, all with one name: keep the innermost, which may be the control.
+      const [only] = children
+      if (children.length === 1 && only!.name === node.name) {
+        return only!
+      }
+    }
     // Compact drops unnamed wrappers, so offsets that stood for skipped levels would leave children
     // indented deeper or shallower than their siblings. The tree itself gives the depth.
     return {
       ...node,
       ...(compact && { indentOffset: 0 }),
-      children: depth === 0 ? [] : limitSnapshotTree(node.children, compact, depth - 1),
+      // A leaf that only repeats the name of its parent, such as the icon of a button.
+      children: compact ? children.filter((child) => child.ref || child.children.length > 0 || child.name !== node.name) : children,
     }
   })
 }

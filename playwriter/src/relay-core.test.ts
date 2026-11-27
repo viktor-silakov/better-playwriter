@@ -1814,6 +1814,56 @@ describe('Relay Core Tests', () => {
     await page.close()
   }, 60000)
 
+  it('reads the main region of a web app with getPageMarkdown instead of its toolbars', async () => {
+    await ensureConnectedTabForExecute()
+    const sessionId = await createCliSession()
+    const toolbar = Array.from({ length: 30 }, (_, i) => `<button title="Toolbar tip ${i}">Tool ${i}</button>`).join('')
+    const message = Array.from({ length: 12 }, (_, i) => `<div>Line ${i} of the open message.</div>`).join('')
+    // Two paragraphs just under Readability's 500 character minimum: it retries and rewrites innerHTML,
+    // which a page with Trusted Types refuses.
+    const paragraph = (label: string) => `<p>${`${label} of a short article, with real sentences. `.repeat(8).slice(0, 245)}</p>`
+    const article = paragraph('Paragraph 7') + paragraph('Paragraph 8')
+    const server = await createSimpleServer({
+      routes: {
+        '/trusted': `<meta http-equiv="Content-Security-Policy" content="require-trusted-types-for 'script'"><title>Guarded</title><article>${article}</article>`,
+      },
+    })
+
+    try {
+      const result = await executeCli({
+        sessionId,
+        timeout: 20000,
+        code: `
+          const appPage = await context.newPage()
+          try {
+            await appPage.setContent(${JSON.stringify(`<title>Inbox</title><div role="toolbar">${toolbar}</div><div role="main"><h2>Quarterly numbers</h2>${message}</div>`)})
+            const withMessage = await getPageMarkdown({ page: appPage, showDiffSinceLastCall: false })
+            await appPage.setContent(${JSON.stringify(`<title>Inbox</title><div role="toolbar">${toolbar}</div><div role="main">Nothing is selected</div>`)})
+            const empty = await getPageMarkdown({ page: appPage, showDiffSinceLastCall: false })
+            // A readable page that enforces Trusted Types: Readability cannot rewrite its clone.
+            await appPage.goto(${JSON.stringify(server.baseUrl)} + '/trusted')
+            const trusted = await getPageMarkdown({ page: appPage, showDiffSinceLastCall: false })
+            return JSON.stringify({ withMessage, empty, trusted })
+          } finally {
+            await appPage.close()
+          }
+        `,
+      })
+      expect(result.isError).toBe(false)
+      const { withMessage, empty, trusted } = JSON.parse(result.text.replace('[return value] ', '')) as { withMessage: string; empty: string; trusted: string }
+      expect(withMessage).toContain('Quarterly numbers')
+      expect(withMessage).toContain('Line 11 of the open message.')
+      expect(withMessage).not.toContain('Tool 3')
+      expect(trusted).toContain('Paragraph 7 of a short article')
+      // A main region with almost nothing in it is not the content: keep the whole page.
+      expect(empty).toContain('Tool 3')
+      expect(empty).toContain('Nothing is selected')
+    } finally {
+      await server.close()
+      await deleteCliSession(sessionId)
+    }
+  }, 40000)
+
   it('should extract page content as markdown with getPageMarkdown', async () => {
     const browserContext = getBrowserContext()
     const serviceWorker = await getExtensionServiceWorker(browserContext)

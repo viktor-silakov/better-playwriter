@@ -569,6 +569,9 @@ export function limitSnapshotOutput({ snapshot, maxChars }: { snapshot: string; 
 const SNAPSHOT_LINE = /^(\s*)- ([^\s"]+)(?: "((?:[^"\\]|\\.)*)")?(.*)$/
 const EMPTY_LEAF_ROLES = new Set(['status', 'alert', 'log', 'labeltext'])
 const EMPTY_CONTAINER_ROLES = new Set(['group', 'generic', 'toolbar', 'tablist', 'tabpanel', 'list', 'region', 'navigation'])
+const UNNAMED_CONTAINER_ROLES = new Set(['row', 'rowgroup', 'grid', 'table', 'listitem'])
+const NUMBERED_GRID_ROLES = new Set(['button', 'gridcell', 'link'])
+const NUMBERED_GRID_MIN = 15
 const MAX_CONDENSED_NAME_CHARS = 120
 const REPEATED_CONTROLS_KEPT = 3
 
@@ -597,6 +600,21 @@ export function condenseSnapshotLines(input: string[]): { lines: string[]; disab
   }
 
   const hasRef = (node: Node) => /@\w+/.test(node.rest)
+  // Day cells of a date grid and long page-number rows differ only in their digits.
+  const numberedKey = (node: Node) => {
+    return node.name !== undefined && /\d/.test(node.name) && NUMBERED_GRID_ROLES.has(node.role) && hasRef(node)
+      ? `${node.role} ${node.name.replace(/\d+/g, '#')}`
+      : undefined
+  }
+  const numbered = new Map<string, number>()
+  const countNumbered = (nodes: Node[]) => {
+    for (const node of nodes) {
+      const key = node.children.length === 0 ? numberedKey(node) : undefined
+      if (key) numbered.set(key, (numbered.get(key) ?? 0) + 1)
+      countNumbered(node.children)
+    }
+  }
+  countNumbered(roots)
   const seen = new Map<string, number>()
   const condense = (nodes: Node[], parent?: Node): Node[] => {
     return nodes.flatMap((node) => {
@@ -604,6 +622,12 @@ export function condenseSnapshotLines(input: string[]): { lines: string[]; disab
       if (/\[disabled\]/.test(node.rest)) {
         counts.disabled++
         return []
+      }
+      // A row named by joining the names of its cells says everything twice.
+      const [first, second] = node.children
+      if (node.name && !hasRef(node) && first?.name && second?.name && node.name.startsWith(first.name) && node.name.includes(second.name)) {
+        node.body = node.body.replace(`"${node.name}"`, () => '').replace(/\s+/g, ' ').replace(' :', ':')
+        node.name = undefined
       }
       node.children = condense(node.children, node)
       if (node.children.length === 0) {
@@ -613,13 +637,15 @@ export function condenseSnapshotLines(input: string[]): { lines: string[]; disab
         // An icon or label that repeats the name of the control it sits in, or a part of it.
         const repeatsParent = !!node.name && !hasRef(node) && !!parent?.name?.includes(node.name)
         // A group left with nothing in it, such as a toolbar section whose buttons are all disabled.
-        const isEmptyContainer = EMPTY_CONTAINER_ROLES.has(node.role) && !hasRef(node)
+        const isEmptyContainer =
+          !hasRef(node) && (EMPTY_CONTAINER_ROLES.has(node.role) || (node.name === undefined && UNNAMED_CONTAINER_ROLES.has(node.role)))
         if (isEmptyRegion || isEmptyText || repeatsParent || isEmptyContainer) {
           counts.empty++
           return []
         }
         if (node.name !== undefined && hasRef(node)) {
-          const key = `${node.role} ${node.name}`
+          const gridKey = numberedKey(node)
+          const key = gridKey && (numbered.get(gridKey) ?? 0) >= NUMBERED_GRID_MIN ? gridKey : `${node.role} ${node.name}`
           const count = (seen.get(key) ?? 0) + 1
           seen.set(key, count)
           if (count > REPEATED_CONTROLS_KEPT) {

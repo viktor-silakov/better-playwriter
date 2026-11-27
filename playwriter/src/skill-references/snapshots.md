@@ -12,7 +12,7 @@ return await snapshot({ page: state.page })
 - `locator` scopes the snapshot to one subtree. Pass a locator and omit `page` if convenient. Use `frame` to inspect an iframe.
 - `search` accepts a case-insensitive string or a regular expression. It matches against the full tree by default. Combine it with a `locator` to search within a known region.
 - `maxDepth` caps the rendered depth. Prefer a locator when you need a control inside a deeply nested page.
-- `maxChars` controls the text budget. The interactive and compact modes default to 4,000 characters. Give an integer of at least 100. A trimmed snapshot reports omitted lines. If the control is missing, narrow the scope or search for it.
+- `maxChars` controls the text budget. The interactive and compact modes default to 4,000 characters. Give an integer of at least 100. A snapshot over the budget first drops disabled, repeated and empty lines, then reports what it omitted. If the control is missing, narrow the scope or search for it.
 
 ```js
 const form = state.page.getByRole('form', { name: 'Lookup' })

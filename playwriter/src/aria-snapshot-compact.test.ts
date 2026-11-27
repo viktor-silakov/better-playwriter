@@ -49,6 +49,32 @@ describe('compact accessibility snapshots', () => {
     }
   })
 
+  it('keeps one line for nested nodes with the same name and aligns siblings', async () => {
+    const page = await context.newPage()
+    try {
+      await page.setContent(`
+        <div role="navigation" aria-label="Apps">
+          <div aria-label="Calendar" role="group"><button aria-label="Calendar"><img alt="Calendar" src="data:,"></button></div>
+          <div><div><button>Mail</button></div></div>
+        </div>
+        <table>
+          <tr><td>Quarterly numbers</td></tr>
+          <tr><td><a href="#">Open report</a></td></tr>
+        </table>
+      `)
+      const { snapshot } = await getAriaSnapshot({ page, mode: 'compact' })
+      expect(snapshot).toMatchInlineSnapshot(`
+        "- navigation "Apps":
+          - role=button[name="Calendar"i]
+          - role=button[name="Mail"i]
+        - layouttablecell "Quarterly numbers"
+        - role=link[name="Open report"i]"
+      `)
+    } finally {
+      await page.close()
+    }
+  })
+
   it('uses refs for original elements and rejects replacements and frame navigations', async () => {
     const page = await context.newPage()
     try {

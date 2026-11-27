@@ -90,38 +90,46 @@ export async function getPageMarkdown(options: GetPageMarkdownOptions): Promise<
         throw new Error('Readability not loaded')
       }
 
+      // A web app has no article. Its main landmark holds the open item (a message, a record), and the
+      // rest of the body is toolbars and menus. Short or missing landmarks fall back to the whole body.
+      const appContent = () => {
+        const squeeze = (text: string) => text.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
+        const main = Array.from(document.querySelectorAll('main, [role="main"]'))
+          .map((element: any) => squeeze(element.innerText || ''))
+          .filter(Boolean)
+          .join('\n\n')
+        const content = main.length >= 200 ? main : squeeze(document.body?.innerText || '')
+        return {
+          content,
+          title: document.title || null,
+          author: null,
+          excerpt: null,
+          siteName: null,
+          lang: document.documentElement?.lang || null,
+          publishedTime: null,
+          wordCount: content.split(/\s+/).filter(Boolean).length,
+          _notReadable: true,
+        }
+      }
+
       // Clone document to avoid modifying the original
       const documentClone = document.cloneNode(true)
 
       // Check if page is probably readable
       if (!readability.isProbablyReaderable(documentClone)) {
-        return {
-          content: document.body?.innerText || '',
-          title: document.title || null,
-          author: null,
-          excerpt: null,
-          siteName: null,
-          lang: document.documentElement?.lang || null,
-          publishedTime: null,
-          wordCount: (document.body?.innerText || '').split(/\s+/).filter(Boolean).length,
-          _notReadable: true,
-        }
+        return appContent()
       }
 
-      const article = new readability.Readability(documentClone).parse()
+      // Pages that enforce Trusted Types (chat and mail apps do) reject Readability's innerHTML writes.
+      let article: any = null
+      try {
+        article = new readability.Readability(documentClone).parse()
+      } catch {
+        return appContent()
+      }
 
       if (!article) {
-        return {
-          content: document.body?.innerText || '',
-          title: document.title || null,
-          author: null,
-          excerpt: null,
-          siteName: null,
-          lang: document.documentElement?.lang || null,
-          publishedTime: null,
-          wordCount: (document.body?.innerText || '').split(/\s+/).filter(Boolean).length,
-          _notReadable: true,
-        }
+        return appContent()
       }
 
       return {
