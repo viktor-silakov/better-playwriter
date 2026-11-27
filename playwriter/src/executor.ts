@@ -494,6 +494,37 @@ const MIN_SNAPSHOT_MAX_CHARS = 100
 const SNAPSHOT_NAVIGATION_RETRY_MS = 5000
 
 /**
+ * A page snapshot stops at the border of an iframe, and embedded apps keep all their content in one
+ * (a calendar inside a chat app). Name the visible ones so the agent knows where to look next.
+ */
+export async function describeChildFrames(page: Page): Promise<string> {
+  const main = page.mainFrame()
+  const notes = await Promise.all(
+    page.frames().map(async (frame, index) => {
+      if (frame === main || frame.parentFrame() !== main || frame.isDetached() || !/^https?:/.test(frame.url())) {
+        return ''
+      }
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const box = await Promise.race([
+        frame.frameElement().then((element) => element.boundingBox()),
+        new Promise<null>((resolve) => {
+          timer = setTimeout(() => resolve(null), 1000)
+        }),
+      ])
+        .catch(() => null)
+        .finally(() => clearTimeout(timer))
+      // Trackers and hidden helper frames are tiny or have no box.
+      if (!box || box.width < 200 || box.height < 100) {
+        return ''
+      }
+      const url = frame.url().split(/[?#]/)[0]!.slice(0, 120)
+      return `[iframe not included: ${url}. Read it with snapshot({ page, frame: page.frames()[${index}] })]`
+    }),
+  )
+  return notes.filter(Boolean).slice(0, 5).join('\n')
+}
+
+/**
  * Bound the rendered tree on whole lines, keeping ancestor paths and giving
  * dialogs and status messages priority over other parts of a large page.
  */
@@ -600,11 +631,14 @@ export function condenseSnapshotLines(input: string[]): { lines: string[]; disab
   }
 
   const hasRef = (node: Node) => /@\w+/.test(node.rest)
-  // Day cells of a date grid and long page-number rows differ only in their digits.
+  // Day cells of a date grid ("1, May, 2030") and page-number rows ("7") differ only in their digits.
+  // One number inside a longer name ("Order 1042") is content, not a grid.
   const numberedKey = (node: Node) => {
-    return node.name !== undefined && /\d/.test(node.name) && NUMBERED_GRID_ROLES.has(node.role) && hasRef(node)
-      ? `${node.role} ${node.name.replace(/\d+/g, '#')}`
-      : undefined
+    if (node.name === undefined || !NUMBERED_GRID_ROLES.has(node.role) || !hasRef(node)) {
+      return undefined
+    }
+    const isDateLike = (node.name.match(/\d+/g) ?? []).length >= 2 || /^\d+$/.test(node.name.trim())
+    return isDateLike ? `${node.role} ${node.name.replace(/\d+/g, '#')}` : undefined
   }
   const numbered = new Map<string, number>()
   const countNumbered = (nodes: Node[]) => {
@@ -1723,10 +1757,12 @@ export class PlaywrightExecutor {
           throw new Error(`snapshot maxChars must be an integer of at least ${MIN_SNAPSHOT_MAX_CHARS}`)
         }
         const resolvedPage = resolveSandboxPage({ helper: 'snapshot', page: targetPage, locator, frame })
+        const frameNotes = !frame && !locator && mode !== undefined ? await describeChildFrames(resolvedPage).catch(() => '') : ''
         const withPageUrl = (body: string) => {
           const url = resolvedPage.url()
           const boundedUrl = maxChars !== undefined && url.length > 512 ? `${url.slice(0, 512)}…` : url
-          return `URL: ${boundedUrl}\n${maxChars === undefined ? body : limitSnapshotOutput({ snapshot: body, maxChars })}`
+          const bounded = maxChars === undefined ? body : limitSnapshotOutput({ snapshot: body, maxChars })
+          return `URL: ${boundedUrl}\n${bounded}${frameNotes ? `\n${frameNotes}` : ''}`
         }
         const navigatedMessage = 'Page navigated while the accessibility snapshot was being captured. Try again.'
         const capture = async () => {

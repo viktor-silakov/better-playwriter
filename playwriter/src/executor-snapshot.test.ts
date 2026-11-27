@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { PlaywrightExecutor } from './executor.js'
+import { createSimpleServer } from './test-utils.js'
 
 describe('agent snapshot views', () => {
   let executor: PlaywrightExecutor
@@ -99,6 +100,38 @@ describe('agent snapshot views', () => {
     // A few events can slip in while Chrome handles the disable right behind the document request
     const domEvents = Number(result.text.match(/domEvents: (\d+)/)?.[1])
     expect(domEvents).toBeLessThan(2000)
+  })
+
+  it('names visible iframes that a page snapshot does not include', async () => {
+    const server = await createSimpleServer({
+      routes: {
+        '/host': '<button>Host action</button><iframe src="/calendar" width="600" height="400"></iframe><iframe src="/pixel" width="1" height="1"></iframe>',
+        '/calendar': '<button>Embedded event</button>',
+        '/pixel': '<p>tracker</p>',
+      },
+    })
+    try {
+      const result = await executor.execute(`
+        const framePage = await context.newPage()
+        await framePage.goto(${JSON.stringify(server.baseUrl)} + '/host')
+        await framePage.frameLocator('iframe').first().getByRole('button').waitFor()
+        const pageSnapshot = await snapshot({ page: framePage })
+        const index = Number(pageSnapshot.match(/page\\.frames\\(\\)\\[(\\d+)\\]/)[1])
+        const frameSnapshot = await snapshot({ page: framePage, frame: framePage.frames()[index] })
+        await framePage.close()
+        return JSON.stringify({ pageSnapshot, frameSnapshot })
+      `)
+      expect(result.isError).toBe(false)
+      const { pageSnapshot, frameSnapshot } = JSON.parse(result.text.replace('[return value] ', '')) as { pageSnapshot: string; frameSnapshot: string }
+      expect(pageSnapshot).toContain('Host action')
+      expect(pageSnapshot).not.toContain('Embedded event')
+      expect(pageSnapshot).toContain(`[iframe not included: ${server.baseUrl}/calendar. Read it with snapshot({ page, frame: page.frames()[`)
+      expect(pageSnapshot).not.toContain('/pixel')
+      expect(frameSnapshot).toContain('Embedded event')
+      expect(frameSnapshot).not.toContain('iframe not included')
+    } finally {
+      await server.close()
+    }
   })
 
   it('emits annotated screenshots only when the viewport changes', async () => {

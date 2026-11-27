@@ -102,6 +102,7 @@ describe('condenseSnapshotLines', () => {
       '- main "Agenda":',
       '  - button "Review, 2:00 PM, May 4, 2030" @e40',
       '  - button "Planning, 3:00 PM, May 5, 2030" @e41',
+      ...Array.from({ length: 16 }, (_, i) => `  - button "Order ${1000 + i}" @e${50 + i}`),
     ])
     expect(out.lines.join('\n')).toMatchInlineSnapshot(`
       "- navigation "Date picker":
@@ -112,7 +113,23 @@ describe('condenseSnapshotLines', () => {
           - button "3, May, 2030" @e3
       - main "Agenda":
         - button "Review, 2:00 PM, May 4, 2030" @e40
-        - button "Planning, 3:00 PM, May 5, 2030" @e41"
+        - button "Planning, 3:00 PM, May 5, 2030" @e41
+        - button "Order 1000" @e50
+        - button "Order 1001" @e51
+        - button "Order 1002" @e52
+        - button "Order 1003" @e53
+        - button "Order 1004" @e54
+        - button "Order 1005" @e55
+        - button "Order 1006" @e56
+        - button "Order 1007" @e57
+        - button "Order 1008" @e58
+        - button "Order 1009" @e59
+        - button "Order 1010" @e60
+        - button "Order 1011" @e61
+        - button "Order 1012" @e62
+        - button "Order 1013" @e63
+        - button "Order 1014" @e64
+        - button "Order 1015" @e65"
     `)
     expect(out.repeated).toBe(18)
   })

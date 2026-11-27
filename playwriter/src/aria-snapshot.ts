@@ -259,6 +259,7 @@ const INTERACTIVE_ROLES = new Set([
 
 const LABEL_ROLES = new Set(['labeltext'])
 const SIGNAL_ROLES = new Set(['alert', 'alertdialog', 'dialog', 'log', 'progressbar', 'status'])
+const EMPTY_SIGNAL_ROLES = new Set(['alert', 'log', 'status'])
 const CONTROL_CONTEXT_ROLES = new Set(['article', 'form', 'group', 'listitem', 'region', 'row', 'section'])
 
 const MAX_LABEL_POSITION_CONCURRENCY = 24
@@ -653,6 +654,11 @@ export function filterInteractiveSnapshotTree(options: {
       return { nodes: [], names: childNames }
     }
     return { nodes: childNodes, names: childNames }
+  }
+
+  // A live region with nothing in it right now. A bare progressbar or dialog still says something.
+  if (isSignal && !includeInteractive && !hasNameToUse && !hasChildren && EMPTY_SIGNAL_ROLES.has(role)) {
+    return { nodes: [], names: childNames }
   }
 
   let baseLocator: string | undefined
