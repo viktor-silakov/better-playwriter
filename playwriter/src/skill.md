@@ -1,10 +1,6 @@
 ## CLI Usage
 
-If `playwriter` is not on PATH, run the local Better Playwriter executable directly:
-
-```bash
-~/Projects/better-playwriter/playwriter/bin.js session new --tab-group docs
-```
+Use `better-playwriter` from an installed package. In a built source checkout, run `node ./playwriter/bin.js` from the repository root. Use only the browser profile and tabs the user authorizes.
 
 ### Session management
 
@@ -12,12 +8,12 @@ Each session runs in an **isolated sandbox** with its own `state` object. Use se
 
 - Keep state separate between different tasks or agents
 - Persist data (pages, variables) across multiple execute calls
-- Avoid interference when multiple agents use playwriter simultaneously
+- Avoid interference when multiple agents use better-playwriter simultaneously
 
 Get a new session ID to use in commands. Always pass a short task-specific `--tab-group` name (see Tab groups):
 
 ```bash
-playwriter session new --tab-group docs
+better-playwriter session new --tab-group docs
 # outputs: 1
 ```
 
@@ -26,7 +22,7 @@ playwriter session new --tab-group docs
 List all active sessions with their state keys:
 
 ```bash
-playwriter session list
+better-playwriter session list
 # ID  State Keys
 # --------------
 # 1   myPage, userData
@@ -36,35 +32,30 @@ playwriter session list
 Reset a session if the browser connection is stale or broken:
 
 ```bash
-playwriter session reset <sessionId>
+better-playwriter session reset <sessionId>
 ```
 
 ### Tab groups
 
-**Always** set a custom group name for every session instead of the defaults (`playwriter` locally, `remote` for remote control). Use the shortest clear **single-word** name with no spaces, describing the task or site: `docs`, `shop`, `test`, `scrape`, `github`. When verifying a local dev server, use the short project name, like `--tab-group kimaki`.
+**Always** set a custom group name for every session instead of the legacy defaults (`playwriter` locally, `remote` for browser sharing). Use a short single-word name such as `docs` or `test`. For a local dev server, use a short project name.
 
 ```bash
-playwriter session new --tab-group docs
-playwriter session new --tab-group scrape --tab-group-color grey
+better-playwriter session new --tab-group docs
+better-playwriter session new --tab-group scrape --tab-group-color grey
 ```
 
-Colors: `grey, blue, red, yellow, green, pink, purple, cyan, orange`; otherwise color is derived from the name. Chrome can collapse or move groups. Dragging a tab between Playwriter groups keeps it connected; dragging it out disconnects it. Local and remote-control extension sessions only.
+Colors: `grey, blue, red, yellow, green, pink, purple, cyan, orange`; otherwise color is derived from the name. Chrome can collapse or move groups. Dragging a tab between Better Playwriter groups keeps it connected; dragging it out disconnects it. Local and remote-control extension sessions only.
 
 ### Patchright
 
-**Always** use `--patchright` every time you drive a production website with the user's credentials or account: x.com, Google, Gmail, Reddit, LinkedIn, Instagram, GitHub, email, shopping, banking, admin dashboards. If the session was created without it, run `session update <id> --patchright` before touching that site. **Never** for localhost, dev servers, tunnels or the user's own sites (the app or website being built in the current project, even in production). It connects with Patchright and moves the mouse and types like a person. Switch an existing session mid-task, even after pages loaded:
+Choose the matching browser implementation when reproducing a test in a controlled environment. Start with `session new --patchright`, or switch with `session update <id> --patchright` (`--patchright false` switches back). Switching clears `state`. Tabs stay open, so look them up again by URL.
 
-```bash
-playwriter session new --tab-group shop --patchright
-playwriter session update <sessionId> --patchright  # --patchright false switches back
-```
+### Node API
 
-Switching reconnects: tabs stay open, `state` is cleared, so get the page again with `context.pages().find(p => p.url().includes('...'))`. `page.evaluate` runs in the main world as usual. Pages can notice code that touches DOM methods or globals they hook; on bot-protected pages pass `true` as fourth argument for an isolated world that sees the DOM but not page globals: `page.evaluate(() => document.title, undefined, undefined, true)`. `page.on('console')` and `page.on('pageerror')` stay silent; use `getLatestLogs`, which turns on CDP Runtime for a few milliseconds to read buffered logs (pages could notice in that moment).
-
-Node programs and TypeScript SDKs use the `playwriter` package as a library. Do not POST `/cli/session/new` yourself. Docs: https://playwriter.dev/docs/sessions#node-api
+Node programs and TypeScript SDKs use the `better-playwriter` package as a library. Use `connectViaExtension()` for SDK sessions.
 
 ```ts
-import { connectViaExtension } from 'playwriter'
+import { connectViaExtension } from 'better-playwriter'
 
 // connection: disconnects and deletes the session at scope end, also on throw. It does NOT close tabs
 await using connection = await connectViaExtension({ tabGroup: 'docs' })
@@ -75,84 +66,51 @@ await page.goto('https://example.com')
 
 **Always** close the tabs your script opens (`await using page` or `page.close()`). A tab you leave open stays in Chrome, so a later process can reuse it via `context.pages()`. Match the tab by its **exact** url (`p.url() === 'https://example.com/app'`), never `startsWith`/`includes`: `context.pages()` also lists tabs other sessions opened for other work. `closeTabsOnEnd: true` makes `close()` also close every tab the session opened.
 
-To share one tab between processes (for example many SDK scripts calling `fetch` inside a signed-in site), keep the holder list inside the tab (`window.__shared`, updated with one atomic `page.evaluate`), and let the last holder call `page.close()`. Full example: https://playwriter.dev/docs/sessions#sharing-one-tab-between-processes
+To share one tab between processes (for example many SDK scripts calling `fetch` inside a signed-in site), keep the holder list inside the tab (`window.__shared`, updated with one atomic `page.evaluate`), and let the last holder call `page.close()`.
 
-With several browsers or profiles connected, pass `selectBrowser: (browsers) => browsers.find((b) => b.email === 'me@work.com')`. Each item has `id` (stable), `browser` (Chrome, Brave, Ghost...), `email`.
+With several browsers or profiles connected, pass `selectBrowser: (browsers) => browsers.find((b) => b.id === selectedBrowserId)`. Each item has `id` (stable), `browser` (Chrome, Brave, Ghost...), `email`.
 
-On macOS, `playwriter browser identify` uses local Accessibility access to identify Chrome profiles and cache their names. Alternatively, set a label in Better Playwriter's extension options. `playwriter browser list` shows names; `playwriter session new --browser <label>` selects one. Duplicate labels require the browser key.
+On macOS, `better-playwriter browser identify` uses local Accessibility access to identify Chrome profiles and cache their names. Alternatively, set a label in Better Playwriter's extension options. `better-playwriter browser list` shows names; `better-playwriter session new --browser <label>` selects one. Duplicate labels require the browser key.
 
-### Remote access (control browser from another machine)
+### Remote access
 
-Playwriter can control a Chrome browser running on a different machine over the internet. The host machine runs `playwriter serve` with a [traforo](https://traforo.dev) tunnel, and the remote machine connects through the tunnel URL.
-
-```bash
-# Host machine (has Chrome + extension)
-npx -y traforo -p 19988 -- playwriter serve --token MY_SECRET_TOKEN
-
-# Remote machine
-export PLAYWRITER_HOST=https://<tunnel-id>-tunnel.traforo.dev
-export PLAYWRITER_TOKEN=MY_SECRET_TOKEN
-playwriter session new --tab-group docs
-playwriter -s 1 -e "state.page = await context.newPage(); await state.page.goto('https://example.com')"
-```
-
-For the full guide (Docker, LAN, MCP config, security), see: https://playwriter.dev/docs/remote-access
+For a relay the user explicitly makes available, connect with `BETTER_PLAYWRITER_HOST` and `BETTER_PLAYWRITER_TOKEN`. Use a trusted transport. Keep relay tokens out of command output, logs, and version control.
 
 ### Direct CDP connection (no extension needed)
 
-Playwriter can connect directly to a Chrome instance via the Chrome DevTools Protocol, bypassing the browser extension entirely. This is useful for:
+Better Playwriter can connect directly to a Chrome instance via the Chrome DevTools Protocol, bypassing the browser extension entirely. This is useful for:
 
 - Chrome running with remote debugging enabled (CI, Docker, headless environments)
-- Cloud browser providers that expose a CDP endpoint (e.g. `wss://xxx.cdp.browser-use.com`)
+- Cloud browser providers that expose a CDP endpoint (e.g. `wss://browser.example.com`)
 - Any service or machine that gives you a `ws://` or `wss://` URL to a Chrome DevTools session
 
 **Prerequisites:** you need a CDP-enabled Chrome. Either:
 
 - Open `chrome://inspect/#remote-debugging` in Chrome
 - Launch Chrome with `--remote-debugging-port=9222`
-- Use `playwriter browser start` (enables debugging automatically)
+- Use `better-playwriter browser start` (enables debugging automatically)
 - Use a cloud browser provider URL (no local Chrome needed)
 
 **CLI usage:**
 
 ```bash
 # Auto-discover local Chrome instances with debugging enabled
-playwriter session new --direct
+better-playwriter session new --direct
 
 # Connect to a specific CDP endpoint (local or cloud browser provider)
-playwriter session new --direct ws://localhost:9222/devtools/browser/...
-playwriter session new --direct wss://xxx.cdp.browser-use.com
+better-playwriter session new --direct ws://localhost:9222/devtools/browser/...
+better-playwriter session new --direct wss://browser.example.com
 
 # Connect to a remote Chrome instance (host:port auto-resolves to ws://)
-playwriter session new --direct 192.168.1.50:9222
+better-playwriter session new --direct 192.168.1.50:9222
 
 # Then use the session normally
-playwriter -s 1 -e "state.page = await context.newPage(); await state.page.goto('https://example.com')"
+better-playwriter -s 1 -e "state.page = await context.newPage(); await state.page.goto('https://example.com')"
 ```
 
-### Remote control (drive another user's browser)
+### Remote control
 
-When a user shares their browser with you, they send a secret **id** (created by the toolbar **Remote control** button). The user needs no playwriter install, only the extension.
-
-**How it works:** the extension opens a secret tunnel. Your CLI dials it with the id and talks CDP as if the browser were local. You see every tab where the user enabled Playwriter and can open new tabs with `context.newPage()` (older extensions reject new tabs; then stay in the shared tab). `context.pages()[0]` is the tab where the user started sharing.
-
-Connect with:
-
-```bash
-playwriter session new --remote <id> --tab-group shop
-# prints a session id; use it normally afterwards, no extra flags needed
-playwriter -s 1 -e "state.page = context.pages()[0]; console.log(await state.page.title())"
-```
-
-Tabs you open join the `--tab-group` group (default `remote`). Always pass a short task name.
-
-Rules for remote-control sessions:
-
-- Other tabs may belong to the user or their local agents. Prefer your own pages: `state.page = context.pages()[0]` for the shared tab, or `await context.newPage()` for new work.
-- The user revokes access anytime with **Stop sharing**, or by closing the tab where sharing started; the id then stops working permanently. If the connection dies, ask the user for a fresh id.
-- Never print, log, or share the id: whoever has it can control the user's browser as them.
-
-**Use cases:** the user is logged into a website and wants you (a remote agent like Devin, a cloud bot, or a CLI agent on another machine) to act in their authenticated session without sharing passwords.
+Browser sharing requires a configured `BETTER_PLAYWRITER_REMOTE_URL` and consent from the person sharing the browser. The remote recipient can control every enabled tab and open new tabs. Treat share links and IDs as passwords. Use **Stop sharing** to revoke access.
 
 ### Headless browser (no extension, no user browser)
 
@@ -160,83 +118,44 @@ Launch a headless Chrome automatically. No extension setup, no user browser invo
 
 ```bash
 # Install Chrome for Testing (first time only, if no Chrome is available)
-playwriter browser install
+better-playwriter browser install
 
 # Launch headless Chrome and create a session
-playwriter session new --browser headless
+better-playwriter session new --browser headless
 
 # Use the session normally
-playwriter -s 1 -e "state.page = await context.newPage(); await state.page.goto('https://example.com')"
-playwriter -s 1 -e "console.log(await snapshot({ page: state.page }))"
+better-playwriter -s 1 -e "state.page = await context.newPage(); await state.page.goto('https://example.com')"
+better-playwriter -s 1 -e "console.log(await snapshot({ page: state.page }))"
 ```
 
-Multiple sessions reuse the same headless Chrome process. A headless session is deleted after 30 minutes with no execute; Chrome exits with the last one. Run `playwriter session delete <id>` when done.
+Multiple sessions reuse the same headless Chrome process. A headless session is deleted after 30 minutes with no execute; Chrome exits with the last one. Run `better-playwriter session delete <id>` when done.
 
-If no Chrome binary is found, `playwriter session new --browser headless` will tell you to run `playwriter browser install` first to download Chrome for Testing.
+If no Chrome binary is found, `better-playwriter session new --browser headless` will tell you to run `better-playwriter browser install` first to download Chrome for Testing.
 
-### Cloud browsers (stealth, proxies, CAPTCHA solving)
+### Managed cloud browsers
 
-Cloud browsers are full Chromium instances running in the cloud. They work exactly like a local Chrome session but with stealth and anti-detection built in. No local Chrome or extension needed.
-
-**When to use cloud browsers:**
-
-- **CAPTCHA bypass.** Cloudflare Turnstile, reCAPTCHA v2/v3, and hCaptcha are solved automatically via token injection. No API keys, no manual solving, no extra code.
-- **Anti-detection.** Stealth Chromium patches remove `navigator.webdriver`, CDP leak fingerprints, and other automation signals. Sites that block Playwright, Puppeteer, or Selenium work normally.
-- **Residential proxies.** Route traffic through residential IPs in 195+ countries with `--proxy <region>`. Proxy is disabled by default to save cost; enable it only when you need anti-detection or geo-targeting.
-- **VPS and headless environments.** Run browser automation from any server without installing Chrome. The cloud browser runs remotely and you connect via CDP.
-- **Parallel execution.** Spin up multiple cloud browsers to run tasks in parallel with subagents. Each browser is an isolated instance with its own IP, fingerprint, and cookie jar.
-- **Multiple identities.** Control separate logged-in accounts on the same site simultaneously. Each cloud browser has independent cookies and storage, so sessions don't interfere with each other.
-
-**Authentication:** two options depending on your environment.
-
-```bash
-# Option 1: Interactive login (opens browser for OAuth)
-playwriter cloud login
-
-# Option 2: API key (for CI, VPS, headless — no browser needed)
-# Create one at https://playwriter.dev/dashboard, then:
-export PLAYWRITER_API_KEY=pw_xxxxx
-```
-
-```bash
-# Check active cloud sessions
-playwriter cloud status
-
-# Start a cloud browser session (no proxy, cheapest)
-playwriter session new --browser cloud
-
-# Start with US residential proxy (for anti-detection / geo-targeting)
-playwriter session new --browser cloud --proxy us
-
-# Use a different region
-playwriter session new --browser cloud --proxy de
-
-# Use a custom proxy
-playwriter session new --browser cloud --custom-proxy user:pass@host:8080
-```
-
-Cloud sessions auto-stop after 10 minutes of inactivity. When proxy is enabled, raster images are blocked by default to reduce bandwidth costs. Pass `--disable-proxy-bandwidth-acceleration` if you need images to load.
+Managed cloud requires an explicitly configured `BETTER_PLAYWRITER_CLOUD_URL` and credentials for that service. Use local or headless Chrome for ordinary tasks. Keep browser identity and authentication data local unless the user authorizes a specific transfer.
 
 ### Execute code
 
 ```bash
-playwriter -s <sessionId> -e "<code>"
+better-playwriter -s <sessionId> -e "<code>"
 ```
 
-The `-s` flag specifies a session ID (required). Get one with `playwriter session new --tab-group <name>`. Use the same session to persist state across commands.
+The `-s` flag specifies a session ID (required). Get one with `better-playwriter session new --tab-group <name>`. Use the same session to persist state across commands.
 
 **Execution timeout:** default is 10000ms. Override per call with `--timeout <ms>`, or set a new default via env:
 
 ```bash
 # One-off longer timeout 
-playwriter -s 1 --timeout 120000 -e '...'
+better-playwriter -s 1 --timeout 120000 -e '...'
 
 # Default for all -e/-f in this shell
-export PLAYWRITER_EXEC_TIMEOUT=30000
-playwriter -s 1 -e '...'
+export BETTER_PLAYWRITER_EXEC_TIMEOUT=30000
+better-playwriter -s 1 -e '...'
 ```
 
-PLAYWRITER_EXEC_TIMEOUT is the default fallback. --timeout overrides it, and MCP clients can set the env var or pass a per-call timeout.
+BETTER_PLAYWRITER_EXEC_TIMEOUT is the default fallback. --timeout overrides it, and MCP clients can set the env var or pass a per-call timeout.
 
 On timeout the code is aborted: its running and later Playwright calls fail and the global `signal` (AbortSignal) is aborted. Steps done before the timeout stay done, so check the page before retrying. In long-running code, pass `signal` to `fetch` and check `signal.aborted` in loops so it stops on timeout:
 
@@ -252,7 +171,7 @@ Calls in one session run in order.
 **File-based execution:** for complex multi-line code, write a `.js` file and run it with `-f` instead of fighting with bash quoting:
 
 ```bash
-playwriter -s 1 -f ./scripts/my-automation.js
+better-playwriter -s 1 -f ./scripts/my-automation.js
 ```
 
 `-f` and `-e` cannot be used together. The file content is executed with the same sandbox context (context, state, snapshot, etc.).
@@ -261,22 +180,22 @@ playwriter -s 1 -f ./scripts/my-automation.js
 
 ```bash
 # Navigate to a page
-playwriter -s 1 -e 'state.page = await context.newPage(); await state.page.goto("https://example.com")'
+better-playwriter -s 1 -e 'state.page = await context.newPage(); await state.page.goto("https://example.com")'
 
 # Click a button
-playwriter -s 1 -e 'await state.page.click("button")'
+better-playwriter -s 1 -e 'await state.page.click("button")'
 
 # Get page title
-playwriter -s 1 -e 'await state.page.title()'
+better-playwriter -s 1 -e 'await state.page.title()'
 
 # Take a screenshot
-playwriter -s 1 -e 'await state.page.screenshot({ path: "/absolute/path/to/screenshot.png", scale: "css" })'
+better-playwriter -s 1 -e 'await state.page.screenshot({ path: "/absolute/path/to/screenshot.png", scale: "css" })'
 
 # Get accessibility snapshot
-playwriter -s 1 -e 'await snapshot({ page: state.page })'
+better-playwriter -s 1 -e 'await snapshot({ page: state.page })'
 
 # Get accessibility snapshot for a specific iframe
-playwriter -s 1 -e 'const frame = await state.page.locator("iframe").contentFrame(); await snapshot({ page: state.page, frame })'
+better-playwriter -s 1 -e 'const frame = await state.page.locator("iframe").contentFrame(); await snapshot({ page: state.page, frame })'
 ```
 
 **Why single quotes?** Always wrap `-e` code in single quotes (`'...'`) to prevent bash from interpreting `$`, backticks, and other special characters inside your JS code. Use double quotes or backtick template literals for strings inside the JS code.
@@ -285,7 +204,7 @@ playwriter -s 1 -e 'const frame = await state.page.locator("iframe").contentFram
 
 ```bash
 # Preferred: use heredoc with quoted delimiter (disables all bash expansion)
-playwriter -s 1 -e "$(cat <<'EOF'
+better-playwriter -s 1 -e "$(cat <<'EOF'
 const links = await state.page.$$eval('a', els => els.map(e => e.href));
 console.log('Found', links.length, 'links');
 const price = text.match(/\$[\d.]+/);
@@ -294,7 +213,7 @@ EOF
 
 # Alternative: $'...' syntax (but beware: \n and \t become special, and
 # single quotes inside must be escaped as \')
-playwriter -s 1 -e $'
+better-playwriter -s 1 -e $'
 const title = await state.page.title();
 const url = state.page.url();
 console.log({ title, url });
@@ -311,90 +230,69 @@ console.log({ title, url });
 For longer scripts, use `-f` instead of `-e` to execute JavaScript from a file:
 
 ```bash
-playwriter -s 1 -f script.js
+better-playwriter -s 1 -f script.js
 ```
 
 The file is read from disk and executed in the same sandbox as `-e`. All context variables (`state`, `context`, etc.) are available. `-e` and `-f` cannot be used together.
 
 ### Recording user actions for skill generation
 
-Before any recorder work, run `playwriter skill` once and read the full output (never truncate).
+Before any recorder work, run `better-playwriter skill` once and read the full output (never truncate).
 
-The user can start recording from the Playwriter toolbar (**Record Skill** button) or ask you to run `playwriter recorder start`. Both write the same event file. The toolbar does not pick a session; the relay attaches to any free extension session (or creates one). Session choice does not matter: extension sessions share the same Chrome tabs. You identify the recording later at **stop** time.
+The user can start recording from the Better Playwriter toolbar (**Record Skill** button) or ask you to run `better-playwriter recorder start`. Both write the same event file. The toolbar does not pick a session; the relay attaches to any free extension session (or creates one). Session choice does not matter: extension sessions share the same Chrome tabs. You identify the recording later at **stop** time.
 
-`playwriter recorder start` records everything the user does in the browser (clicks, typing, navigations, xhr/fetch, toast and alert text) as events with generated locator strings. It also saves a jpeg of each visual change into a frames folder. User clicks flash a ripple in those frames. To see the screen at an event, open the path printed by `playwriter recorder frame <eventId>`. When the user asks you to "start recording", run it and let them perform their workflow. You may run playwriter commands on that session if they ask (snapshot, inspect, click something). If they did not ask, ask first. Do not drive the workflow yourself.
+`better-playwriter recorder start` records everything the user does in the browser (clicks, typing, navigations, xhr/fetch, toast and alert text) as events with generated locator strings. It also saves a jpeg of each visual change into a frames folder. User clicks flash a ripple in those frames. To see the screen at an event, open the path printed by `better-playwriter recorder frame <eventId>`. When the user asks you to "start recording", run it and let them perform their workflow. You may run better-playwriter commands on that session if they ask (snapshot, inspect, click something). If they did not ask, ask first. Do not drive the workflow yourself.
 
 ```bash
-playwriter recorder start            # reuse the only session, or create one
-playwriter recorder start -s 1       # attach to an existing session
-playwriter recorder status           # active recordings + current page urls
-playwriter recorder stop             # stop the only active recording
-playwriter recorder stop 3           # stop recording 3 when several are active
-playwriter recorder events           # thin timeline of the latest recording
-playwriter recorder events -r 3      # events of recording 3
-playwriter recorder events 4 7       # full details of events 4 and 7
-playwriter recorder events --errors   # failed requests, console errors, toasts
-playwriter recorder frame 7 --offset 1000  # screenshot path 1s after event 7
+better-playwriter recorder start            # reuse the only session, or create one
+better-playwriter recorder start -s 1       # attach to an existing session
+better-playwriter recorder status           # active recordings + current page urls
+better-playwriter recorder stop             # stop the only active recording
+better-playwriter recorder stop 3           # stop recording 3 when several are active
+better-playwriter recorder events           # thin timeline of the latest recording
+better-playwriter recorder events -r 3      # events of recording 3
+better-playwriter recorder events 4 7       # full details of events 4 and 7
+better-playwriter recorder events --errors   # failed requests, console errors, toasts
+better-playwriter recorder frame 7 --offset 1000  # screenshot path 1s after event 7
 ```
 
-Run `playwriter recorder stop` when they say done, then `playwriter recorder events -r <id>` to read the events. If stop fails because **more than one recording is active**, the error lists each recording id, session, and current or last page URL. Pick the one that matches the workflow (or ask the user), then `playwriter recorder stop <id>`. Replay the flow with **playwriter** commands only (`playwriter -s <id> -e '...'`), never raw Playwright. The `recorder start` output prints full instructions for turning a recording into a reusable skill: a SKILL.md of markdown instructions with example playwriter commands, plus an importable helper script (`submit.js`, `sdk.js`) for cheap replay. Recording runs inside the relay daemon, so it survives CLI exits. Pass `-s <id>` to record an existing session; the recorder attaches to all Playwriter-enabled tabs and does not open a new tab. A recording auto-stops after 20 minutes or 500 MB of frames and events (`reason: "max-size"`).
+Run `better-playwriter recorder stop` when they say done, then `better-playwriter recorder events -r <id>` to read the events. If stop fails because **more than one recording is active**, the error lists each recording id, session, and current or last page URL. Pick the one that matches the workflow (or ask the user), then `better-playwriter recorder stop <id>`. Replay the flow with **better-playwriter** commands only (`better-playwriter -s <id> -e '...'`), never raw Playwright. The `recorder start` output prints full instructions for turning a recording into a reusable skill: a SKILL.md of markdown instructions with example better-playwriter commands, plus an importable helper script (`submit.js`, `sdk.js`) for cheap replay. Recording runs inside the relay daemon, so it survives CLI exits. Pass `-s <id>` to record an existing session; the recorder attaches to all Better Playwriter-enabled tabs and does not open a new tab. A recording auto-stops after 20 minutes or 500 MB of frames and events (`reason: "max-size"`).
 
-If the user started from the toolbar and then says "done", still run `playwriter recorder stop` (or `stop <id>` if several are listed). The toolbar **Stop recording…** button also works.
+If the user started from the toolbar and then says "done", still run `better-playwriter recorder stop` (or `stop <id>` if several are listed). The toolbar **Stop recording…** button also works.
 
 ### Live streaming to RTMP (X Live, Twitch, YouTube)
 
-Niche use case: `playwriter stream start|stop|status` streams `state.page` live to RTMP endpoints via CDP screencast and ffmpeg (must be on PATH). It survives navigation and CLI exit, and ends when the page closes or the session is reset. Docs: https://playwriter.dev/docs/streaming
+Niche use case: `better-playwriter stream start|stop|status` streams `state.page` live to RTMP endpoints via CDP screencast and ffmpeg (must be on PATH). It survives navigation and CLI exit, and ends when the page closes or the session is reset.
 
-### Debugging playwriter issues
+### Debugging better-playwriter issues
 
 If some internal critical error happens you can read the relay server logs to understand the issue. The log file is located in the user home directory:
 
 ```bash
-playwriter logfile  # prints the log file path
-# typically: ~/.playwriter/relay-server.log
+better-playwriter logfile  # prints the log file path
+# typically: ~/.better-playwriter/relay-server.log
 ```
 
-The relay log contains logs from the extension, MCP and WS server. A separate CDP JSONL log is created alongside it (see `playwriter logfile`) with all CDP commands/responses and events, with long strings truncated. Both files are recreated every time the server starts. For debugging internal playwriter errors, read these files with grep/rg to find relevant lines.
+The relay log contains logs from the extension, MCP and WS server. A separate CDP JSONL log is created alongside it (see `better-playwriter logfile`) with all CDP commands/responses and events, with long strings truncated. Both files are recreated every time the server starts. For debugging internal better-playwriter errors, read these files with grep/rg to find relevant lines.
 
 Example: summarize CDP traffic counts by direction + method:
 
 ```bash
-jq -r '.direction + "\t" + (.message.method // "response")' ~/.playwriter/cdp.jsonl | uniq -c
+jq -r '.direction + "\t" + (.message.method // "response")' ~/.better-playwriter/cdp.jsonl | uniq -c
 ```
 
-If you find a bug, you can create a gh issue using `gh issue create -R remorses/playwriter --title title --body body`. Ask for user confirmation before doing this.
+If you find a bug, prepare a minimal reproduction with synthetic data. Ask the user before sending it outside their machine.
 
 ---
 
-# playwriter best practices
+# Better Playwriter best practices
 
-Control user's Chrome browser via playwright code snippets. Prefer single-line code with semicolons between statements. Use playwriter immediately without waiting for user actions; only if you get "extension is not connected" or "no browser tabs have Playwriter enabled" should you ask the user to click the playwriter extension icon on the target tab.
-
-**When to use playwriter instead of webfetch/curl:** If a website is JS-heavy (SPAs like Instagram, Twitter, Facebook, etc.), has cookie consent modals, login walls, lazy-loaded content, carousels, or infinite scroll — **always use playwriter**. Simple fetch/webfetch will return an empty HTML shell with no content. Do NOT waste time trying curl, webfetch, or parsing raw HTML from JS-rendered sites. Go straight to playwriter: navigate with a real browser, dismiss modals, then extract what you need via `page.evaluate()` or network interception.
-
-**If Chrome is not running**, the extension can't connect. Start Chrome from the command line before retrying:
-
-```bash
-# macOS
-open -a "Google Chrome" --args --profile-directory=Default
-
-# Linux
-google-chrome --profile-directory=Default &
-
-# Windows (cmd)
-start chrome.exe --profile-directory=Default
-
-# Windows (PowerShell)
-Start-Process chrome.exe -ArgumentList '--profile-directory=Default'
-```
-
-You can collaborate with the user - they can help with captchas, difficult elements, or reproducing bugs. For a step only they can do, hand them the tab with `handoff` (see utility functions).
+Use Playwright snippets with a dedicated session and tab. Observe the page before and after each action. Prefer headless Chrome for your own tests. If a user task needs their signed-in browser, use the profile and tabs they authorize. If a prompt or authentication step needs a person, use `handoff` with a short request.
 
 ## context variables
 
 - `state` - object persisted between calls **within your session**. Each session has its own isolated state. Use to store pages, data, listeners (e.g., `state.page = await context.newPage()`)
 - `context` - browser context, access all pages via `context.pages()`, create one with `context.newPage()`
-- `cloud` - list active cloud browsers and send a page's cookies to one. Available in local CLI sessions, but not in cloud or remote-control sessions
 - `require` - load Node.js modules (e.g., `const fs = require('node:fs')`)
 - `import()` - use Node.js ESM to load local scripts, packages, and built-ins (e.g., `const helpers = await import('./scripts/helpers.js')`). Relative paths resolve from the session cwd
 - `importModule` - restricted async import for allowlisted Node.js built-ins (e.g., `const fs = await importModule('node:fs')`)
@@ -402,39 +300,11 @@ You can collaborate with the user - they can help with captchas, difficult eleme
 
 **Not available in the sandbox:** `__dirname`, `__filename`, and a default `page`. Reading `page` throws. Get your own page (see "working with pages").
 
-### sending page cookies to a cloud browser
-
-List active cloud browsers, then send the cookies that apply to a page URL:
-
-```js
-const browsers = await cloud.browsers.list()
-console.log(browsers)
-await cloud.sendCookies({ from: state.page, to: browsers[0] })
-```
-
-You can use a cloud key or either session ID directly:
-
-```js
-await cloud.sendCookies({ from: state.page, to: 'cloud-1' })
-```
-
-`sendCookies` reads cookies for `from.url()`. `from` is required. Pass `urls` when the login uses more than one HTTP origin:
-
-```js
-await cloud.sendCookies({
-  from: state.page,
-  to: 'cloud-1',
-  urls: ['https://example.com', 'https://api.example.com'],
-})
-```
-
-The result contains the browser key, cookie count, domains, and skipped count. It never contains cookie values. This copies cookies only. It does not copy local storage, IndexedDB, service workers, saved passwords, or device-bound credentials.
-
-`cloud` is available for local extension, headless, and direct CLI sessions. It is not available inside managed cloud sessions or remote-control sessions. Run `playwriter cloud login` or set `PLAYWRITER_API_KEY` on the CLI machine before you create the session. The CLI forwards the credentials to the relay without exposing them in the execution scope. Credentials already present on the relay machine also work.
+Keep page data, screenshots, recordings, and logs private unless the user authorizes sharing.
 
 ### importing local scripts
 
-Local modules use normal Node.js ESM. Export helper functions from a `.js` or `.mjs` file and pass Playwriter values such as `page` explicitly:
+Local modules use normal Node.js ESM. Export helper functions from a `.js` or `.mjs` file and pass Better Playwriter values such as `page` explicitly:
 
 ```js
 // scripts/page-helpers.mjs
@@ -446,7 +316,7 @@ export async function getPageInfo({ page }) {
 }
 ```
 
-Load the module from the directory where the Playwriter session was created:
+Load the module from the directory where the Better Playwriter session was created:
 
 ```js
 const { getPageInfo } = await import('./scripts/page-helpers.mjs')
@@ -471,7 +341,7 @@ export async function saveTitle({ page, outputPath }) {
 **Important:** `state` is **session-isolated**. Tabs your session opens are visible only to your session; tabs the user enabled are shared. See "working with pages".
 
 **Sandboxed `fs` write restrictions:** `require('node:fs')` is scoped. Writes (writeFileSync, mkdirSync, etc.) only succeed in:
-- The **session's cwd**: where `playwriter session new` ran, or the MCP server's working directory
+- The **session's cwd**: where `better-playwriter session new` ran, or the MCP server's working directory
 - `/tmp`
 - The OS temp directory (`os.tmpdir()`, e.g. `/var/folders/.../T/` on macOS)
 
@@ -486,10 +356,10 @@ Writing to any other path (e.g. `~/Downloads`, `~/Desktop`) throws `EPERM: opera
 - **Click before keyboard input in extension mode.** Call `click()` on the target field immediately before `fill()` or `keyboard` methods. CDP sends keyboard input to the browser's OS-focused surface, so DOM focus and `bringToFront()` can still leave text in Chrome's omnibox.
 - **Check state after actions**: always verify page state after clicking/submitting (see next section)
 - **Verification pages**: when a navigation lands on a verification or block page, execute prints a `[WARNING]` and already waited for checks that clear by themselves. Never reload or retry in a loop; hand it to the user with `handoff`, or stop on a block.
-- **Clean up only your listeners**: remove listeners you added by event name or handler reference. Never call `removeAllListeners()` because it also removes Playwriter's page error and console listeners.
+- **Clean up only your listeners**: remove listeners you added by event name or handler reference. Never call `removeAllListeners()` because it also removes Better Playwriter's page error and console listeners.
 - **Tracked page errors are automatic**: uncaught errors from pages assigned directly to `state` keys appear in the current or next execute output as `[PAGE ERROR]`. Errors from pages tracked by other sessions are excluded.
 - **Always print page logs after every action**: call `getLatestLogs({ page: state.page, sinceLastCall: true })` after every goto, click, or submit to catch console errors and warnings. Do not manually collect `page.on('console')` events; manual listeners miss logs emitted before the listener is attached. The first `sinceLastCall` call returns all buffered logs including startup and hydration errors. `getLatestLogs` needs `page`. `snapshot` needs `page`, or a `locator`/`frame` from your tab.
-- **CDP sessions**: use `getCDPSession({ page: state.page })` not `state.page.context().newCDPSession()` - NEVER use `newCDPSession()` method, it doesn't work through playwriter relay
+- **CDP sessions**: use `getCDPSession({ page: state.page })` not `state.page.context().newCDPSession()` - NEVER use `newCDPSession()` method, it doesn't work through better-playwriter relay
 - **Wait for load**: use `state.page.waitForLoadState('domcontentloaded')` not `state.page.waitForEvent('load')` - waitForEvent times out if already loaded
 - **Minimize timeouts**: prefer proper waits (`waitForSelector`, `waitForPageLoad`) over `state.page.waitForTimeout()`. Short timeouts (1-2s) are acceptable for non-deterministic events like animations, tab opens, or async UI updates where no specific selector is available
 - **Snapshot before screenshot**: always use `snapshot({ page: state.page })` first to understand page state (text-based, fast, cheap). Only use `screenshot` when you specifically need visual/spatial information. Never take a screenshot just to check if a page loaded or to read text content — snapshot gives you that instantly without burning image tokens
@@ -611,8 +481,8 @@ await state.page.waitForSelector('article', { timeout: 10000 })
 await waitForPageLoad({ page: state.page, timeout: 5000 })
 ```
 
-**8. Not using playwriter for JS-rendered sites**
-Do NOT waste context trying webfetch, curl, or Playwright CLI screenshots on SPAs (Instagram, Twitter, etc.). These return empty HTML shells. Use playwriter directly:
+**8. Not using better-playwriter for JS-rendered sites**
+Do NOT waste context trying webfetch, curl, or Playwright CLI screenshots on SPAs (Instagram, Twitter, etc.). These return empty HTML shells. Use better-playwriter directly:
 
 ```js
 state.page = await context.newPage()
@@ -622,7 +492,7 @@ await snapshot({ page: state.page, search: /cookie|consent|accept/i }).then(cons
 ```
 
 **9. Login buttons that open popups**
-Popup windows (`window.open` with features, OAuth buttons) are auto-relocated to tabs in the main window by the Playwriter extension. The new tab appears in `context.pages()` and is fully controllable. You will receive a `[WARNING] New page opened from current page (index N, initial url: ...)` message pointing to the new tab — the `initial url` may be `about:blank` for blank-then-scripted popups, so check `context.pages()[N].url()` for the final URL:
+Popup windows (`window.open` with features, OAuth buttons) are auto-relocated to tabs in the main window by the Better Playwriter extension. The new tab appears in `context.pages()` and is fully controllable. You will receive a `[WARNING] New page opened from current page (index N, initial url: ...)` message pointing to the new tab — the `initial url` may be `about:blank` for blank-then-scripted popups, so check `context.pages()[N].url()` for the final URL:
 
 ```js
 await state.page.locator('button:has-text("Login with Google")').click()
@@ -792,7 +662,7 @@ Use a page from `context.pages()` only if the user asks you to control a tab the
 
 ```js
 state.page = context.pages().findLast((p) => p.url().includes('myapp.com'))
-if (!state.page) throw new Error('No myapp.com tab found. Ask the user to enable playwriter on it.')
+if (!state.page) throw new Error('No myapp.com tab found. Ask the user to enable better-playwriter on it.')
 ```
 
 **Handle page closures gracefully:**
@@ -1079,13 +949,13 @@ const info = await getReactComponentInfo({ locator: state.page.locator('[data-te
 // => { componentName, source, hierarchy, props } | null
 ```
 
-**inspectPinnedElement** - inspect a Playwriter pinned element and print the element `outerHTML` plus React component info when available. Used by the right-click **Copy Playwriter Locator** flow.
+**inspectPinnedElement** - inspect a Better Playwriter pinned element and print the element `outerHTML` plus React component info when available. Used by the right-click **Copy Better Playwriter Locator** flow.
 
 ```js
 await inspectPinnedElement('https://example.com', 'globalThis.playwriterPinnedElem1')
 ```
 
-**getStylesForLocator** - inspect CSS styles applied to an element, like browser DevTools "Styles" panel. Useful for debugging styling issues, finding where a CSS property is defined (file:line), and checking inherited styles. Returns selector, source location, and declarations for each matching rule. ALWAYS fetch `https://playwriter.dev/resources/styles-api.md` first with curl or webfetch tool.
+**getStylesForLocator** - inspect CSS styles applied to an element, like browser DevTools "Styles" panel. Useful for debugging styling issues, finding where a CSS property is defined (file:line), and checking inherited styles. Returns selector, source location, and declarations for each matching rule. See the MCP resource `styles-api.md` or the bundled resource reference.
 
 ```js
 const styles = await getStylesForLocator({
@@ -1095,7 +965,7 @@ const styles = await getStylesForLocator({
 console.log(formatStylesAsText(styles))
 ```
 
-**createDebugger** - set breakpoints, step through code, inspect variables at runtime. Useful for debugging issues that only reproduce in browser, understanding code flow, and inspecting state at specific points. Can pause on exceptions, evaluate expressions in scope, and blackbox framework code. ALWAYS fetch `https://playwriter.dev/resources/debugger-api.md` first.
+**createDebugger** - set breakpoints, step through code, inspect variables at runtime. Useful for debugging issues that only reproduce in browser, understanding code flow, and inspecting state at specific points. Can pause on exceptions, evaluate expressions in scope, and blackbox framework code. See the MCP resource `debugger-api.md` or the bundled resource reference.
 
 ```js
 const cdp = await getCDPSession({ page: state.page })
@@ -1106,7 +976,7 @@ await dbg.setBreakpoint({ file: scripts[0].url, line: 42 })
 // when paused: dbg.inspectLocalVariables(), dbg.stepOver(), dbg.resume()
 ```
 
-**createEditor** - view and live-edit page scripts and CSS at runtime. Edits are in-memory (persist until reload). Useful for testing quick fixes, searching page scripts with grep, and toggling debug flags. ALWAYS read `https://playwriter.dev/resources/editor-api.md` first.
+**createEditor** - view and live-edit page scripts and CSS at runtime. Edits are in-memory (persist until reload). Useful for testing quick fixes, searching page scripts with grep, and toggling debug flags. See the MCP resource `editor-api.md` or the bundled resource reference.
 
 ```js
 const cdp = await getCDPSession({ page: state.page })
@@ -1180,14 +1050,14 @@ await state.video.stop()
 
 Put each action and its `wait()` in the **same execute call**, or the animation is over before recording resumes. Use `wait(ms)` instead of `waitForTimeout()` when the viewer should see time pass.
 
-**ghostCursor.show / ghostCursor.hide** - the ghost cursor overlay is always on: the extension injects it hidden on every Playwriter-attached tab, it appears on the first Playwright mouse action (click, move, wheel) and fades out after 5s idle. These methods only matter if you want to change the cursor style or temporarily hide it:
+**ghostCursor.show / ghostCursor.hide** - the ghost cursor overlay is always on: the extension injects it hidden on every Better Playwriter-attached tab, it appears on the first Playwright mouse action (click, move, wheel) and fades out after 5s idle. These methods only matter if you want to change the cursor style or temporarily hide it:
 
 ```js
 await ghostCursor.show({ page: state.page, style: 'screenstudio' }) // 'minimal' (default), 'dot', 'screenstudio'
 await ghostCursor.hide({ page: state.page }) // hide until next show() or hard navigation
 ```
 
-**handoff / waitForHandoff** - hand the tab to the user for a step only they can do. The tab comes to the front with a Playwriter card showing your one-line ask, and `waitForHandoff` returns once the page shows the step is done:
+**handoff / waitForHandoff** - hand the tab to the user for a step only they can do. The tab comes to the front with a Better Playwriter card showing your one-line ask, and `waitForHandoff` returns once the page shows the step is done:
 
 ```js
 await handoff({ page: state.page, message: 'Sign in to Discord with your own account.' })
@@ -1222,7 +1092,7 @@ const demoPath = await createDemoVideo({
 
 ## pinned elements
 
-Users can right-click → "Copy Playwriter Locator" (works even on tabs not yet enabled; it enables them) to store elements in `globalThis.playwriterPinnedElem1` (increments for each pin). The reference is copied to clipboard:
+Users can right-click → "Copy Better Playwriter Locator" (works even on tabs not yet enabled; it enables them) to store elements in `globalThis.playwriterPinnedElem1` (increments for each pin). The reference is copied to clipboard:
 
 ```js
 const el = await state.page.evaluateHandle(() => globalThis.playwriterPinnedElem1)

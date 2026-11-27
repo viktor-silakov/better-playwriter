@@ -22,7 +22,7 @@ declare global {
   }
 }
 
-export function initPlaywriterToolbar(): void {
+export function initPlaywriterToolbar(remoteServiceUrl: string | null = null): void {
   if (window.__playwriterToolbarInstalled) return
   window.__playwriterToolbarInstalled = true
 
@@ -371,7 +371,7 @@ export function initPlaywriterToolbar(): void {
   const toolbarEl = document.createElement('div')
   toolbarEl.className = 'toolbar'
   toolbarEl.setAttribute('role', 'toolbar')
-  toolbarEl.setAttribute('aria-label', 'Playwriter tools')
+  toolbarEl.setAttribute('aria-label', 'Better Playwriter tools')
 
   const stack = document.createElement('div')
   stack.className = 'stack collapsed'
@@ -561,7 +561,7 @@ export function initPlaywriterToolbar(): void {
       Math.abs(rect.left + rect.width / 2 - expectedCenterX) >= Math.max(2, expectedCenterX * 0.25) ||
       Math.abs(rect.top) >= 2
     if (restyled || moved || document.elementFromPoint(e.clientX, e.clientY) !== host) {
-      showToast('Blocked: this page is restyling the Playwriter toolbar')
+      showToast('Blocked: this page is restyling the Better Playwriter toolbar')
       return false
     }
     return true
@@ -642,12 +642,12 @@ export function initPlaywriterToolbar(): void {
     })
   }
 
-  // Build a tiny eval that delegates all logging and React inspection to Playwriter.
+  // Build a tiny eval that delegates all logging and React inspection to Better Playwriter.
   // JSON.stringify does NOT escape literal ' characters, so "Don't save"
   // stays "Don't save" in the output. That would break the outer bash '…'
   // wrapper. Replace ' with \u0027 — valid JSON, parses back to ' in the
   // JS engine — so the whole code is single-quote-free and slots safely
-  // into the bash 'playwriter -e …' wrapper regardless of element text.
+  // into the bash 'better-playwriter -e …' wrapper regardless of element text.
   function buildInspectionCode(n: number, url: string): string {
     const URL_LIT = JSON.stringify(url).replace(/'/g, '\\u0027')
     return `inspectPinnedElement(${URL_LIT},"globalThis.playwriterPinnedElem${n}")`
@@ -681,7 +681,7 @@ export function initPlaywriterToolbar(): void {
       }
       const clipboardText = accumulatedPins
         .map((p) => {
-          return "playwriter -e '" + buildInspectionCode(p.n, url) + "'"
+          return "better-playwriter -e '" + buildInspectionCode(p.n, url) + "'"
         })
         .join(',\n')
       copyText(clipboardText)
@@ -703,14 +703,14 @@ export function initPlaywriterToolbar(): void {
       if (allPins.length > 1) {
         const clipboardText = allPins
           .map((p) => {
-            return "playwriter -e '" + buildInspectionCode(p.n, url) + "'"
+            return "better-playwriter -e '" + buildInspectionCode(p.n, url) + "'"
           })
           .join(',\n')
         copyText(clipboardText)
         showToast(`Copied ${allPins.length} locators`, { rect, clientX: e.clientX })
       } else {
         const code = buildInspectionCode(n, url)
-        const clipboardText = "playwriter -e '" + code + "'"
+        const clipboardText = "better-playwriter -e '" + code + "'"
         copyText(clipboardText)
         showToast('Copied locator', { rect, clientX: e.clientX })
       }
@@ -761,8 +761,7 @@ export function initPlaywriterToolbar(): void {
 
   // ── SVG icon strings (defined inside function — required for func injection) ─
 
-  // Playwriter logo with cutout cursor (fill-rule evenodd punches a hole through the icon)
-  const PIN_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 424 424" aria-hidden="true"><path fill-rule="evenodd" d="M 0 212 C 0 112.063 0 62.095 31.037 31.037 C 62.116 0 112.063 0 212 0 C 311.937 0 361.905 0 392.942 31.037 C 424 62.116 424 112.063 424 212 C 424 311.937 424 361.905 392.942 392.942 C 361.926 424 311.937 424 212 424 C 112.063 424 62.095 424 31.037 392.942 C 0 361.926 0 311.937 0 212 Z M 225.732 260.521 L 277.905 312.673 C 283.311 318.1 286.003 320.793 289.014 322.043 C 293.042 323.718 297.557 323.718 301.585 322.043 C 304.596 320.793 307.309 318.1 312.694 312.694 C 318.1 307.288 320.793 304.596 322.043 301.585 C 323.722 297.563 323.722 293.036 322.043 289.014 C 320.793 286.003 318.1 283.29 312.694 277.905 L 260.521 225.732 L 276.442 209.789 C 292.766 193.465 300.907 185.325 298.999 176.548 C 297.07 167.792 286.237 163.785 264.591 155.814 L 192.384 129.208 C 149.2 113.308 127.618 105.358 116.488 116.488 C 105.358 127.618 113.308 149.2 129.208 192.384 L 155.814 264.591 C 163.785 286.237 167.792 297.07 176.548 298.999 C 185.303 300.928 193.465 292.766 209.789 276.442 Z" fill="currentColor"/></svg>`
+  const PIN_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="4 5 16 16" aria-hidden="true"><path d="M12 16H7.5A1.25 1.25 0 0 1 6.25 14.75v-6A1.25 1.25 0 0 1 7.5 7.5h9A1.25 1.25 0 0 1 17.75 8.75v2.75m-7-0.25 7 7m-3.5 0h3.5v-3.5" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"/></svg>`
 
   // Lucide x icon
   const CLOSE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`
@@ -995,7 +994,6 @@ export function initPlaywriterToolbar(): void {
   // Remote control: share the browser via a secret tunnel id. While sharing, the
   // button is a dropdown (copy prompt, copy id, or stop sharing). See remote-tunnel.ts.
   let remoteActive = false
-  const REMOTE_SECURITY_URL = 'https://playwriter.dev/docs/remote-control'
   const remoteBtn = document.createElement('button')
   remoteBtn.className = 'record-btn remote-btn'
 
@@ -1029,12 +1027,12 @@ export function initPlaywriterToolbar(): void {
   remoteDialog.setAttribute('aria-label', 'Share browser')
   const dialogText = document.createElement('p')
   const dialogMore = document.createElement('a')
-  dialogMore.href = REMOTE_SECURITY_URL
+  if (remoteServiceUrl) dialogMore.href = new URL('/docs/remote-control', remoteServiceUrl).href
   dialogMore.target = '_blank'
   dialogMore.rel = 'noopener noreferrer'
   dialogMore.textContent = 'Read more'
   dialogText.append(
-    'Share your browser? Anyone with the copied id can control all Playwriter tabs and open new ones. ',
+    'Share your browser? Anyone with the copied id can control all Better Playwriter tabs and open new ones. ',
     dialogMore,
   )
   const dialogActions = document.createElement('div')
@@ -1243,8 +1241,8 @@ export function initPlaywriterToolbar(): void {
 
   const tabBtn = document.createElement('button')
   tabBtn.className = 'tab'
-  tabBtn.setAttribute('data-tooltip', 'Show Playwriter toolbar')
-  tabBtn.setAttribute('aria-label', 'Show Playwriter toolbar')
+  tabBtn.setAttribute('data-tooltip', 'Show Better Playwriter toolbar')
+  tabBtn.setAttribute('aria-label', 'Show Better Playwriter toolbar')
   tabBtn.innerHTML = CHEVRON_SVG
   tabBtn.addEventListener('click', (e: MouseEvent) => {
     e.stopPropagation()
@@ -1264,7 +1262,9 @@ export function initPlaywriterToolbar(): void {
     setExpanded(false)
   })
 
-  toolbarEl.append(pinBtn, sep1, recordBtn, sep2, remoteBtn, sep3, closeBtn)
+  toolbarEl.append(pinBtn, sep1, recordBtn)
+  if (remoteServiceUrl) toolbarEl.append(sep2, remoteBtn)
+  toolbarEl.append(sep3, closeBtn)
 
   // Never focusable: agent keyboard input (Tab, Enter, Space) must not reach the
   // toolbar. preventDefault on mousedown stops a user click from focusing a

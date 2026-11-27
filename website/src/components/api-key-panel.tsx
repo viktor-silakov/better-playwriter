@@ -71,7 +71,7 @@ export function ApiKeyPanel({
             </Button>
           </div>
           <p className="mt-2 text-xs text-muted-foreground">
-            Set as <code>PLAYWRITER_API_KEY</code> environment variable.
+            Set <code>BETTER_PLAYWRITER_API_KEY</code> to use this key.
           </p>
         </div>
       )}

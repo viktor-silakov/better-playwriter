@@ -1,3 +1,4 @@
+import { readEnv } from './runtime-config.js'
 import { defaultSessionCounterPath, startPlayWriterCDPRelayServer, type RelayServer } from './cdp-relay.js'
 import { createFileLogger } from './create-logger.js'
 import { installProcessGuard } from './process-guard.js'
@@ -5,7 +6,7 @@ import { RELAY_PORT, waitForRelayVersion } from './relay-client.js'
 import { flushTelemetry, startRelayTelemetry } from './telemetry.js'
 import { LOG_CDP_FILE_PATH } from './utils.js'
 
-process.title = 'playwriter-ws-server'
+process.title = 'better-playwriter-ws-server'
 
 const logger = createFileLogger()
 
@@ -63,7 +64,7 @@ export async function startServer({
 
   return server
 }
-startServer({ token: process.env.PLAYWRITER_TOKEN }).catch((error) => {
+startServer({ token: readEnv('TOKEN') }).catch((error) => {
   void logger.error('Failed to start relay server:', error)
   process.exit(1)
 })

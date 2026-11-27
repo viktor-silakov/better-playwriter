@@ -3,17 +3,17 @@
  *
  * These files are written to:
  * - playwriter/dist/ - for the MCP to read at runtime
- * - website/public/ - for hosting on playwriter.dev
+ * - website/public/ - for the documentation site
  *
  * Source of truth:
  * - playwriter/src/skill.md - manually edited, contains full docs including CLI usage
- * - skills/playwriter/SKILL.md - stub with frontmatter for agent discovery
+ * - skills/better-playwriter/SKILL.md - stub with frontmatter for agent discovery
  *
  * Generated files:
  * - playwriter/dist/prompt.md - MCP prompt (skill.md minus CLI sections)
- * - website/public/SKILL.md - full copy for playwriter.dev/SKILL.md
+ * - website/public/SKILL.md - full copy for the documentation site
  * - website/public/.well-known/skills/index.json - Agent Skills Discovery endpoint
- * - website/public/.well-known/skills/playwriter/SKILL.md - skill file with frontmatter
+ * - website/public/.well-known/skills/better-playwriter/SKILL.md - skill file with frontmatter
  */
 
 import fs from 'node:fs'
@@ -167,14 +167,14 @@ function buildPerformanceProfiling() {
     Create a session and open a page:
 
     \`\`\`bash
-    playwriter session new
-    playwriter -s 1 -e 'state.page = await context.newPage(); await state.page.goto("https://example.com", { waitUntil: "domcontentloaded" })'
+    better-playwriter session new
+    better-playwriter -s 1 -e 'state.page = await context.newPage(); await state.page.goto("https://example.com", { waitUntil: "domcontentloaded" })'
     \`\`\`
 
     Collect a concise vitals report:
 
     \`\`\`bash
-    playwriter -s 1 -e "$(cat <<'EOF'
+    better-playwriter -s 1 -e "$(cat <<'EOF'
     await state.page.evaluate(() => {
       const metrics = { paints: {}, lcp: 0, cls: 0 }
       globalThis.__pwMetrics = metrics
@@ -226,7 +226,7 @@ function buildPerformanceProfiling() {
     List the heaviest requests with CDP:
 
     \`\`\`bash
-    playwriter -s 1 -e "$(cat <<'EOF'
+    better-playwriter -s 1 -e "$(cat <<'EOF'
     const cdp = await getCDPSession({ page: state.page })
     await cdp.send('Network.enable')
     await cdp.send('Network.setCacheDisabled', { cacheDisabled: true })
@@ -266,7 +266,7 @@ function buildPerformanceProfiling() {
     Check interactivity blockers:
 
     \`\`\`bash
-    playwriter -s 1 -e "$(cat <<'EOF'
+    better-playwriter -s 1 -e "$(cat <<'EOF'
     await state.page.evaluate(() => {
       globalThis.__pwLongTasks = []
       globalThis.__pwEvents = []
@@ -422,7 +422,7 @@ function buildPromptFromSkill() {
   fs.writeFileSync(distPromptPath, promptContent, 'utf-8')
   console.log('Generated playwriter/dist/prompt.md (from skill.md)')
 
-  // Copy full skill.md to website/public/ for hosting at playwriter.dev/SKILL.md
+  // Copy full skill.md to website/public/ for serving from the documentation site
   const websitePublicRoot = path.join(playwriterDir, '..', 'website', 'public')
   ensureDir(websitePublicRoot)
   fs.writeFileSync(path.join(websitePublicRoot, 'SKILL.md'), skillContent, 'utf-8')
@@ -461,16 +461,16 @@ function parseFrontmatter(content: string): { frontmatter: Record<string, string
  *
  * Creates:
  * - /.well-known/skills/index.json - discovery endpoint
- * - /.well-known/skills/playwriter/SKILL.md - skill file
+ * - /.well-known/skills/better-playwriter/SKILL.md - skill file
  *
  * See: https://agentskills.io/specification
  */
 function buildWellKnownSkills() {
   const repoRoot = path.join(playwriterDir, '..')
-  const skillSourcePath = path.join(repoRoot, 'skills', 'playwriter', 'SKILL.md')
+  const skillSourcePath = path.join(repoRoot, 'skills', 'better-playwriter', 'SKILL.md')
   const websitePublicRoot = path.join(repoRoot, 'website', 'public')
   const wellKnownDir = path.join(websitePublicRoot, '.well-known', 'skills')
-  const playwriterSkillDir = path.join(wellKnownDir, 'playwriter')
+  const skillDir = path.join(wellKnownDir, 'better-playwriter')
 
   // Read and parse the skill file
   const skillContent = fs.readFileSync(skillSourcePath, 'utf-8')
@@ -478,17 +478,17 @@ function buildWellKnownSkills() {
 
   // Ensure directories exist
   ensureDir(wellKnownDir)
-  ensureDir(playwriterSkillDir)
+  ensureDir(skillDir)
 
   // Copy SKILL.md to well-known location
-  fs.writeFileSync(path.join(playwriterSkillDir, 'SKILL.md'), skillContent, 'utf-8')
-  console.log('Generated website/public/.well-known/skills/playwriter/SKILL.md')
+  fs.writeFileSync(path.join(skillDir, 'SKILL.md'), skillContent, 'utf-8')
+  console.log('Generated website/public/.well-known/skills/better-playwriter/SKILL.md')
 
   // Generate index.json
   const indexJson = {
     skills: [
       {
-        name: frontmatter.name || 'playwriter',
+        name: frontmatter.name || 'better-playwriter',
         description: frontmatter.description || '',
         files: ['SKILL.md'],
       },

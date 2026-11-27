@@ -1,9 +1,9 @@
+import { dataPath } from './runtime-config.js'
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import type { BrowserOption } from './relay-sessions.js'
 
-const retryFile = path.join(os.homedir(), '.playwriter', 'profile-identify-retry.json')
+const retryFile = dataPath('profile-identify-retry.json')
 const RETRY_MS = 5 * 60 * 1000
 
 /** Resolve unknown local profiles once, and back off when Accessibility is unavailable. */

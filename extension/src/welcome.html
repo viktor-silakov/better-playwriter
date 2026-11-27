@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Welcome to Playwriter</title>
+    <title>Welcome to Better Playwriter</title>
     <style>
       :root {
         --color-bg: #ffffff;
@@ -387,7 +387,8 @@
   <body>
     <main>
       <section>
-        <h2>Getting Started with Playwriter</h2>
+        <img src="../icons/icon-brand-48.png" width="48" height="48" alt="" />
+        <h2>Getting Started with Better Playwriter</h2>
 
         <p class="lead">
           Let your <span class="hl">coding agent</span> drive this browser. Open
@@ -399,9 +400,9 @@
             <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
             <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
           </svg>
-          <span class="copy-btn-label">Copy agent prompt to install</span>
+          <span class="copy-btn-label">Copy agent prompt</span>
         </button>
-        <p id="prompt-text" hidden>Run `playwriter skill` and read its output to learn how to use Better Playwriter. Then use the existing browser session to complete the requested task.</p>
+        <p id="prompt-text" hidden>Run `better-playwriter skill` and read its output to learn how to use Better Playwriter. Then use the existing browser session to complete the requested task.</p>
 
         <p>It uses the installed skill and your <span class="hl">existing Chrome</span>.</p>
       </section>
@@ -421,8 +422,8 @@
             </span>
             <div class="step-content">
               <strong>Pin the extension</strong>
-              <p class="pin-todo">Click the puzzle icon in Chrome's toolbar, then pin Playwriter so it's always visible.</p>
-              <p class="pin-done">Pinned. Playwriter is in your toolbar.</p>
+              <p class="pin-todo">Click the puzzle icon in Chrome's toolbar, then pin Better Playwriter so it's always visible.</p>
+              <p class="pin-done">Pinned. Better Playwriter is in your toolbar.</p>
             </div>
           </div>
 
@@ -432,7 +433,7 @@
               <strong>Enable a tab after the daemon starts</strong>
               <p>
                 Click the extension icon on a tab. It turns green when connected. The icon stays gray until an agent
-                runs a playwriter command, which starts the local daemon.
+                runs a better-playwriter command, which starts the local daemon.
               </p>
             </div>
           </div>
@@ -441,8 +442,8 @@
             <span class="step-number">3</span>
             <div class="step-content">
               <strong>Install the CLI and run a command</strong>
-              <pre><code class="language-bash">playwriter session new
-playwriter -e "state.page = await context.newPage()"</code></pre>
+              <pre><code class="language-bash">better-playwriter session new
+better-playwriter -s 1 -e "state.page = await context.newPage()"</code></pre>
             </div>
           </div>
 
@@ -451,19 +452,19 @@ playwriter -e "state.page = await context.newPage()"</code></pre>
             <div class="step-content">
               <strong>Add the skill to your agent</strong>
               <p>Read the installed Better Playwriter instructions:</p>
-              <pre><code class="language-bash">playwriter skill</code></pre>
+              <pre><code class="language-bash">better-playwriter skill</code></pre>
             </div>
           </div>
 
           <h3>CLI Examples</h3>
 
           <pre><code class="language-bash"># open a tab and go to a URL
-playwriter -e "state.page = await context.newPage()"
-playwriter -e "await state.page.goto('https://example.com')"
+better-playwriter -s 1 -e "state.page = await context.newPage()"
+better-playwriter -s 1 -e "await state.page.goto('https://example.com')"
 # print the accessibility tree
-playwriter -e "console.log(await snapshot({ page: state.page }))"
+better-playwriter -s 1 -e "console.log(await snapshot({ page: state.page }))"
 # click a link
-playwriter -e "await state.page.getByRole('link').first().click()"</code></pre>
+better-playwriter -s 1 -e "await state.page.getByRole('link').first().click()"</code></pre>
         </section>
 
         <section>
@@ -492,16 +493,11 @@ playwriter -e "await state.page.getByRole('link').first().click()"</code></pre>
           <h2>Privacy &amp; Security</h2>
 
           <p>
-            Playwriter is local by default. Normal browser control stays between the extension and the relay on your
+            Better Playwriter is local by default. Normal browser control stays between the extension and the relay on your
             computer. Remote control is optional and starts only after you confirm a disclosure. It lets the agent use
-            every Playwriter tab and open new ones.
+            every Better Playwriter tab and open new ones.
           </p>
-          <p>
-            While Remote control is active, browser data passes through an encrypted Playwriter tunnel to anyone holding
-            the secret link. Read the <a href="https://playwriter.dev/privacy" target="_blank" rel="noopener noreferrer"
-              >privacy policy</a
-            > before sharing sensitive tabs.
-          </p>
+          <p>Remote control requires a separately configured service.</p>
         </section>
 
         <section>
@@ -509,23 +505,18 @@ playwriter -e "await state.page.getByRole('link').first().click()"</code></pre>
 
           <p>The CLI is the recommended way to use Better Playwriter. To run its local MCP server:</p>
 
-          <pre><code class="language-bash">playwriter</code></pre>
+          <pre><code class="language-bash">better-playwriter</code></pre>
 
-          <p>
-            For full MCP instructions, see
-            <a href="https://github.com/remorses/playwriter/blob/main/MCP.md" target="_blank" rel="noopener noreferrer"
-              >MCP.md</a
-            >.
-          </p>
+          <p>Run <code>better-playwriter skill</code> for setup and usage.</p>
         </section>
 
         <section>
           <h2>Need Help?</h2>
 
           <p>
-            For issues, feature requests, or contributions, visit the
+            Better Playwriter is based on the original
             <a href="https://github.com/remorses/playwriter" target="_blank" rel="noopener noreferrer">
-              GitHub repository
+              Playwriter project
             </a>
             .
           </p>

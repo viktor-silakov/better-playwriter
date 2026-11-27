@@ -3,13 +3,9 @@ title: Live Stream a Browser Tab to RTMP
 sidebarTitle: Streaming
 description: Stream a browser tab live to X Live, Twitch, or YouTube via RTMP. Uses CDP screencast plus ffmpeg, needs no permission click, survives page navigation and works in direct CDP mode.
 icon: lucide:radio
-prompt: |
-  Document the `playwriter stream` command and executor `stream` API.
-  Sources: playwriter/src/screen-recording.ts, playwriter/src/audio-tap-client.ts,
-  playwriter/src/cli.ts (stream commands), playwriter/src/skill.md.
 ---
 
-Stream a tab **live to RTMP endpoints** like X Live, Twitch, or YouTube. Playwriter captures the page with CDP `Page.startScreencast`, so the **stream survives page navigation**. Each JPEG frame is piped to an `ffmpeg` process that encodes in real time and pushes to your destinations.
+Stream a tab **live to RTMP endpoints** like X Live, Twitch, or YouTube. Better Playwriter captures the page with CDP `Page.startScreencast`, so the **stream survives page navigation**. Each JPEG frame is piped to an `ffmpeg` process that encodes in real time and pushes to your destinations.
 
 No permission click is needed. It works in extension mode, direct CDP mode, headless, and cloud browsers.
 
@@ -24,14 +20,14 @@ The executor and ffmpeg run **inside the relay process**, so the stream keeps ru
 The stream captures the session's **`state.page`**. Set it and navigate first, then start:
 
 ```bash
-playwriter -s 1 -e "state.page = await context.newPage(); await state.page.goto('https://my-generated-content.example')"
-playwriter stream start -s 1 --rtmp rtmp://va.pscp.tv:80/x/<stream-key>
+better-playwriter -s 1 -e "state.page = await context.newPage(); await state.page.goto('https://my-generated-content.example')"
+better-playwriter stream start -s 1 --rtmp rtmp://va.pscp.tv:80/x/<stream-key>
 ```
 
 Simultaneous **multi-streaming**: repeat `--rtmp`. It uses ffmpeg's tee muxer, so one encode serves all destinations, and a dead endpoint doesn't kill the others:
 
 ```bash
-playwriter stream start -s 1 \
+better-playwriter stream start -s 1 \
   --rtmp rtmp://va.pscp.tv:80/x/<x-stream-key> \
   --rtmp rtmp://live.twitch.tv/app/<twitch-stream-key>
 ```
@@ -40,10 +36,10 @@ playwriter stream start -s 1 \
 
 ```bash
 # Uptime, frames sent and captured, audio chunks, encoder fps, bitrate, dropped frames
-playwriter stream status -s 1
+better-playwriter stream status -s 1
 
 # Graceful stop: flushes the encoder and waits for ffmpeg to exit
-playwriter stream stop -s 1
+better-playwriter stream stop -s 1
 # => Stream stopped after 3600s (108000 frames)
 ```
 
@@ -65,7 +61,7 @@ Defaults match **X Live's recommended encoder settings** (1080p, 9000 kbps H.264
 
 ## Audio
 
-Audio is **on by default** for streams. Playwriter injects a Web Audio tap in the page that captures `<audio>`, `<video>` and AudioContexts playing to the speakers, then muxes the PCM in ffmpeg.
+Audio is **on by default** for streams. Better Playwriter injects a Web Audio tap in the page that captures `<audio>`, `<video>` and AudioContexts playing to the speakers, then muxes the PCM in ffmpeg.
 
 - No audio from cross-origin (out-of-process) iframes
 - An AudioContext graph wired before the stream starts is missed

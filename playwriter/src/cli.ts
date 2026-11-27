@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
+import { COMMAND_NAME } from './brand.js'
+import { readEnv, dataPath } from './runtime-config.js'
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import util from 'node:util'
 import { fileURLToPath } from 'node:url'
@@ -44,10 +45,10 @@ import { printTelemetryNoticeOnce } from './telemetry.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-const cli = goke('playwriter')
+const cli = goke(COMMAND_NAME)
 
 cli
-  .command('browser start [binaryPath]', 'Start Chromium or Chrome for Testing with the bundled Playwriter extension')
+  .command('browser start [binaryPath]', 'Start Chromium or Chrome for Testing with the bundled Better Playwriter extension')
   .hidden()
   .option('--user-data-dir <dir>', 'Persistent browser profile directory used for the managed browser')
   .option('--headless', 'Run the browser in headless mode')
@@ -100,7 +101,7 @@ cli
         console.log(`  Mode: ${headless ? 'headless' : 'headed'}`)
 
         if (connectedExtensions.length > 0) {
-          console.log('Playwriter extension connected to the relay server.')
+          console.log('Better Playwriter extension connected to the relay server.')
           return
         }
 
@@ -125,15 +126,15 @@ cli
     }
   })
 
-const DEFAULT_EXEC_TIMEOUT = Number(process.env.PLAYWRITER_EXEC_TIMEOUT) || 10000
+const DEFAULT_EXEC_TIMEOUT = Number(readEnv('EXEC_TIMEOUT')) || 10000
 const BROWSER_LIST_EXTENSION_WAIT_MS = 2000
 
 cli
   .command('', 'Start the MCP server or controls the browser with -e')
-  .option('--host <host>', 'Remote relay server host to connect to (or use PLAYWRITER_HOST env var)')
-  .option('--token <token>', 'Authentication token (or use PLAYWRITER_TOKEN env var)')
-  .option('-s, --session <name>', 'Session ID (required for -e, get one with `playwriter session new`)')
-  .option('-e, --eval <code>', 'Execute JavaScript code and exit, read https://playwriter.dev/SKILL.md for usage')
+  .option('--host <host>', 'Remote relay server host to connect to (or use BETTER_PLAYWRITER_HOST env var)')
+  .option('--token <token>', 'Authentication token (or use BETTER_PLAYWRITER_TOKEN env var)')
+  .option('-s, --session <name>', 'Session ID (required for -e, get one with `better-playwriter session new`)')
+  .option('-e, --eval <code>', 'Execute JavaScript code and exit, run `better-playwriter skill` for usage')
   .option('-f, --file <path>', 'Execute JavaScript from a file and exit')
   .option('--timeout [ms]', z.number().default(DEFAULT_EXEC_TIMEOUT).describe('Execution timeout in milliseconds'))
   .action(async (options) => {
@@ -186,17 +187,17 @@ async function executeCode(options: {
 }): Promise<void> {
   const { code, timeout, host, token } = options
   const cwd = process.cwd()
-  const sessionId = options.sessionId ? String(options.sessionId) : process.env.PLAYWRITER_SESSION
+  const sessionId = options.sessionId ? String(options.sessionId) : readEnv('SESSION')
 
   // Session is required
   if (!sessionId) {
     console.error('Error: -s/--session is required.')
-    console.error('Always run `playwriter session new` first to get a session ID to use.')
+    console.error('Always run `better-playwriter session new` first to get a session ID to use.')
     process.exit(1)
   }
 
   // Ensure relay server is running (only for local)
-  if (!host && !process.env.PLAYWRITER_HOST) {
+  if (!host && !readEnv('HOST')) {
     const restarted = await ensureRelayServer({ logger: console })
     if (restarted) {
       const connectedExtensions = await waitForConnectedExtensions({
@@ -275,7 +276,7 @@ async function executeCode(options: {
     }
 
     if (result.isCloud) {
-      console.error(pc.dim(`\nCloud session. Run \`playwriter session delete ${sessionId}\` when done.`))
+      console.error(pc.dim(`\nCloud session. Run \`better-playwriter session delete ${sessionId}\` when done.`))
     }
 
     // Not process.exit(1): it drops stdout/stderr past 64 KiB when piped
@@ -285,7 +286,7 @@ async function executeCode(options: {
   } catch (error: any) {
     if (error.cause?.code === 'ECONNREFUSED') {
       console.error('Error: Cannot connect to relay server.')
-      console.error('The Playwriter relay server should start automatically. Check logs at:')
+      console.error('The Better Playwriter relay server should start automatically. Check logs at:')
       console.error(`  ${LOG_FILE_PATH}`)
     } else {
       console.error(`Error: ${error.message}`)
@@ -298,7 +299,7 @@ async function executeCode(options: {
 cli
   .command('session new', 'Create a new session and print the session ID')
   .option('--host <host>', 'Remote relay server host')
-  .option('--token <token>', 'Authentication token (or use PLAYWRITER_TOKEN env var)')
+  .option('--token <token>', 'Authentication token (or use BETTER_PLAYWRITER_TOKEN env var)')
   .option('--browser <key>', 'Browser key when multiple browsers are available. Special values: "headless" (launch headless Chrome, no extension), "cloud" (cloud browser with stealth/proxies)')
   .option('--direct [endpoint]', 'Use direct CDP connection without the extension. Enable debugging first at chrome://inspect/#remote-debugging or launch Chrome with --remote-debugging-port=9222. Auto-discovers instances or accepts an explicit ws:// endpoint')
   .option('--remote <id>', 'Connect to a browser another user shared via the extension `Remote control` button')
@@ -352,23 +353,20 @@ cli
       }
       const { session } = result
       const label = session.label ? ` (${session.label})` : ''
-      console.log(`Session ${session.id} created${label}. Use with: playwriter -s ${session.id} -e "..."`)
-      console.error('run playwriter skill to see how to use playwriter if not run already')
+      console.log(`Session ${session.id} created${label}. Use with: better-playwriter -s ${session.id} -e "..."`)
+      console.error('Run better-playwriter skill for usage instructions.')
       for (const note of session.notes) {
         console.log(pc.dim(note))
       }
       if (session.liveUrl) {
         console.log(pc.dim(`Live view: ${session.liveUrl}`))
       }
-      if (session.mode === 'extension') {
-        printCloudTip()
-      }
+
     } catch (error) {
       if (error instanceof ExtensionNotConnectedError) {
         console.error(`ERROR code=${error.code}`)
         console.error(error.message)
         console.error(pc.dim('Tip: Use --direct to connect via Chrome DevTools Protocol instead.'))
-        console.error(pc.dim('Tip: Run `playwriter cloud login` to use cloud browsers.'))
         process.exit(1)
       }
       console.error(`Error: ${error instanceof Error ? error.message : String(error)}`)
@@ -376,20 +374,13 @@ cli
     }
   })
 
-function printCloudTip(): void {
-  console.log('')
-  console.log(
-    pc.dim('Tip: Need stealth browsing, VPS control, or auto CAPTCHA solving? Run `playwriter cloud login` or set PLAYWRITER_API_KEY'),
-  )
-  console.log(pc.dim('     to control a browser in the cloud instead of local Chrome.'))
-}
 
 cli
   .command('session list', 'List all active sessions')
   .option('--host <host>', 'Remote relay server host')
-  .option('--token <token>', 'Authentication token (or use PLAYWRITER_TOKEN env var)')
+  .option('--token <token>', 'Authentication token (or use BETTER_PLAYWRITER_TOKEN env var)')
   .action(async (options) => {
-    if (!options.host && !process.env.PLAYWRITER_HOST) {
+    if (!options.host && !readEnv('HOST')) {
       await ensureRelayServer({ logger: console })
     }
 
@@ -457,9 +448,9 @@ cli
   .option('--close-created-tabs', 'Close tabs created by this session and remove their empty groups')
   .option('--release-created-tabs', 'Ungroup and detach tabs created by this session, keeping them open')
   .option('--host <host>', 'Remote relay server host')
-  .option('--token <token>', 'Authentication token (or use PLAYWRITER_TOKEN env var)')
+  .option('--token <token>', 'Authentication token (or use BETTER_PLAYWRITER_TOKEN env var)')
   .action(async (sessionId, options) => {
-    if (!options.host && !process.env.PLAYWRITER_HOST) {
+    if (!options.host && !readEnv('HOST')) {
       await ensureRelayServer({ logger: console })
     }
 
@@ -480,7 +471,7 @@ cli
   .option('--tab-group <name>', 'New tab group title for the session')
   .option('--tab-group-color <color>', 'New tab group color: grey, blue, red, yellow, green, pink, purple, cyan, orange')
   .option('--host <host>', 'Remote relay server host')
-  .option('--token <token>', 'Authentication token (or use PLAYWRITER_TOKEN env var)')
+  .option('--token <token>', 'Authentication token (or use BETTER_PLAYWRITER_TOKEN env var)')
   .action(async (sessionId, options) => {
     const tabGroup = options.tabGroup ? String(options.tabGroup).trim() : ''
     const tabGroupColor = (() => {
@@ -511,7 +502,7 @@ cli
       process.exit(1)
     }
 
-    if (!options.host && !process.env.PLAYWRITER_HOST) {
+    if (!options.host && !readEnv('HOST')) {
       await ensureRelayServer({ logger: console })
     }
 
@@ -548,9 +539,9 @@ cli
 cli
   .command('session reset <sessionId>', 'Reset the browser connection for a session')
   .option('--host <host>', 'Remote relay server host')
-  .option('--token <token>', 'Authentication token (or use PLAYWRITER_TOKEN env var)')
+  .option('--token <token>', 'Authentication token (or use BETTER_PLAYWRITER_TOKEN env var)')
   .action(async (sessionId, options) => {
-    if (!options.host && !process.env.PLAYWRITER_HOST) {
+    if (!options.host && !readEnv('HOST')) {
       await ensureRelayServer({ logger: console })
     }
 
@@ -577,8 +568,8 @@ cli
 cli
   .command('stream start', 'Stream the session tab live to RTMP destinations (X Live, Twitch, ...) via ffmpeg. Streams state.page - set it first with -e "state.page = await context.newPage(); await state.page.goto(...)"')
   .option('--host <host>', 'Remote relay server host')
-  .option('--token <token>', 'Authentication token (or use PLAYWRITER_TOKEN env var)')
-  .option('-s, --session <id>', 'Session ID (get one with `playwriter session new`)')
+  .option('--token <token>', 'Authentication token (or use BETTER_PLAYWRITER_TOKEN env var)')
+  .option('-s, --session <id>', 'Session ID (get one with `better-playwriter session new`)')
   .option('--rtmp <url>', z.union([z.string(), z.array(z.string())]).describe('RTMP destination URL with stream key (repeatable for simultaneous multi-streaming)'))
   .option('--resolution <WxH>', z.string().default('1920x1080').describe('Output resolution (default is X Live recommended)'))
   .option('--fps <n>', z.number().default(30).describe('Output frame rate'))
@@ -597,7 +588,7 @@ cli
     })()
     if (rtmpUrls.length === 0) {
       console.error('Error: at least one --rtmp destination is required.')
-      console.error('Example: playwriter stream start -s 1 --rtmp rtmp://va.pscp.tv:80/x/<stream-key>')
+      console.error('Example: better-playwriter stream start -s 1 --rtmp rtmp://va.pscp.tv:80/x/<stream-key>')
       process.exit(1)
     }
     if (!/^\d+x\d+$/.test(options.resolution)) {
@@ -618,10 +609,10 @@ cli
     }
 
     const code = [
-      `if (!state.page || state.page.isClosed()) throw new Error('Set state.page first, e.g. playwriter -s <session> -e "state.page = await context.newPage(); await state.page.goto(url)"')`,
+      `if (!state.page || state.page.isClosed()) throw new Error('Set state.page first, e.g. better-playwriter -s <session> -e "state.page = await context.newPage(); await state.page.goto(url)"')`,
       `const result = await stream.start({ page: state.page, ...${JSON.stringify(streamParams)} })`,
       `console.log('Streaming to: ' + result.destinations.join(', '))`,
-      `console.log('The stream runs until you call: playwriter stream stop -s <session>')`,
+      `console.log('The stream runs until you call: better-playwriter stream stop -s <session>')`,
     ].join('\n')
 
     await executeCode({
@@ -636,7 +627,7 @@ cli
 cli
   .command('stream stop', 'Stop the active stream for a session')
   .option('--host <host>', 'Remote relay server host')
-  .option('--token <token>', 'Authentication token (or use PLAYWRITER_TOKEN env var)')
+  .option('--token <token>', 'Authentication token (or use BETTER_PLAYWRITER_TOKEN env var)')
   .option('-s, --session <id>', 'Session ID')
   .action(async (options) => {
     const code = [
@@ -657,7 +648,7 @@ cli
 cli
   .command('stream status', 'Show stream health: uptime, encoder fps, bitrate, dropped frames')
   .option('--host <host>', 'Remote relay server host')
-  .option('--token <token>', 'Authentication token (or use PLAYWRITER_TOKEN env var)')
+  .option('--token <token>', 'Authentication token (or use BETTER_PLAYWRITER_TOKEN env var)')
   .option('-s, --session <id>', 'Session ID')
   .action(async (options) => {
     const code = [
@@ -686,7 +677,7 @@ cli
 
 // ============================================================================
 // Action recording commands. Recording runs inside the relay daemon (survives
-// CLI exit) and writes user interactions as a JSON array to ~/.playwriter/recordings/.
+// CLI exit) and writes user interactions as a JSON array to ~/.better-playwriter/recordings/.
 // The printed prompt (src/recorder-prompt.md) instructs the agent how to turn a
 // recording into a SKILL.md plus a utils script that automates the same flow.
 // ============================================================================
@@ -694,12 +685,12 @@ cli
 cli
   .command('recorder start', 'Record user actions in the browser as events for skill generation')
   .option('--host <host>', 'Remote relay server host')
-  .option('--token <token>', 'Authentication token (or use PLAYWRITER_TOKEN env var)')
+  .option('--token <token>', 'Authentication token (or use BETTER_PLAYWRITER_TOKEN env var)')
   .option('-s, --session <id>', 'Session ID (defaults to the single active session, or creates a new one)')
-  .example('playwriter recorder start')
-  .example('playwriter recorder start -s 1')
+  .example('better-playwriter recorder start')
+  .example('better-playwriter recorder start -s 1')
   .action(async (options) => {
-    if (!options.host && !process.env.PLAYWRITER_HOST) {
+    if (!options.host && !readEnv('HOST')) {
       await ensureRelayServer({ logger: console })
     }
     const serverUrl = await getServerUrl(options.host)
@@ -707,7 +698,7 @@ cli
 
     try {
       const sessionId: string = await (async () => {
-        const explicit = options.session ? String(options.session) : process.env.PLAYWRITER_SESSION
+        const explicit = options.session ? String(options.session) : readEnv('SESSION')
         if (explicit) {
           return explicit
         }
@@ -732,7 +723,7 @@ cli
         const newResult = (await newResponse.json()) as { id?: string; error?: string }
         if (!newResponse.ok || !newResult.id) {
           console.error(`Error creating session: ${newResult.error || newResponse.status}`)
-          console.error(`Run 'playwriter session new' first, then retry with -s <id>.`)
+          console.error(`Run 'better-playwriter session new' first, then retry with -s <id>.`)
           process.exit(1)
         }
         return newResult.id
@@ -764,8 +755,8 @@ cli
 cli
   .command('recorder stop [recordingId]', 'Stop an active recording and print where the events are')
   .option('--host <host>', 'Remote relay server host')
-  .option('--token <token>', 'Authentication token (or use PLAYWRITER_TOKEN env var)')
-  .example('playwriter recorder stop')
+  .option('--token <token>', 'Authentication token (or use BETTER_PLAYWRITER_TOKEN env var)')
+  .example('better-playwriter recorder stop')
   .action(async (recordingId, options) => {
     const serverUrl = await getServerUrl(options.host)
     try {
@@ -788,11 +779,10 @@ cli
       console.log(`Events file: ${result.filePath}`)
       console.log('')
       console.log('Next steps (full instructions were printed by `recorder start`):')
-      console.log('  1. playwriter skill')
-      console.log('     or https://playwriter.dev/SKILL.md')
-      console.log(`  2. playwriter recorder events -r ${result.recordingId}`)
-      console.log('  3. Write SKILL.md + a named helper (submit.js, sdk.js) with playwriter -e examples from the events')
-      console.log('     or a standalone typed sdk.ts via connectViaExtension: https://playwriter.dev/docs/sessions#node-api')
+      console.log('  1. better-playwriter skill')
+      console.log(`  2. better-playwriter recorder events -r ${result.recordingId}`)
+      console.log('  3. Write SKILL.md + a named helper (submit.js, sdk.js) with better-playwriter -e examples from the events')
+      console.log('     or a standalone typed sdk.ts via connectViaExtension')
     } catch (error: any) {
       console.error(`Error: ${error.message}`)
       process.exit(1)
@@ -806,16 +796,16 @@ cli
   )
   .option('-r, --recording <id>', 'Recording ID (defaults to the latest recording)')
   .option('--host <host>', 'Remote relay server host')
-  .option('--token <token>', 'Authentication token (or use PLAYWRITER_TOKEN env var)')
+  .option('--token <token>', 'Authentication token (or use BETTER_PLAYWRITER_TOKEN env var)')
   .option('--type <type>', 'Only print events of this type (e.g. action, network, toast, page-error)')
   .option('--errors', 'Only print failed requests (status >= 400 or network failure), console errors, page errors and toasts')
   .option('--exclude <regex>', 'Drop network events whose url matches this regex (e.g. "analytics|StylesService")')
   .option('--full', 'Print full events for the whole timeline instead of the thin view')
-  .example('playwriter recorder events        # latest recording, thin timeline')
-  .example(`playwriter recorder events | jq -r '[.id, .t, .type, (.code // .url // .text // empty)] | @tsv'`)
-  .example('playwriter recorder events 4 7    # full details of events 4 and 7')
-  .example('playwriter recorder events -r 2 --type action   # actions of recording 2')
-  .example('playwriter recorder events --errors              # why steps failed')
+  .example('better-playwriter recorder events        # latest recording, thin timeline')
+  .example(`better-playwriter recorder events | jq -r '[.id, .t, .type, (.code // .url // .text // empty)] | @tsv'`)
+  .example('better-playwriter recorder events 4 7    # full details of events 4 and 7')
+  .example('better-playwriter recorder events -r 2 --type action   # actions of recording 2')
+  .example('better-playwriter recorder events --errors              # why steps failed')
   .action(async (eventIds, options) => {
     const recordingId = options.recording
     // When defaulting to the latest recording while several recordings are
@@ -844,12 +834,12 @@ cli
     const content: string = await (async () => {
       // Local relay: read the jsonl straight from disk. Remote relay: the file
       // lives on the relay's machine, fetch it over HTTP.
-      if (!options.host && !process.env.PLAYWRITER_HOST) {
+      if (!options.host && !readEnv('HOST')) {
         const { recordingFilePath, latestRecordingId } = await import('./action-recorder.js')
         // No id → latest recording, mirroring `recorder stop` defaulting
         const resolvedId = recordingId ? String(recordingId) : latestRecordingId()
         if (!resolvedId) {
-          console.error(`No recordings found. Start one with 'playwriter recorder start'.`)
+          console.error(`No recordings found. Start one with 'better-playwriter recorder start'.`)
           process.exit(1)
         }
         const filePath = recordingFilePath(resolvedId)
@@ -924,13 +914,13 @@ cli
   )
   .option('-r, --recording <id>', 'Recording ID (defaults to the latest recording)')
   .option('--offset <ms>', z.number().default(0).describe('Milliseconds after the event. Use 1000 to see the result of a click'))
-  .example('playwriter recorder frame 42              # screen when event 42 happened')
-  .example('playwriter recorder frame 42 --offset 1500 # screen 1.5s later')
+  .example('better-playwriter recorder frame 42              # screen when event 42 happened')
+  .example('better-playwriter recorder frame 42 --offset 1500 # screen 1.5s later')
   .action(async (eventId, options) => {
     const { recordingFilePath, latestRecordingId, parseRecording, closestFrameFile } = await import('./action-recorder.js')
     const resolvedId = options.recording ? String(options.recording) : latestRecordingId()
     if (!resolvedId) {
-      console.error(`No recordings found. Start one with 'playwriter recorder start'.`)
+      console.error(`No recordings found. Start one with 'better-playwriter recorder start'.`)
       process.exit(1)
     }
     const filePath = recordingFilePath(resolvedId)
@@ -960,7 +950,7 @@ cli
 cli
   .command('recorder status', 'List active recordings')
   .option('--host <host>', 'Remote relay server host')
-  .option('--token <token>', 'Authentication token (or use PLAYWRITER_TOKEN env var)')
+  .option('--token <token>', 'Authentication token (or use BETTER_PLAYWRITER_TOKEN env var)')
   .action(async (options) => {
     const serverUrl = await getServerUrl(options.host)
     try {
@@ -999,19 +989,19 @@ cli
 cli
   .command(
     'serve',
-    `Start the relay server on this machine (must be the same host where Chrome is running). Remote clients (Docker, other machines) connect via PLAYWRITER_HOST and PLAYWRITER_TOKEN. Use --host 0.0.0.0 for Docker, LAN, or internet access (requires --token).`,
+    `Start the relay server on this machine (must be the same host where Chrome is running). Remote clients (Docker, other machines) connect via BETTER_PLAYWRITER_HOST and BETTER_PLAYWRITER_TOKEN. Use --host 0.0.0.0 for Docker, LAN, or internet access (requires --token).`,
   )
   .option('--host [host]', z.string().default('0.0.0.0').describe('Host to bind to (use "0.0.0.0" for Docker or remote access)'))
-  .option('--token <token>', 'Authentication token, required unless --host is a loopback address like 127.0.0.1 (or use PLAYWRITER_TOKEN env var)')
+  .option('--token <token>', 'Authentication token, required unless --host is a loopback address like 127.0.0.1 (or use BETTER_PLAYWRITER_TOKEN env var)')
   .option('--replace', 'Kill existing server if running')
   .action(async (options) => {
-    const token = options.token || process.env.PLAYWRITER_TOKEN
+    const token = options.token || readEnv('TOKEN')
     // Any non-loopback bind is reachable from the network, and non-browser clients
     // can send `Host: localhost`, so only the token protects it.
     const isLoopbackHost = options.host === 'localhost' || options.host === '::1' || /^127\.\d+\.\d+\.\d+$/.test(options.host)
     if (!isLoopbackHost && !token) {
       console.error(`Error: Authentication token is required when binding to a non-loopback host (${options.host}).`)
-      console.error('Provide --token <token> or set PLAYWRITER_TOKEN environment variable.')
+      console.error('Provide --token <token> or set BETTER_PLAYWRITER_TOKEN environment variable.')
       process.exit(1)
     }
 
@@ -1020,7 +1010,7 @@ cli
     // privileged endpoints. Required because we no longer bypass auth for
     // loopback — see commit history for the tunnel-agent threat model.
     if (token) {
-      process.env.PLAYWRITER_TOKEN = token
+      process.env.BETTER_PLAYWRITER_TOKEN = token
     }
 
     // Check if server is already running on the port
@@ -1044,7 +1034,7 @@ cli
 
     if (isPortInUse) {
       if (!options.replace) {
-        console.log(`Playwriter server is already running on port ${RELAY_PORT}`)
+        console.log(`Better Playwriter server is already running on port ${RELAY_PORT}`)
         console.log('Tip: Use --replace to kill the existing server and start a new one.')
         process.exit(0)
       }
@@ -1061,7 +1051,7 @@ cli
 
     const logger = createFileLogger()
 
-    process.title = 'playwriter-serve'
+    process.title = 'better-playwriter-serve'
 
     installProcessGuard({ logger })
 
@@ -1072,13 +1062,13 @@ cli
       logger,
       sessionCounterFile: defaultSessionCounterPath(RELAY_PORT),
       onDrained: () => {
-        console.log('\nA newer Playwriter CLI replaced this relay. Shutting down...')
+        console.log('\nA newer Better Playwriter CLI replaced this relay. Shutting down...')
         server.close()
         process.exit(0)
       },
     })
 
-    console.log('Playwriter CDP relay server started')
+    console.log('Better Playwriter CDP relay server started')
     console.log(`  Host: ${options.host}`)
     console.log(`  Port: ${RELAY_PORT}`)
     console.log(`  Token: ${token ? '(configured)' : '(none)'}`)
@@ -1123,7 +1113,7 @@ cli
 cli
   .command('browser list', 'List all available browsers: extension-connected and direct CDP on port 9222')
   .option('--host <host>', z.string().describe('Remote relay server host'))
-  .option('--token <token>', 'Authentication token (or use PLAYWRITER_TOKEN env var)')
+  .option('--token <token>', 'Authentication token (or use BETTER_PLAYWRITER_TOKEN env var)')
   .action(async (options) => {
     const { options: allOptions, warnings } = await discoverBrowserOptions({
       relay: { host: options.host, token: options.token },
@@ -1132,7 +1122,7 @@ cli
     })
     // Probe only local Chrome profiles without a known name. Never match a
     // remote relay against this machine's accessibility tree.
-    if (process.platform === 'darwin' && !options.host && !process.env.PLAYWRITER_HOST) {
+    if (process.platform === 'darwin' && !options.host && !readEnv('HOST')) {
       const unknown = allOptions.filter((option) => option.type === 'extension' && option.key.startsWith('install:Chrome:') && !option.profileLabel)
       if (unknown.length) {
         const { identifyLocalChromeProfile } = await import('./profile-identify.js')
@@ -1146,10 +1136,9 @@ cli
 
     if (allOptions.length === 0) {
       console.log('No browsers detected.\n')
-      console.log('  Extension: click the Playwriter icon on a tab to connect')
+      console.log('  Extension: click the Better Playwriter icon on a tab to connect')
       console.log('  Direct:    open chrome://inspect/#remote-debugging in Chrome')
-      console.log('  Headless:  run `playwriter browser install` then `--browser headless`')
-      console.log('  Cloud:     run `playwriter cloud login` to connect cloud browsers')
+      console.log('  Headless:  run `better-playwriter browser install` then `--browser headless`')
       return
     }
 
@@ -1160,27 +1149,26 @@ cli
       return opt.type === 'direct'
     })
     if (hasDirectInstances) {
-      console.log(pc.dim('Connect with: playwriter session new --direct'))
+      console.log(pc.dim('Connect with: better-playwriter session new --direct'))
       console.log(pc.dim('Chrome may ask to approve the debugging connection.'))
     } else {
-      console.log(pc.dim('Use with: playwriter session new [--browser <key>]'))
+      console.log(pc.dim('Use with: better-playwriter session new [--browser <key>]'))
     }
 
-    const hasCloud = allOptions.some((opt) => {
-      return opt.type === 'cloud'
-    })
-    if (!hasCloud) {
-      printCloudTip()
-    }
   })
 
 // ── Cloud commands ──────────────────────────────────────────────────
 
 cli
-  .command('cloud login', 'Authenticate with playwriter.dev to use cloud browsers')
-  .option('--base-url <url>', 'Website base URL (default: https://playwriter.dev)')
+  .command('cloud login', 'Authenticate with a configured cloud browser service')
+  .option('--base-url <url>', 'Cloud service base URL (or set BETTER_PLAYWRITER_CLOUD_URL)')
   .action(async (options, ctx) => {
-    const baseUrl = options.baseUrl || ctx.process.env.PLAYWRITER_CLOUD_URL || 'https://playwriter.dev'
+    const baseUrl = options.baseUrl || readEnv('CLOUD_URL', ctx.process.env)
+    if (!baseUrl) {
+      ctx.console.error('Set BETTER_PLAYWRITER_CLOUD_URL or pass --base-url to connect to a cloud service.')
+      ctx.process.exit(1)
+      return
+    }
 
     // Use the better-auth client SDK so we don't hardcode endpoint URLs.
     // Hardcoded URLs broke before when better-auth changed paths between versions.
@@ -1194,9 +1182,9 @@ cli
     if (ctx.daemon.isDaemon) {
       // ── DAEMON: poll until user approves in browser ──
       // Logs are visible to the parent when started with attach: true.
-      const deviceCode = ctx.process.env.PLAYWRITER_DEVICE_CODE!
-      const pollInterval = Number(ctx.process.env.PLAYWRITER_POLL_INTERVAL || 5) * 1000
-      const expiresIn = Number(ctx.process.env.PLAYWRITER_DEVICE_EXPIRES_IN || 300)
+      const deviceCode = readEnv('DEVICE_CODE', ctx.process.env)!
+      const pollInterval = Number(readEnv('POLL_INTERVAL', ctx.process.env) || 5) * 1000
+      const expiresIn = Number(readEnv('DEVICE_EXPIRES_IN', ctx.process.env) || 300)
       const deadline = Date.now() + expiresIn * 1000
 
       while (Date.now() < deadline) {
@@ -1241,10 +1229,10 @@ cli
 
     const expiresIn = deviceData.expires_in || 300
     const daemonEnv = {
-      PLAYWRITER_DEVICE_CODE: deviceData.device_code,
-      PLAYWRITER_POLL_INTERVAL: String(deviceData.interval || 5),
-      PLAYWRITER_DEVICE_EXPIRES_IN: String(expiresIn),
-      PLAYWRITER_CLOUD_URL: baseUrl,
+      BETTER_PLAYWRITER_DEVICE_CODE: deviceData.device_code,
+      BETTER_PLAYWRITER_POLL_INTERVAL: String(deviceData.interval || 5),
+      BETTER_PLAYWRITER_DEVICE_EXPIRES_IN: String(expiresIn),
+      BETTER_PLAYWRITER_CLOUD_URL: baseUrl,
     }
     const timeoutMs = expiresIn * 1000
 
@@ -1252,7 +1240,7 @@ cli
       // Agent: start daemon detached, return immediately
       await ctx.daemon.start({ timeoutMs, env: daemonEnv })
       ctx.console.log('Login running in background.')
-      ctx.console.log('After approving in browser, verify with: playwriter cloud me')
+      ctx.console.log('After approving in browser, verify with: better-playwriter cloud me')
       return
     }
 
@@ -1260,7 +1248,7 @@ cli
     ctx.console.log('Waiting for approval...')
     await ctx.daemon.start({ attach: true, timeoutMs, env: daemonEnv })
     ctx.console.log(pc.green('\nLogged in successfully!'))
-    ctx.console.log('Cloud browsers will now appear in `playwriter session new`.')
+    ctx.console.log('Cloud browsers will now appear in `better-playwriter session new`.')
   })
 
 cli
@@ -1280,7 +1268,7 @@ cli
       ctx.process.exit(1)
     }
 
-    ctx.console.error('Not logged in. Run `playwriter cloud login` first.')
+    ctx.console.error('Not logged in. Run `better-playwriter cloud login` first.')
     ctx.process.exit(1)
   })
 
@@ -1293,7 +1281,7 @@ cli
 
     // Remove the auth file
     try {
-      const authFile = path.join(os.homedir(), '.playwriter', 'auth.json')
+      const authFile = dataPath('auth.json')
       fs.unlinkSync(authFile)
     } catch {
       // already gone
@@ -1307,7 +1295,7 @@ cli
   .action(async () => {
     const auth = loadCloudAuth()
     if (!auth) {
-      console.error('Not logged in. Run `playwriter cloud login` first.')
+      console.error('Not logged in. Run `better-playwriter cloud login` first.')
       process.exit(1)
     }
     const subscribeUrl = new URL('/dashboard', auth.baseUrl).toString()
@@ -1320,7 +1308,7 @@ cli
   .action(async () => {
     const client = getCloudClient()
     if (!client) {
-      console.error('Not logged in. Run `playwriter cloud login` first.')
+      console.error('Not logged in. Run `better-playwriter cloud login` first.')
       process.exit(1)
     }
 
@@ -1329,7 +1317,7 @@ cli
 
       if (sessions.length === 0) {
         console.log('No active cloud sessions.')
-        console.log(pc.dim('Start one with: playwriter session new --browser cloud'))
+        console.log(pc.dim('Start one with: better-playwriter session new --browser cloud'))
         return
       }
 
@@ -1360,7 +1348,7 @@ cli
   .action(async (key) => {
     const client = getCloudClient()
     if (!client) {
-      console.error('Not logged in. Run `playwriter cloud login` first.')
+      console.error('Not logged in. Run `better-playwriter cloud login` first.')
       process.exit(1)
     }
 
@@ -1368,7 +1356,7 @@ cli
       const { sessions } = await client.getStatus()
       if (sessions.length === 0) {
         console.log('No active cloud sessions.')
-        console.log(pc.dim('Start one with: playwriter session new --browser cloud'))
+        console.log(pc.dim('Start one with: better-playwriter session new --browser cloud'))
         process.exit(1)
       }
 
@@ -1390,7 +1378,7 @@ cli
         for (const s of sessions) {
           console.log(`  cloud-${s.index}  (expires ${new Date(s.timeoutAt).toLocaleTimeString()})`)
         }
-        console.log(`\nUsage: playwriter cloud live cloud-1`)
+        console.log(`\nUsage: better-playwriter cloud live cloud-1`)
         process.exit(1)
       }
 
@@ -1436,7 +1424,7 @@ cli.command('logfile', 'Print the path to the relay server log file').action(() 
   console.log(`cdp: ${LOG_CDP_FILE_PATH}`)
 })
 
-cli.command('skill', 'Print the full playwriter usage instructions').action(() => {
+cli.command('skill', 'Print the Better Playwriter agent instructions').action(() => {
   const skillPath = path.join(__dirname, '..', 'src', 'skill.md')
   const content = fs.readFileSync(skillPath, 'utf-8')
   console.log(content)
@@ -1446,8 +1434,12 @@ cli.help()
 cli.completions()
 cli.version(VERSION)
 cli.on('command:*', () => {
-  process.stderr.write('Run "playwriter --help" for usage information.\n')
+  process.stderr.write('Run "better-playwriter --help" for usage information.\n')
 })
 
-printTelemetryNoticeOnce()
-await cli.parse()
+if (process.argv.length === 3 && ['-v', '--version'].includes(process.argv[2])) {
+  console.log(`${COMMAND_NAME}/${VERSION}`)
+} else {
+  printTelemetryNoticeOnce()
+  await cli.parse()
+}

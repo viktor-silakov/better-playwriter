@@ -1,20 +1,20 @@
 // HTTP client for CLI to call the website's /api/cloud/* routes.
 // Auth: three methods, checked in priority order:
-//   1. PLAYWRITER_API_KEY env var → sent as x-api-key header (for CI/VPS/headless)
-//   2. PLAYWRITER_CLOUD_TOKEN env var → sent as Authorization: Bearer (for CI with session tokens)
-//   3. ~/.playwriter/auth.json file → saved by `cloud login` device flow
+//   1. BETTER_PLAYWRITER_API_KEY env var → sent as x-api-key header (for CI/VPS/headless)
+//   2. BETTER_PLAYWRITER_CLOUD_TOKEN env var → sent as Authorization: Bearer (for CI with session tokens)
+//   3. ~/.better-playwriter/auth.json file → saved by `cloud login` device flow
 
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 
-const DEFAULT_BASE_URL = 'https://playwriter.dev'
-const AUTH_FILE = path.join(os.homedir(), '.playwriter', 'auth.json')
+import { dataPath, readEnv } from './runtime-config.js'
 
-/** Build a playwriter.dev/live URL from the exact CDP WebSocket URL.
+const AUTH_FILE = dataPath('auth.json')
+
+/** Build a live-view URL from the exact CDP WebSocket URL.
  *  Passes the full wss endpoint as ?wss= param so the client connects
  *  to the exact host (Browser Use can shard across cdp1, cdp2, etc.). */
-export function buildLiveUrl(cdpUrl: string, baseUrl: string = DEFAULT_BASE_URL): string {
+export function buildLiveUrl(cdpUrl: string, baseUrl: string): string {
   // Browser Use returns https:// CDP URLs; the live viewer needs wss://
   const wssUrl = cdpUrl.replace(/^https:\/\//, 'wss://').replace(/^http:\/\//, 'ws://')
   const url = new URL('/live', baseUrl)
@@ -33,19 +33,20 @@ export interface CloudAuth {
 
 export function loadCloudAuth(): CloudAuth | null {
   // API key takes highest priority (simplest for CI/VPS/headless)
-  const apiKey = process.env.PLAYWRITER_API_KEY
-  if (apiKey) {
-    return { token: apiKey, baseUrl: process.env.PLAYWRITER_CLOUD_URL || DEFAULT_BASE_URL, isApiKey: true }
+  const baseUrl = readEnv('CLOUD_URL')
+  const apiKey = readEnv('API_KEY')
+  if (apiKey && baseUrl) {
+    return { token: apiKey, baseUrl, isApiKey: true }
   }
   // Session token env var (for CI with device flow tokens)
-  const envToken = process.env.PLAYWRITER_CLOUD_TOKEN
-  if (envToken) {
-    return { token: envToken, baseUrl: process.env.PLAYWRITER_CLOUD_URL || DEFAULT_BASE_URL }
+  const envToken = readEnv('CLOUD_TOKEN')
+  if (envToken && baseUrl) {
+    return { token: envToken, baseUrl }
   }
   try {
     const data = JSON.parse(fs.readFileSync(AUTH_FILE, 'utf-8'))
-    if (data.token) {
-      return { token: data.token, baseUrl: data.baseUrl || DEFAULT_BASE_URL }
+    if (typeof data.token === 'string' && typeof data.baseUrl === 'string' && data.baseUrl) {
+      return { token: data.token, baseUrl: data.baseUrl }
     }
   } catch {
     // No auth file
@@ -116,7 +117,7 @@ export class CloudClient {
     })
 
     if (response.status === 401) {
-      throw new Error('Cloud auth expired or invalid. Run `playwriter cloud login` or set PLAYWRITER_API_KEY.')
+      throw new Error('Cloud auth expired or invalid. Run `better-playwriter cloud login` or set BETTER_PLAYWRITER_API_KEY.')
     }
 
     if (!response.ok) {

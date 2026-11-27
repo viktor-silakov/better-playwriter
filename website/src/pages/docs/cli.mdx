@@ -1,18 +1,18 @@
 ---
 title: CLI Reference
-description: Playwriter CLI commands, flags, and usage patterns for controlling Chrome from the terminal with Playwright code.
+description: Better Playwriter CLI commands, flags, and usage patterns for controlling Chrome from the terminal with Playwright code.
 icon: lucide:terminal
 ---
 
-The Playwriter CLI sends Playwright code to your browser through a local WebSocket relay. Every command connects to the relay on `localhost:19988`, which the extension also connects to. No servers, no accounts.
+The Better Playwriter CLI sends Playwright code to your browser through a local WebSocket relay. Every command connects to the relay on `localhost:19989`, which the extension also connects to. No servers, no accounts.
 
 ## Execute code
 
 ```bash
-playwriter -s <sessionId> -e "<code>"
+better-playwriter -s <sessionId> -e "<code>"
 ```
 
-The `-s` flag specifies a **session ID** (required). Get one with `playwriter session new`. The `-e` flag takes JavaScript code that runs in a sandboxed Playwright environment.
+The `-s` flag specifies a **session ID** (required). Get one with `better-playwriter session new`. The `-e` flag takes JavaScript code that runs in a sandboxed Playwright environment.
 
 <Aside>
 <Note>
@@ -22,22 +22,22 @@ Always use **single quotes** for `-e` to prevent bash from interpreting `$`, bac
 
 ```bash
 # Open a new tab and navigate (there is no default page)
-playwriter -s 1 -e 'state.page = await context.newPage(); await state.page.goto("https://example.com")'
+better-playwriter -s 1 -e 'state.page = await context.newPage(); await state.page.goto("https://example.com")'
 
 # Or use a tab the user already opened
-playwriter -s 1 -e 'state.page = context.pages().findLast((p) => p.url().includes("example.com"))'
+better-playwriter -s 1 -e 'state.page = context.pages().findLast((p) => p.url().includes("example.com"))'
 
 # Click
-playwriter -s 1 -e 'await state.page.locator("button").click()'
+better-playwriter -s 1 -e 'await state.page.locator("button").click()'
 
 # Get title
-playwriter -s 1 -e 'console.log(await state.page.title())'
+better-playwriter -s 1 -e 'console.log(await state.page.title())'
 
 # Screenshot
-playwriter -s 1 -e 'await state.page.screenshot({ path: "/tmp/shot.png", scale: "css" })'
+better-playwriter -s 1 -e 'await state.page.screenshot({ path: "/tmp/shot.png", scale: "css" })'
 
 # Accessibility snapshot
-playwriter -s 1 -e 'console.log(await snapshot({ page: state.page }))'
+better-playwriter -s 1 -e 'console.log(await snapshot({ page: state.page }))'
 ```
 
 ### Multiline code
@@ -45,7 +45,7 @@ playwriter -s 1 -e 'console.log(await snapshot({ page: state.page }))'
 Use a **heredoc** for complex scripts:
 
 ```bash
-playwriter -s 1 -e "$(cat <<'EOF'
+better-playwriter -s 1 -e "$(cat <<'EOF'
 const links = await state.page.$$eval('a', els => els.map(e => e.href));
 console.log('Found', links.length, 'links');
 const text = await state.page.locator('body').innerText();
@@ -57,7 +57,7 @@ EOF
 Or `$'...'` syntax for simpler multiline:
 
 ```bash
-playwriter -s 1 -e $'
+better-playwriter -s 1 -e $'
 const title = await state.page.title();
 const url = state.page.url();
 console.log({ title, url });
@@ -69,7 +69,7 @@ console.log({ title, url });
 For longer scripts, use `-f`:
 
 ```bash
-playwriter -s 1 -f script.js
+better-playwriter -s 1 -f script.js
 ```
 
 The file runs in the same sandbox as `-e` with all context variables available.
@@ -79,10 +79,10 @@ The file runs in the same sandbox as `-e` with all context variables available.
 Each session is an **isolated sandbox** with its own `state` object. Browser tabs are shared across sessions, but state is not.
 
 ```bash
-playwriter session new              # create sandbox, outputs id (e.g. 1)
-playwriter session list             # show sessions + state keys
-playwriter session reset <id>       # reconnect if connection is stale
-playwriter session delete <id>      # remove session and clear state
+better-playwriter session new              # create sandbox, outputs id (e.g. 1)
+better-playwriter session list             # show sessions + state keys
+better-playwriter session reset <id>       # reconnect if connection is stale
+better-playwriter session delete <id>      # remove session and clear state
 ```
 
 ### Direct CDP connection
@@ -90,7 +90,7 @@ playwriter session delete <id>      # remove session and clear state
 Connect to Chrome's DevTools Protocol without the extension:
 
 ```bash
-playwriter session new --direct
+better-playwriter session new --direct
 ```
 
 This requires the user to accept a debugging approval dialog in Chrome. Enable debugging first at `chrome://inspect/#remote-debugging` or launch Chrome with `--remote-debugging-port=9222`.
@@ -98,9 +98,9 @@ This requires the user to accept a debugging approval dialog in Chrome. Enable d
 ## Browser management
 
 ```bash
-playwriter browser start              # auto-find and launch Chrome for Testing
-playwriter browser start /path/to/bin # launch specific binary
-playwriter browser list               # list all available browsers
+better-playwriter browser start              # auto-find and launch Chrome for Testing
+better-playwriter browser start /path/to/bin # launch specific binary
+better-playwriter browser list               # list all available browsers
 ```
 
 `browser start` launches Chrome with the bundled extension pre-loaded.
@@ -110,17 +110,17 @@ playwriter browser list               # list all available browsers
 Connect to a relay running on another machine:
 
 ```bash
-playwriter --host https://my-machine-tunnel.traforo.dev --token SECRET session new
-playwriter --host https://my-machine-tunnel.traforo.dev --token SECRET -s 1 -e "..."
+better-playwriter --host https://my-machine-tunnel.traforo.dev --token SECRET session new
+better-playwriter --host https://my-machine-tunnel.traforo.dev --token SECRET -s 1 -e "..."
 ```
 
 Or with environment variables:
 
 ```bash
-export PLAYWRITER_HOST=https://my-machine-tunnel.traforo.dev
-export PLAYWRITER_TOKEN=SECRET
-playwriter session new
-playwriter -s 1 -e 'state.page = await context.newPage(); await state.page.goto("https://example.com")'
+export BETTER_PLAYWRITER_HOST=https://my-machine-tunnel.traforo.dev
+export BETTER_PLAYWRITER_TOKEN=SECRET
+better-playwriter session new
+better-playwriter -s 1 -e 'state.page = await context.newPage(); await state.page.goto("https://example.com")'
 ```
 
 See [Remote Access](./remote-access.mdx) for the full guide.
@@ -130,9 +130,9 @@ See [Remote Access](./remote-access.mdx) for the full guide.
 Start the relay server explicitly (useful for remote access and Docker):
 
 ```bash
-playwriter serve --token MY_SECRET        # binds to 0.0.0.0, requires --token
-playwriter serve --host localhost         # binds to 127.0.0.1, no token needed
-playwriter serve --token MY_SECRET --replace  # kill existing server first
+better-playwriter serve --token MY_SECRET        # binds to 0.0.0.0, requires --token
+better-playwriter serve --host localhost         # binds to 127.0.0.1, no token needed
+better-playwriter serve --token MY_SECRET --replace  # kill existing server first
 ```
 
 The relay starts automatically when you use the CLI locally. Use `serve` explicitly when you need it running persistently for remote clients.
@@ -143,29 +143,29 @@ Record a workflow you perform manually in the browser as events an agent can tur
 into a reusable skill. See [Skill Recorder](/docs/skill-recorder) for the full guide:
 
 ```bash
-playwriter recorder start                 # start recording user actions (runs in relay daemon)
-playwriter recorder start -s 1            # attach to an existing session
-playwriter recorder stop                  # stop the only active recording
-playwriter recorder stop 3                # stop recording 3 when several are active
-playwriter recorder events                # thin event timeline of the latest recording
-playwriter recorder events 4 7            # full details of events 4 and 7
-playwriter recorder status                # list active recordings and their page urls
+better-playwriter recorder start                 # start recording user actions (runs in relay daemon)
+better-playwriter recorder start -s 1            # attach to an existing session
+better-playwriter recorder stop                  # stop the only active recording
+better-playwriter recorder stop 3                # stop recording 3 when several are active
+better-playwriter recorder events                # thin event timeline of the latest recording
+better-playwriter recorder events 4 7            # full details of events 4 and 7
+better-playwriter recorder status                # list active recordings and their page urls
 ```
 
 ## Other commands
 
 ```bash
-playwriter logfile                        # print log file path
-playwriter skill                          # print agent instructions
-playwriter completions install            # install shell completions (zsh/bash)
+better-playwriter logfile                        # print log file path
+better-playwriter skill                          # print agent instructions
+better-playwriter completions install            # install shell completions (zsh/bash)
 ```
 
 ## Global flags
 
 | Flag | Description |
 |---|---|
-| `--host <host>` | Remote relay host (or `PLAYWRITER_HOST` env var) |
-| `--token <token>` | Auth token (or `PLAYWRITER_TOKEN` env var) |
+| `--host <host>` | Remote relay host (or `BETTER_PLAYWRITER_HOST` env var) |
+| `--token <token>` | Auth token (or `BETTER_PLAYWRITER_TOKEN` env var) |
 | `-s, --session <id>` | Session ID (required for `-e` and `-f`) |
 | `-e, --eval <code>` | Execute JavaScript and exit |
 | `-f, --file <path>` | Execute JavaScript from file |

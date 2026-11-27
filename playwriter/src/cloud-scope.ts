@@ -71,7 +71,7 @@ export function toCloudCookieParams({
 function getAuthenticatedCloudClient(auth: CloudAuth | undefined): CloudClient {
   const resolvedAuth = auth ?? loadCloudAuth()
   if (!resolvedAuth) {
-    throw new Error('Cloud authentication is required. Run `playwriter cloud login` or set PLAYWRITER_API_KEY.')
+    throw new Error('Cloud authentication is required. Run `better-playwriter cloud login` or set BETTER_PLAYWRITER_API_KEY.')
   }
   return new CloudClient(resolvedAuth)
 }
@@ -115,7 +115,7 @@ function findCloudBrowser({
   throw new Error(
     available.length > 0
       ? `Cloud browser "${id}" is not active. Available browsers: ${available.join(', ')}.`
-      : 'No active cloud browsers. Run `playwriter session new --browser cloud` first.',
+      : 'No active cloud browsers. Run `better-playwriter session new --browser cloud` first.',
   )
 }
 

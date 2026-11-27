@@ -1,5 +1,5 @@
 ---
-'playwriter': patch
+'better-playwriter': patch
 ---
 
 Let users attach Playwriter's own pages (welcome, tutorial) by clicking the extension icon again.

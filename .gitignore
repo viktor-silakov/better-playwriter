@@ -18,7 +18,7 @@ claude-extension
 
 # generated skill docs (source of truth: playwriter/src/skill.md)
 website/public/SKILL.md
-website/public/.well-known/skills/playwriter/SKILL.md
+website/public/.well-known/skills/*/SKILL.md
 
 # opensrc - source code for packages
 opensrc/
@@ -34,3 +34,14 @@ dist-release
 .env.preview
 .env.prod
 .dev.vars
+
+# Local agent instructions and machine-specific settings
+AGENTS.md
+AGENTS.local.md
+CLAUDE.local.md
+/.agents/
+/.claude/settings.local.json
+/.codex/config.toml
+.env
+.env.*
+gha-creds-*.json

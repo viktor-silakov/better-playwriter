@@ -1,3 +1,4 @@
+import { readEnv } from './runtime-config.js'
 /**
  * Relay session API shared by the CLI and the MCP: browser discovery, session
  * create/list/update/delete/reset and execute over the relay /cli/* endpoints.
@@ -34,12 +35,12 @@ const executeDispatcher = new Agent({ headersTimeout: 0, bodyTimeout: 0 })
 const NO_CHROME_ERROR = dedent`
   No Chrome browser found. Install one first:
 
-    playwriter browser install
+    better-playwriter browser install
 
   This downloads Chrome for Testing from Google.
 `
 
-/** Where the relay runs. Missing fields fall back to PLAYWRITER_HOST and PLAYWRITER_TOKEN. */
+/** Where the relay runs. Missing fields fall back to BETTER_PLAYWRITER_HOST and BETTER_PLAYWRITER_TOKEN. */
 export type RelayTarget = { host?: string; token?: string }
 
 export type SessionClient = 'cli' | 'mcp'
@@ -53,21 +54,21 @@ export class ExtensionNotConnectedError extends Error {
 }
 
 export function isLocalRelay(relay: RelayTarget): boolean {
-  return !relay.host && !process.env.PLAYWRITER_HOST
+  return !relay.host && !readEnv('HOST')
 }
 
 export function getServerUrl(host?: string): string {
-  const serverHost = host || process.env.PLAYWRITER_HOST || '127.0.0.1'
+  const serverHost = host || readEnv('HOST') || '127.0.0.1'
   return parseRelayHost(serverHost, RELAY_PORT).httpBaseUrl
 }
 
-/** Every relay request sends the token the same way. Falls back to PLAYWRITER_TOKEN. */
+/** Every relay request sends the token the same way. Falls back to BETTER_PLAYWRITER_TOKEN. */
 export function buildAuthHeaders({ token, json }: { token?: string; json?: boolean }): Record<string, string> {
   const headers: Record<string, string> = {}
   if (json) {
     headers['Content-Type'] = 'application/json'
   }
-  const effectiveToken = token || process.env.PLAYWRITER_TOKEN
+  const effectiveToken = token || readEnv('TOKEN')
   if (effectiveToken) {
     headers['Authorization'] = `Bearer ${effectiveToken}`
   }
@@ -319,10 +320,10 @@ async function getCloudUnavailableMessage({
     return dedent`
       Cloud browsers require authentication.
 
-        Option 1: Run \`playwriter cloud login\` (interactive browser flow)
-        Option 2: Set PLAYWRITER_API_KEY env var (create one at playwriter.dev/dashboard)
+        Option 1: Run \`better-playwriter cloud login\` (interactive browser flow)
+        Option 2: Set BETTER_PLAYWRITER_API_KEY env var (use your configured cloud service)
 
-        Then subscribe at playwriter.dev/dashboard and create a session with browser "cloud".
+        Follow your configured cloud service’s setup instructions, then create a session with browser "cloud".
     `
   }
   const tokenValid = await getCloudClient()
@@ -330,11 +331,11 @@ async function getCloudUnavailableMessage({
     .then(() => true)
     .catch(() => false)
   if (!tokenValid) {
-    return 'Cloud authentication expired. Run `playwriter cloud login` or set PLAYWRITER_API_KEY env var.'
+    return 'Cloud authentication expired. Run `better-playwriter cloud login` or set BETTER_PLAYWRITER_API_KEY env var.'
   }
   return dedent`
     No cloud browser sessions available. You are logged in, but you may need an active subscription.
-    Run \`playwriter cloud subscribe\` to manage your plan, then create a session with browser "cloud".
+    Run \`better-playwriter cloud subscribe\` to manage your plan, then create a session with browser "cloud".
   `
 }
 
@@ -451,7 +452,7 @@ export async function newSession(options: NewSessionOptions): Promise<NewSession
       warnings.push(result.warning)
     }
     if (tabGroupRequested && result.tabGroup === undefined) {
-      warnings.push('The running relay does not support tab groups. Restart it (kill port 19988) after updating playwriter.')
+      warnings.push('The running relay does not support tab groups. Restart it after updating playwriter.')
     }
   }
   const created = (session: Omit<CreatedSession, 'notes'> & { notes?: string[] }): NewSessionResult => {
@@ -483,7 +484,7 @@ export async function newSession(options: NewSessionOptions): Promise<NewSession
     const cloudClient = getCloudClient()
     const auth = loadCloudAuth()
     if (!cloudClient || !auth) {
-      throw new Error('Not logged in to cloud. Run `playwriter cloud login` first.')
+      throw new Error('Not logged in to cloud. Run `better-playwriter cloud login` first.')
     }
     const blockProxyResources = computeBlockProxyResources(options)
     const vm = await (async () => {
@@ -760,13 +761,13 @@ export async function updateSession({
       }
     })()
     if (response.status === 404 && !error) {
-      throw new Error('The running relay does not support session update. Restart it (kill port 19988) after updating playwriter.')
+      throw new Error('The running relay does not support session update. Restart it after updating playwriter.')
     }
     throw new Error(error || `${response.status} ${text}`)
   }
   const result = (await response.json()) as UpdateSessionResult
   if (patchright !== undefined && result.patchright === undefined) {
-    throw new Error('The running relay does not support switching patchright. Restart it (kill port 19988) after updating playwriter.')
+    throw new Error('The running relay does not support switching patchright. Restart it after updating playwriter.')
   }
   return result
 }

@@ -1,23 +1,16 @@
 /**
- * Hero sections for the Playwriter landing and cloud browsers pages.
+ * Hero sections for the Better Playwriter site.
  *
  * HeroSection / CloudHeroSection: stay within the Above column (page width)
  * via w-full, same as gpuix's hero-section.tsx.
  * ChangelogHeroSection: still breaks out full-bleed via w-screen + negative margin.
- * All share the same VideoBackgroundShader background and star rating badge.
+ * All share the same VideoBackgroundShader background.
  */
 'use client'
 
 import { useEffect, useState } from 'react'
 import { VideoBackgroundShader } from '@holocron.so/vite/mdx'
-
-function GithubIcon({ size = 14 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox='0 0 24 24' fill='currentColor'>
-      <path d='M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z' />
-    </svg>
-  )
-}
+import { extensionInstallUrl } from '../lib/branding.ts'
 
 /** Chrome icon from Element Plus, inherits currentColor. */
 function ChromeIcon({ size = 16 }: { size?: number }) {
@@ -41,69 +34,10 @@ function GoogleIcon({ size = 16 }: { size?: number }) {
   )
 }
 
-function StarIcon({ filled, half }: { filled?: boolean; half?: boolean }) {
-  if (half) {
-    return (
-      <svg width={14} height={14} viewBox='0 0 24 24'>
-        <defs>
-          <linearGradient id='half-star'>
-            <stop offset='50%' stopColor='#FACC15' />
-            <stop offset='50%' stopColor='transparent' />
-          </linearGradient>
-        </defs>
-        <path
-          d='M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z'
-          fill='url(#half-star)'
-          stroke='#FACC15'
-          strokeWidth={1.5}
-        />
-      </svg>
-    )
-  }
-  return (
-    <svg width={14} height={14} viewBox='0 0 24 24'>
-      <path
-        d='M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z'
-        fill={filled ? '#FACC15' : 'none'}
-        stroke='#FACC15'
-        strokeWidth={1.5}
-      />
-    </svg>
-  )
-}
-
-function StarRating({ rating }: { rating: number }) {
-  const fullStars = Math.floor(rating)
-  const hasHalf = rating - fullStars >= 0.3
-  const stars: React.ReactNode[] = Array.from({ length: 5 }, (_, i) => {
-    if (i < fullStars) {
-      return <StarIcon key={i} filled />
-    }
-    if (i === fullStars && hasHalf) {
-      return <StarIcon key={i} half />
-    }
-    return <StarIcon key={i} />
-  })
-
-  return (
-    <a
-      href='https://chromewebstore.google.com/detail/playwriter/jfeammnjpkecdekppnclgkkffahnhfhe'
-      target='_blank'
-      rel='noopener noreferrer'
-      className='flex items-center gap-2 mt-5 no-underline text-foreground/50 hover:text-foreground/70 transition-colors'
-    >
-      <div className='flex items-center gap-0.5'>{stars}</div>
-      <span className='text-[13px] font-medium'>{rating}</span>
-      <span className='text-[12px] text-foreground/40'>·</span>
-      <span className='text-[12px] text-foreground/40'>20k+ users</span>
-    </a>
-  )
-}
-
 // note: canvasClassName opacity utilities do NOT work — VideoBackgroundShader sets
 // inline `opacity: 1` on the same element once the canvas is ready, overriding any
 // class-based opacity. Dim via an outer wrapper div instead.
-function HeroBackground({ dotColor = 'rgba(255, 106, 0, 0.7)' }: { dotColor?: string }) {
+function HeroBackground({ dotColor = 'rgba(71, 112, 232, 0.7)' }: { dotColor?: string }) {
   return (
     <div className='absolute inset-0 w-full h-full opacity-70'>
       <VideoBackgroundShader
@@ -112,7 +46,7 @@ function HeroBackground({ dotColor = 'rgba(255, 106, 0, 0.7)' }: { dotColor?: st
         dotStyle='ascii'
         dotColor={dotColor}
         dotSize={10}
-        chars=' .:-~=playwriter'
+        chars=' .:-~=+*#'
         animSpeed={3}
         gamma={0.8}
         enableMask={false}
@@ -126,10 +60,6 @@ function HeroBackground({ dotColor = 'rgba(255, 106, 0, 0.7)' }: { dotColor?: st
 }
 
 const HERO_FONT = "'IvarText', serif"
-
-const CHROME_EXTENSION_URL =
-  'https://chromewebstore.google.com/detail/playwriter/jfeammnjpkecdekppnclgkkffahnhfhe'
-const GITHUB_URL = 'https://github.com/remorses/playwriter'
 
 export function HeroSection() {
   const [fontsReady, setFontsReady] = useState(false)
@@ -162,34 +92,26 @@ export function HeroSection() {
           className='flex flex-col items-center leading-[1.1] text-[32px] sm:text-[42px] md:text-[52px] text-foreground'
           style={{ fontFamily: HERO_FONT }}
         >
-          <span>let agents control</span>
-          <span>your Chrome browser</span>
+          <span>Control Chrome with</span>
+          <span>Better Playwriter</span>
         </h1>
 
         {/* CTA buttons */}
         <div className='flex gap-2.5 flex-wrap justify-center'>
           <a
-            href={CHROME_EXTENSION_URL}
-            target='_blank'
-            rel='noopener noreferrer'
+            href={extensionInstallUrl}
             className='inline-flex items-center gap-2 rounded-md bg-white text-black backdrop-blur-sm h-9 px-4 text-sm font-medium no-underline hover:opacity-90 transition-opacity cursor-pointer'
           >
             <ChromeIcon size={16} />
-            Get Chrome Extension
+            Install extension
           </a>
           <a
-            href={GITHUB_URL}
-            target='_blank'
-            rel='noopener noreferrer'
+            href='/docs/quick-start'
             className='inline-flex items-center gap-2 rounded-md backdrop-blur-sm h-9 px-4 text-sm font-medium text-foreground no-underline hover:bg-accent/50 transition-colors cursor-pointer'
           >
-            <GithubIcon size={14} />
-            GitHub
+            Quick start
           </a>
         </div>
-
-        {/* 4.7 star rating */}
-        <StarRating rating={4.7} />
       </div>
     </div>
   )
@@ -229,7 +151,7 @@ export function CloudHeroSection() {
 
   return (
     <div className='relative mt-4 lg:mt-8 mb-6 lg:mb-10 w-full flex flex-col items-center overflow-hidden'>
-      <HeroBackground dotColor='rgba(255, 50, 50, 0.7)' />
+      <HeroBackground />
 
       {/* Foreground content */}
       <div
@@ -243,8 +165,7 @@ export function CloudHeroSection() {
           className='flex flex-col items-center leading-[1.1] text-[32px] sm:text-[42px] md:text-[52px] text-foreground'
           style={{ fontFamily: HERO_FONT }}
         >
-          <span>stealth browsers that</span>
-          <span>bypass bot detection</span>
+          Cloud browser management
         </h1>
 
         {/* CTA button */}
@@ -257,9 +178,6 @@ export function CloudHeroSection() {
             Login with Google
           </a>
         </div>
-
-        {/* 4.7 star rating */}
-        <StarRating rating={4.7} />
       </div>
     </div>
   )

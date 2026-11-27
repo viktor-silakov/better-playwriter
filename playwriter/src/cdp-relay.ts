@@ -1,3 +1,5 @@
+import { DEFAULT_RELAY_PORT } from './brand.js'
+import { readEnv, dataPath, getRelayPort } from './runtime-config.js'
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { createAdaptorServer, type HttpBindings } from '@hono/node-server'
@@ -29,7 +31,6 @@ Buffer.prototype[util.inspect.custom] = function () {
 
 import fs from 'node:fs'
 import crypto from 'node:crypto'
-import os from 'node:os'
 import path from 'node:path'
 import { EventEmitter } from 'node:events'
 import { VERSION, EXTENSION_IDS } from './utils.js'
@@ -39,14 +40,14 @@ import * as relayState from './relay-state.js'
 import { createHumanInput, isPacedInput, shouldHumanizeInput } from './human-input.js'
 import { WebSocket as NodeWebSocket } from 'ws'
 import { getRemoteDialRetryMs, parseRemoteControlUrl, REMOTE_DIAL_GIVE_UP_MS, type RemoteHelloMessage } from './remote-control.js'
-import type { CloudAuth } from './cloud-client.js'
+import { loadCloudAuth, type CloudAuth } from './cloud-client.js'
 import { recordExecute, trackEvent, type SessionKind } from './telemetry.js'
 import type { ExecutorManager } from './executor.js'
 
 /** Session id counter of the relay daemon. One file per port, so relays on other ports never share it. */
 export function defaultSessionCounterPath(port: number): string {
-  const name = port === 19988 ? 'session-counter.json' : `session-counter-${port}.json`
-  return path.join(os.homedir(), '.playwriter', name)
+  const name = port === DEFAULT_RELAY_PORT ? 'session-counter.json' : `session-counter-${port}.json`
+  return dataPath(name)
 }
 
 function readSessionCounter(filePath: string | undefined): number {
@@ -171,7 +172,7 @@ export type RelayServer = {
 }
 
 export async function startPlayWriterCDPRelayServer({
-  port = Number(process.env.PLAYWRITER_PORT) || 19988,
+  port = getRelayPort(),
   host = '127.0.0.1',
   token,
   logger,
@@ -835,7 +836,7 @@ export async function startPlayWriterCDPRelayServer({
           })
         : undefined
     if (commandTarget && !canSee(commandTarget)) {
-      throw new Error(`Tab ${commandTarget.targetId} belongs to another Playwriter session`)
+      throw new Error(`Tab ${commandTarget.targetId} belongs to another Better Playwriter session`)
     }
     // CLI sessions: the relay owns focus emulation, so drop Playwright's own setting
     const focusSessionId = client?.sessionId && !sharedTabSessionIds.has(client.sessionId) ? client.sessionId : undefined
@@ -1570,14 +1571,14 @@ export async function startPlayWriterCDPRelayServer({
   app
     .on(['GET', 'PUT'], '/json/version', (c) => {
       return c.json({
-        Browser: `Playwriter/${VERSION}`,
+        Browser: `Better Playwriter/${VERSION}`,
         'Protocol-Version': '1.3',
         webSocketDebuggerUrl: getCdpWsUrl(c),
       })
     })
     .on(['GET', 'PUT'], '/json/version/', (c) => {
       return c.json({
-        Browser: `Playwriter/${VERSION}`,
+        Browser: `Better Playwriter/${VERSION}`,
         'Protocol-Version': '1.3',
         webSocketDebuggerUrl: getCdpWsUrl(c),
       })
@@ -2700,7 +2701,7 @@ export async function startPlayWriterCDPRelayServer({
   }
 
   async function connectRemoteExtension({ url, sessionId }: { url: string; sessionId: string }): Promise<relayState.ExtensionEntry> {
-    const { wsUrl } = parseRemoteControlUrl(url)
+    const { wsUrl } = parseRemoteControlUrl(url, { baseUrl: readEnv('REMOTE_URL') ?? null })
     // Key by the dialed wsUrl: it is unique per tunnel id in every accepted input
     // form, so two shared browsers on one host never collapse into one dial.
     const urlKey = wsUrl
@@ -2826,9 +2827,9 @@ export async function startPlayWriterCDPRelayServer({
 
   function sessionNotFoundMessage(sessionId: string): string {
     if (Number(sessionId) < nextSessionNumber) {
-      return `Session ${sessionId} ended or was lost when the relay restarted. Run 'playwriter session new' to get a new one.`
+      return `Session ${sessionId} ended or was lost when the relay restarted. Run 'better-playwriter session new' to get a new one.`
     }
-    return `Session ${sessionId} not found. Run 'playwriter session new' first.`
+    return `Session ${sessionId} not found. Run 'better-playwriter session new' first.`
   }
 
   /** Tab ownership key the extension stores as groupKey. Includes the relay start, so it never matches tabs of an older relay. */
@@ -2959,7 +2960,7 @@ export async function startPlayWriterCDPRelayServer({
     }
   })
 
-  const DEFAULT_EXEC_TIMEOUT = Number(process.env.PLAYWRITER_EXEC_TIMEOUT) || 10000
+  const DEFAULT_EXEC_TIMEOUT = Number(readEnv('EXEC_TIMEOUT')) || 10000
   const DEFAULT_DRAIN_TIMEOUT_MS = 30_000
   const MAX_DRAIN_TIMEOUT_MS = 120_000
 
@@ -3016,7 +3017,7 @@ export async function startPlayWriterCDPRelayServer({
     if (draining) {
       return c.json(
         {
-          text: "The Playwriter relay is restarting to upgrade, and its sessions end. In a few seconds run 'playwriter session new' and try again. Tabs stay open.",
+          text: "The Better Playwriter relay is restarting to upgrade, and its sessions end. In a few seconds run 'better-playwriter session new' and try again. Tabs stay open.",
           images: [],
           screenshots: [],
           isError: true,
@@ -3292,7 +3293,7 @@ export async function startPlayWriterCDPRelayServer({
             timeout: 10000,
           })) as UpdateTabGroupResult | undefined
           if (result?.success !== true) {
-            return 'The remote Playwriter extension is too old to update the remote tab group.'
+            return 'The remote Better Playwriter extension is too old to update the remote tab group.'
           }
           return undefined
         } catch (error) {
@@ -3456,11 +3457,11 @@ export async function startPlayWriterCDPRelayServer({
         if (result?.success === true) {
           movedTabs = result.movedTabs || 0
         } else {
-          warning = `Your Playwriter extension is too old to update existing tabs. New tabs will still use the new group settings.`
+          warning = `Your Better Playwriter extension is too old to update existing tabs. New tabs will still use the new group settings.`
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        warning = `Extension could not update the tab group (update the Playwriter extension?): ${message}. New tabs will still use the new group settings.`
+        warning = `Extension could not update the tab group (update the Better Playwriter extension?): ${message}. New tabs will still use the new group settings.`
         logger?.log(pc.yellow(`[session ${sessionId}] ${warning}`))
       }
 
@@ -3521,7 +3522,7 @@ export async function startPlayWriterCDPRelayServer({
             timeout: 10000,
           })) as CloseTabsForKeyResult | undefined
           if (result?.success !== true) {
-            closeTabsWarning = 'Your Playwriter extension cannot clean up session tabs. Update the extension.'
+            closeTabsWarning = 'Your Better Playwriter extension cannot clean up session tabs. Update the extension.'
           }
         } catch (error) {
           closeTabsWarning = `Could not clean up session tabs: ${error instanceof Error ? error.message : String(error)}`
@@ -3564,7 +3565,7 @@ export async function startPlayWriterCDPRelayServer({
   // ============================================================================
   // Action Record Endpoints - Record user interactions as a JSON array for skill
   // generation (playwriter recorder start/stop). Runs inside the relay daemon so
-  // recording survives CLI exits. Events persist in ~/.playwriter/recordings/.
+  // recording survives CLI exits. Events persist in ~/.better-playwriter/recordings/.
   // ============================================================================
 
   // Memoized as a promise so concurrent first calls share one manager instance
@@ -3625,7 +3626,7 @@ export async function startPlayWriterCDPRelayServer({
           allowFallback: relayState.getLocalExtensions(store.getState()).length === 1,
         })
         if (!conn) {
-          throw new Error('Extension is not connected. Enable Playwriter on a tab first.')
+          throw new Error('Extension is not connected. Enable Better Playwriter on a tab first.')
         }
         const createdId = allocateSessionId()
         manager.getExecutor({
@@ -3753,7 +3754,7 @@ export async function startPlayWriterCDPRelayServer({
   // if the relay process crashes. On startup, read the file and disconnect
   // any leftover VMs (best-effort).
 
-  const CLOUD_SESSIONS_FILE = path.join(os.homedir(), '.playwriter', 'cloud-sessions.json')
+  const CLOUD_SESSIONS_FILE = dataPath('cloud-sessions.json')
 
   interface PersistedCloudSession {
     cloudSessionId: string
@@ -3793,6 +3794,9 @@ export async function startPlayWriterCDPRelayServer({
   }
 
   function cleanupOrphanedCloudSessions(): void {
+    const cloudAuth = loadCloudAuth()
+    if (!cloudAuth) return
+
     let raw: string
     try {
       raw = fs.readFileSync(CLOUD_SESSIONS_FILE, 'utf-8')
@@ -3824,6 +3828,7 @@ export async function startPlayWriterCDPRelayServer({
     try { fs.unlinkSync(CLOUD_SESSIONS_FILE) } catch { /* ignore */ }
 
     for (const entry of entries) {
+      if (entry.cloudBaseUrl !== cloudAuth.baseUrl) continue
       disconnectCloudVm({
         cloudSessionId: entry.cloudSessionId,
         cloudBaseUrl: entry.cloudBaseUrl,

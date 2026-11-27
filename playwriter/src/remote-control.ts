@@ -11,7 +11,7 @@
  *
  * Agents connect with the tunnel id, not a viewer URL:
  *
- *     playwriter session new --remote {tunnelId}
+ *     better-playwriter session new --remote {tunnelId}
  *
  * The viewer page still exists (hash carries the id) but is not advertised: playback
  * is too slow. parseRemoteControlUrl accepts a bare id or a leftover viewer/tunnel URL.
@@ -164,11 +164,16 @@ export function extractViewerTunnelId(url: string): string | null {
  * The tunnel host form keeps using the host verbatim, so older and self-hosted
  * tunnel domains still work; a bare id or viewer form derives a host from the id.
  */
-export function parseRemoteControlUrl(url: string): { wsUrl: string; host: string } {
+export function parseRemoteControlUrl(
+  url: string,
+  { baseUrl = REMOTE_VIEWER_BASE_URL }: { baseUrl?: string | null } = {},
+): { wsUrl: string; host: string } {
   const trimmed = url.trim()
-  const resolved = /^[a-z0-9-]{1,63}$/.test(trimmed)
-    ? buildRemoteControlUrl({ tunnelId: trimmed })
-    : trimmed
+  const isBareId = /^[a-z0-9-]{1,63}$/.test(trimmed)
+  if (isBareId && !baseUrl) {
+    throw new Error('Set BETTER_PLAYWRITER_REMOTE_URL or pass the full remote control URL.')
+  }
+  const resolved = isBareId && baseUrl ? buildRemoteControlUrl({ tunnelId: trimmed, baseUrl }) : trimmed
   let parsed: URL
   try {
     parsed = new URL(resolved)
@@ -183,13 +188,13 @@ export function parseRemoteControlUrl(url: string): { wsUrl: string; host: strin
 
   if (parsed.pathname.replace(/\/$/, '') === REMOTE_VIEWER_PATH && !parsed.hash) {
     throw new Error(
-      `Remote control id is missing. Pass the id from the copied prompt, for example:\n  playwriter session new --remote your-id`,
+      `Remote control id is missing. Pass the id from the copied prompt, for example:\n  better-playwriter session new --remote your-id`,
     )
   }
 
   const viewerTunnelId = extractViewerTunnelId(resolved)
   if (viewerTunnelId) {
-    return resolvePathFormTunnel(viewerTunnelId)
+    return resolvePathFormTunnel(viewerTunnelId, { host: parsed.host, isSecure })
   }
 
   // A pasted path-form tunnel URL round-trips instead of losing the id.
@@ -404,9 +409,9 @@ export function buildRemoteControlPrompt({ id }: { id: string }): string {
   return dedent`
     Connect to my Chrome browser:
 
-    npx -y playwriter@latest session new --remote ${id}
+    npx -y better-playwriter@latest session new --remote ${id}
 
-    Then use the printed session id. Read https://playwriter.dev/SKILL.md. NEVER share this id.
+    Then use the printed session id. Run better-playwriter skill for usage instructions. NEVER share this id.
   `
 }
 

@@ -67,7 +67,7 @@ export function getAuth() {
 export function getBaseUrl(): string {
   const override = env.BETTER_AUTH_URL
   if (typeof override === 'string' && override) return override
-  return 'https://playwriter.dev'
+  return 'http://localhost:8044'
 }
 
 // ── Session helpers ─────────────────────────────────────────────────

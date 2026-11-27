@@ -1,3 +1,4 @@
+import { readEnv } from './runtime-config.js'
 import fs from 'node:fs'
 import { LOG_CDP_FILE_PATH, PRIVATE_FILE_MODE, preparePrivateLogFile, redactRemoteControlSecrets } from './utils.js'
 
@@ -16,7 +17,7 @@ export type CdpLogger = {
   logFilePath: string
 }
 
-const DEFAULT_MAX_STRING_LENGTH = Number(process.env.PLAYWRITER_CDP_LOG_MAX_STRING_LENGTH || 2000)
+const DEFAULT_MAX_STRING_LENGTH = Number(readEnv('CDP_LOG_MAX_STRING_LENGTH') || 2000)
 const EXCLUDED_METHODS = new Set(['Page.screencastFrame'])
 // Session secrets in headers and cookie results. Header names keep their case, so compare lowercased.
 const REDACTED_KEYS = new Set(['cookie', 'set-cookie', 'authorization', 'proxy-authorization', 'cookies', 'headerstext'])
@@ -68,7 +69,7 @@ export function createCdpLogger({
   let queue: Promise<void> = Promise.resolve()
   let lineCount = 0
   const maxLength = maxStringLength ?? DEFAULT_MAX_STRING_LENGTH
-  const envMaxEntries = Number(process.env.PLAYWRITER_CDP_LOG_MAX_ENTRIES)
+  const envMaxEntries = Number(readEnv('CDP_LOG_MAX_ENTRIES'))
   const resolvedMaxEntries = resolvePositiveInt(maxEntries, resolvePositiveInt(envMaxEntries, DEFAULT_MAX_ENTRIES))
   // Keep half the entries after rotation so we don't rotate on every write
   const keepAfterRotation = Math.floor(resolvedMaxEntries / 2)

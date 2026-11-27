@@ -1,0 +1,81 @@
+name: Chrome Web Store
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.event_name == 'release' && !github.event.release.prerelease && startsWith(github.event.release.tag_name, 'extension@')
+    uses: ./.github/workflows/ci.yml
+    with:
+      release-tag: ${{ github.event.release.tag_name }}
+
+  store:
+    if: |
+      always() && (
+        (github.event_name == 'release' && needs.build.result == 'success') ||
+        (github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' && github.ref_name == github.event.repository.default_branch)
+      )
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: chrome-web-store
+    concurrency:
+      group: chrome-web-store
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check the permitted publishing repository
+        env:
+          CWS_REPOSITORY: ${{ vars.CWS_REPOSITORY }}
+        run: |
+          if [[ -z "$CWS_REPOSITORY" || "$GITHUB_REPOSITORY" != "$CWS_REPOSITORY" ]]; then
+            echo 'Configure CWS_REPOSITORY to this repository before using the Chrome Web Store workflow.'
+            exit 1
+          fi
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Check the release card ID
+        if: github.event_name == 'release'
+        env:
+          CWS_EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+        run: |
+          CLI_STORE_ID=$(node -p 'require("./playwriter/package.json").betterPlaywriter?.storeId ?? ""')
+          if [[ ! "$CLI_STORE_ID" =~ ^[a-p]{32}$ || "$CLI_STORE_ID" != "$CWS_EXTENSION_ID" ]]; then
+            echo 'The configured extension ID must match the public Store ID in the CLI package.'
+            exit 1
+          fi
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: github.event_name == 'release'
+        with:
+          name: chrome-web-store-zip
+          path: store-package
+      - name: Request a Chrome Web Store access token
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ secrets.CWS_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.CWS_SERVICE_ACCOUNT }}
+          create_credentials_file: false
+          export_environment_variables: false
+          token_format: access_token
+          access_token_lifetime: 300s
+          access_token_scopes: ${{ github.event_name == 'release' && 'https://www.googleapis.com/auth/chromewebstore' || 'https://www.googleapis.com/auth/chromewebstore.readonly' }}
+      - name: Submit the verified version or report status
+        env:
+          ACTION: ${{ github.event_name == 'release' && 'publish' || 'status' }}
+          CWS_PUBLISHER_ID: ${{ secrets.CWS_PUBLISHER_ID }}
+          CWS_EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+          CWS_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          ZIP: ${{ needs.build.outputs.filename }}
+          SHA256: ${{ needs.build.outputs.sha256 }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: node scripts/chrome-web-store.mjs "$ACTION" "store-package/$ZIP" "$VERSION" "$SHA256"

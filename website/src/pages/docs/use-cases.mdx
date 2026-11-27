@@ -1,19 +1,19 @@
 ---
 title: Use Cases
-description: Practical Playwriter examples for QA testing, task automation, API reverse engineering, and web development in your real Chrome.
+description: Practical Better Playwriter examples for QA testing, task automation, API reverse engineering, and web development in your real Chrome.
 icon: lucide:lightbulb
 ---
 
-Playwriter gives agents and scripts access to your **real Chrome browser** with all your logins, extensions, and cookies. Here are some things people use it for.
+Better Playwriter gives agents and scripts access to your **real Chrome browser** with all your logins, extensions, and cookies. Here are some things people use it for.
 
 ## Web development
 
-Let your coding agent **verify its own work** in a real browser. The agent writes code, then uses Playwriter to navigate to the dev server, check the rendered page, take screenshots, and fix issues, all in one loop.
+Let your coding agent **verify its own work** in a real browser. The agent writes code, then uses Better Playwriter to navigate to the dev server, check the rendered page, take screenshots, and fix issues, all in one loop.
 
 ```bash
 # Agent writes React component, then verifies
-playwriter -s 1 -e 'state.page = await context.newPage(); await state.page.goto("http://localhost:3000/new-feature")'
-playwriter -s 1 -e 'console.log(await snapshot({ page: state.page }))'
+better-playwriter -s 1 -e 'state.page = await context.newPage(); await state.page.goto("http://localhost:3000/new-feature")'
+better-playwriter -s 1 -e 'console.log(await snapshot({ page: state.page }))'
 # Agent sees broken layout, fixes the code, checks again
 ```
 
@@ -23,7 +23,7 @@ The agent works in **your browser**, so it sees the same thing you do. No headle
 </Note>
 </Aside>
 
-Because Playwriter exposes the **full Playwright API**, agents can also set breakpoints with `createDebugger`, inspect CSS with `getStylesForLocator`, live-edit source with `createEditor`, and intercept network requests. All from the same session.
+Because Better Playwriter exposes the **full Playwright API**, agents can also set breakpoints with `createDebugger`, inspect CSS with `getStylesForLocator`, live-edit source with `createEditor`, and intercept network requests. All from the same session.
 
 ## QA testing
 
@@ -31,12 +31,12 @@ Run tests against your **real Chrome profile** with real login state. No need to
 
 ```bash
 # Test authenticated flows without login setup
-playwriter -s 1 -e 'state.page = await context.newPage(); await state.page.goto("https://myapp.com/dashboard")'
-playwriter -s 1 -e 'console.log(await snapshot({ page: state.page, search: /error|warning/i }))'
+better-playwriter -s 1 -e 'state.page = await context.newPage(); await state.page.goto("https://myapp.com/dashboard")'
+better-playwriter -s 1 -e 'console.log(await snapshot({ page: state.page, search: /error|warning/i }))'
 
 # Verify forms, buttons, navigation
-playwriter -s 1 -e 'await state.page.locator("button:has-text(\"Save\")").click()'
-playwriter -s 1 -e 'console.log(await snapshot({ page: state.page, search: /success|saved/i }))'
+better-playwriter -s 1 -e 'await state.page.locator("button:has-text(\"Save\")").click()'
+better-playwriter -s 1 -e 'console.log(await snapshot({ page: state.page, search: /success|saved/i }))'
 ```
 
 Great for manual QA workflows that agents can now automate: fill forms, click through flows, verify results, and report back.
@@ -48,7 +48,7 @@ Automate repetitive browser tasks that need your logged-in session.
 **Download a YouTube playlist:**
 
 ```bash
-playwriter -s 1 -e $'
+better-playwriter -s 1 -e $'
 state.page = await context.newPage()
 await state.page.goto("https://www.youtube.com/playlist?list=PLxxxxxx")
 await waitForPageLoad({ page: state.page, timeout: 5000 })
@@ -61,13 +61,13 @@ console.log(JSON.stringify(videos, null, 2))
 
 ```bash
 # Read CSV data and fill a form for each row
-playwriter -s 1 -f fill-forms.js
+better-playwriter -s 1 -f fill-forms.js
 ```
 
 **Export data from authenticated dashboards:**
 
 ```bash
-playwriter -s 1 -e $'
+better-playwriter -s 1 -e $'
 state.page = await context.newPage()
 await state.page.goto("https://analytics.example.com/export")
 const [download] = await Promise.all([
@@ -85,7 +85,7 @@ Use **network interception** to discover undocumented APIs behind JavaScript-ren
 
 ```bash
 # Start intercepting API calls
-playwriter -s 1 -e $'
+better-playwriter -s 1 -e $'
 state.page = await context.newPage()
 state.responses = []
 state.page.on("response", async res => {
@@ -96,11 +96,11 @@ state.page.on("response", async res => {
 '
 
 # Navigate and interact — API calls are captured
-playwriter -s 1 -e 'await state.page.click("button.load-more")'
+better-playwriter -s 1 -e 'await state.page.click("button.load-more")'
 
 # Inspect captured API schemas
-playwriter -s 1 -e 'state.responses.forEach(r => console.log(r.status, r.url.slice(0, 100)))'
-playwriter -s 1 -e 'console.log(JSON.stringify(state.responses[0].body, null, 2).slice(0, 2000))'
+better-playwriter -s 1 -e 'state.responses.forEach(r => console.log(r.status, r.url.slice(0, 100)))'
+better-playwriter -s 1 -e 'console.log(JSON.stringify(state.responses[0].body, null, 2).slice(0, 2000))'
 ```
 
 This is much faster than scraping the DOM. The agent captures the real API calls, inspects their schemas, and can replay them with different parameters.
@@ -111,13 +111,13 @@ Control a user's browser to **fix issues remotely**. The user starts a tunnel, s
 
 ```bash
 # User runs on their machine
-npx -y traforo -p 19988 -- npx -y playwriter serve --token SHARED_SECRET
+npx -y traforo -p 19989 -- npx -y better-playwriter serve --token SHARED_SECRET
 
 # You connect from anywhere
-export PLAYWRITER_HOST=https://user-machine-tunnel.traforo.dev
-export PLAYWRITER_TOKEN=SHARED_SECRET
-playwriter session new
-playwriter -s 1 -e 'state.page = context.pages().findLast((p) => p.url().includes("myapp.com")); console.log(await snapshot({ page: state.page }))'
+export BETTER_PLAYWRITER_HOST=https://user-machine-tunnel.traforo.dev
+export BETTER_PLAYWRITER_TOKEN=SHARED_SECRET
+better-playwriter session new
+better-playwriter -s 1 -e 'state.page = context.pages().findLast((p) => p.url().includes("myapp.com")); console.log(await snapshot({ page: state.page }))'
 ```
 
 The user sees Chrome's automation banner so they always know when their browser is being controlled. They can revoke access by closing the terminal. See [Remote Access](./remote-access.mdx) for the full guide.
@@ -128,24 +128,24 @@ Have the agent **record what it's doing** as an MP4 video. The recording pipes C
 
 ```bash
 # Open a tab and start recording
-playwriter -s 1 -e 'state.page = await context.newPage(); await state.page.goto("https://example.com"); state.video = await recording.start({ page: state.page, outputPath: "/tmp/demo.mp4" })'
+better-playwriter -s 1 -e 'state.page = await context.newPage(); await state.page.goto("https://example.com"); state.video = await recording.start({ page: state.page, outputPath: "/tmp/demo.mp4" })'
 
 # Do things — recording continues through navigation
-playwriter -s 1 -e 'await state.page.click("a")'
-playwriter -s 1 -e 'await state.page.goBack()'
+better-playwriter -s 1 -e 'await state.page.click("a")'
+better-playwriter -s 1 -e 'await state.page.goBack()'
 
 # Stop and save
-playwriter -s 1 -e 'await state.video.stop()'
+better-playwriter -s 1 -e 'await state.video.stop()'
 ```
 
 Useful for creating **demo videos**, recording bug reproductions, or documenting workflows. The agent can also speed up idle sections with `createDemoVideo` to produce polished demos.
 
 ## Scraping JS-heavy sites
 
-Sites like Instagram, Twitter, and Facebook return empty HTML shells to `curl` and `fetch`. Playwriter renders them in a **real browser** with your logged-in session.
+Sites like Instagram, Twitter, and Facebook return empty HTML shells to `curl` and `fetch`. Better Playwriter renders them in a **real browser** with your logged-in session.
 
 ```bash
-playwriter -s 1 -e $'
+better-playwriter -s 1 -e $'
 state.page = await context.newPage()
 await state.page.goto("https://www.instagram.com/p/ABC123/", { waitUntil: "domcontentloaded" })
 await waitForPageLoad({ page: state.page, timeout: 8000 })

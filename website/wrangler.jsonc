@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "playwriter-website",
+  "name": "better-playwriter-website",
   "main": "./src/server.tsx",
   "workers_dev": true,
   "compatibility_date": "2026-08-05",
@@ -11,16 +11,11 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "playwriter-db",
-      "database_id": "8a088c7d-bfeb-4de5-a607-de92b551e410",
+      "database_name": "better-playwriter-db",
+      "database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "../db/drizzle",
       "migrations_pattern": "../db/drizzle/*/migration.sql"
     }
-  ],
-  "routes": [
-    { "pattern": "playwriter.dev/*", "zone_name": "playwriter.dev" },
-    { "pattern": "www.playwriter.dev", "custom_domain": true, "zone_name": "playwriter.dev" },
-    { "pattern": "*-tunnel.playwriter.dev/*", "zone_name": "playwriter.dev" }
   ],
   "durable_objects": {
     "bindings": [
@@ -56,12 +51,8 @@
   // Bindings are NOT inherited — must duplicate everything here
   "env": {
     "preview": {
-      "name": "playwriter-website-preview",
+      "name": "better-playwriter-website-preview",
       "workers_dev": true,
-      "routes": [
-        { "pattern": "preview.playwriter.dev", "custom_domain": true, "zone_name": "playwriter.dev" },
-        { "pattern": "*-tunnel-preview.playwriter.dev/*", "zone_name": "playwriter.dev" }
-      ],
       "durable_objects": {
         "bindings": [
           { "name": "REMOTE_CONTROL_TUNNEL", "class_name": "RemoteControlTunnel" }
@@ -80,8 +71,8 @@
       "d1_databases": [
         {
           "binding": "DB",
-          "database_name": "playwriter-preview-db",
-          "database_id": "97e2e210-8df0-4b5f-8be4-ad2a39718209",
+          "database_name": "better-playwriter-preview-db",
+          "database_id": "00000000-0000-0000-0000-000000000000",
           "migrations_dir": "../db/drizzle",
           "migrations_pattern": "../db/drizzle/*/migration.sql"
         }

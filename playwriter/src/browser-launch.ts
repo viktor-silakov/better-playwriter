@@ -1,5 +1,5 @@
+import { dataPath } from './runtime-config.js'
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 
@@ -12,7 +12,7 @@ export type BrowserLaunchOptions = {
 }
 
 export function getDefaultBrowserUserDataDir(): string {
-  return path.join(os.homedir(), '.playwriter', 'browser-profile')
+  return dataPath('browser-profile')
 }
 
 export function getBrowserLaunchArgs({

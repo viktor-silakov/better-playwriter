@@ -1,5 +1,6 @@
+import { dataPath } from './runtime-config.js'
 /**
- * Download and install Chrome for Testing into ~/.playwriter/browsers/.
+ * Download and install Chrome for Testing into ~/.better-playwriter/browsers/.
  * Similar to agent-browser's install command: fetches the latest stable
  * Chrome for Testing build from Google's official automation channel.
  */
@@ -15,7 +16,7 @@ const LAST_KNOWN_GOOD_URL =
   'https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json'
 
 export function getBrowsersDir(): string {
-  return path.join(os.homedir(), '.playwriter', 'browsers')
+  return dataPath('browsers')
 }
 
 function getPlatformKey(): string {
@@ -35,7 +36,7 @@ function getPlatformKey(): string {
   }
   throw new Error(
     `Unsupported platform for Chrome for Testing download: ${platform}/${arch}. ` +
-      `Install Chromium manually and use PLAYWRITER_BROWSER_PATH to point to it.`,
+      `Install Chromium manually and use BETTER_PLAYWRITER_BROWSER_PATH to point to it.`,
   )
 }
 
@@ -85,7 +86,7 @@ function findChromeBinaryInDir(dir: string): string | null {
 }
 
 /**
- * Find Chrome installed by `playwriter install` in ~/.playwriter/browsers/.
+ * Find Chrome installed by `better-playwriter install` in ~/.better-playwriter/browsers/.
  * Returns the path to the Chrome binary, or null if not found.
  */
 export function findInstalledChrome(): string | null {

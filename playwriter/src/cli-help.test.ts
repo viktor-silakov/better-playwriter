@@ -22,12 +22,19 @@ async function runCli(args: string[]): Promise<{ stdout: string; stderr: string 
   })
 }
 
-describe('playwriter cli help', () => {
+describe('better-playwriter CLI help', () => {
   test('renders root help without crashing', async () => {
     const { stdout, stderr } = await runCli(['--help'])
 
-    expect(stdout).toContain('playwriter')
+    expect(stdout).toContain('better-playwriter')
     expect(stdout).toContain('serve')
+    expect(stderr).toBe('')
+  }, 30000)
+
+  test('prints the fork version on one line', async () => {
+    const { stdout, stderr } = await runCli(['--version'])
+
+    expect(stdout.trim()).toMatch(/^better-playwriter\/[^\r\n]+$/)
     expect(stderr).toBe('')
   }, 30000)
 
@@ -46,7 +53,7 @@ describe('playwriter cli help', () => {
     } catch (error: any) {
       expect(error.code).toBe(1)
       expect(error.stderr).toContain('Unknown command: run')
-      expect(error.stderr).toContain('playwriter --help')
+      expect(error.stderr).toContain('better-playwriter --help')
     }
   }, 30000)
 
@@ -77,8 +84,9 @@ describe('playwriter cli help', () => {
             ...process.env,
             HOME: emptyHome,
             USERPROFILE: emptyHome,
-            PLAYWRITER_API_KEY: '',
-            PLAYWRITER_CLOUD_TOKEN: '',
+            BETTER_PLAYWRITER_API_KEY: '',
+            BETTER_PLAYWRITER_CLOUD_TOKEN: '',
+            BETTER_PLAYWRITER_STORE_ID: 'not-configured',
           },
         },
       )
@@ -88,7 +96,7 @@ describe('playwriter cli help', () => {
         code: 1,
         stderr: expect.stringContaining('ERROR code=extension_not_connected'),
       })
-      expect((error as { stderr: string }).stderr).toContain('chromewebstore.google.com/detail/playwriter')
+      expect((error as { stderr: string }).stderr).toContain('Load the Better Playwriter extension in chrome://extensions/')
     } finally {
       server.close()
     }

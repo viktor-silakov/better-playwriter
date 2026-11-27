@@ -8,26 +8,25 @@ clicks flash a short ripple in those frames. Recording auto-stops after 20 minut
 500 MB of frames and events (`reason: "max-size"`).
 
 The end goal: a **skill** (`SKILL.md` plus an importable utils script) that
-replays the flow with **playwriter** commands. Never drive the browser with raw
+replays the flow with **better-playwriter** commands. Never drive the browser with raw
 Playwright or `npx playwright`.
 
-## First: read how Playwriter works
+## First: read how Better Playwriter works
 
-Do this once per session, **before** any playwriter command. Read the full output.
+Do this once per session, **before** any better-playwriter command. Read the full output.
 Never pipe through `head`, `tail`, `sed`, or any truncation:
 
 ```bash
-playwriter skill
+better-playwriter skill
 ```
 
-Or fetch https://playwriter.dev/SKILL.md (same content). Always use the **playwriter**
-CLI after that (`playwriter -s <id> -e '...'`). Context variables (`context`,
+Use the **better-playwriter** CLI after that (`better-playwriter -s <id> -e '...'`). Context variables (`context`,
 `state`, `snapshot`, …) only exist inside that sandbox. There is no `page` global:
 store the tab you work on in `state.page`.
 
 ## While the user records
 
-Stay with the user. You may run playwriter commands on this session if they ask
+Stay with the user. You may run better-playwriter commands on this session if they ask
 (snapshot, inspect, click something). If they did not ask, ask first. Do not drive
 the workflow yourself.
 
@@ -37,14 +36,16 @@ filtered out later.
 When the user says stop/done:
 
 ```bash
-playwriter recorder stop
+better-playwriter recorder stop
 ```
 
 If that errors because more than one recording is active, the message lists
 each recording id with its current or last page URL. Pick the one that matches
-this workflow (or ask the user), then `playwriter recorder stop <id>`.
+this workflow (or ask the user), then `better-playwriter recorder stop <id>`.
 
 ## Inspect the events
+
+Recordings and frames can contain user data. Keep them local and redact credentials, account details, and personal information from any generated examples.
 
 `recorder events` prints one JSON object per line (jq-friendly). `t` is seconds
 since start. Every event has a sequential `id` and `ms` (milliseconds since start).
@@ -60,27 +61,27 @@ happened up to 3s before them. Use it to map each click to its requests.
 
 ```bash
 # thin timeline
-playwriter recorder events | jq -r '[.id, .t, .type, (.code // .url // .signal // .message // .kind // empty)] | @tsv'
+better-playwriter recorder events | jq -r '[.id, .t, .type, (.code // .url // .signal // .message // .kind // empty)] | @tsv'
 
 # full details of specific events
-playwriter recorder events 4 7 12
+better-playwriter recorder events 4 7 12
 
 # why a step failed: status >= 400, network failures, console and page errors, toasts
-playwriter recorder events --errors
+better-playwriter recorder events --errors
 
 # hide noisy endpoints
-playwriter recorder events --exclude 'StylesService|/track'
+better-playwriter recorder events --exclude 'StylesService|/track'
 
 # recorded actions only
-playwriter recorder events | jq -r 'select(.type == "action") | .code'
+better-playwriter recorder events | jq -r 'select(.type == "action") | .code'
 
 # xhr/fetch: mutating ones from any origin, GETs from the page origin. Thin view shows sizes.
 # WebSockets are not recorded. A submit click with no matching POST is a hint.
-playwriter recorder events | jq -r 'select(.type == "network") | [.id, .method, .status, .url, .responseBodySize] | @tsv'
-playwriter recorder events 14 15
+better-playwriter recorder events | jq -r 'select(.type == "network") | [.id, .method, .status, .url, .responseBodySize] | @tsv'
+better-playwriter recorder events 14 15
 
 # downloads, uploads, console errors, page errors
-playwriter recorder events | jq 'select(.type == "download" or .type == "console" or .type == "page-error" or (.type == "action" and .action == "setInputFiles"))'
+better-playwriter recorder events | jq 'select(.type == "download" or .type == "console" or .type == "page-error" or (.type == "action" and .action == "setInputFiles"))'
 ```
 
 Event types: `recording-started`, `action` (`.code` is locator code such as
@@ -110,7 +111,7 @@ They still match. Verify against a live snapshot before trusting them.
 ## Frames
 
 `framesDir` on the start/stop events is a folder of jpegs
-(`~/.playwriter/recordings/<id>/frames`). Chrome only writes a frame when the
+(`~/.better-playwriter/recordings/<id>/frames`). Chrome only writes a frame when the
 page changes. Files are named `<ms>.jpg` where `ms` is milliseconds since start.
 Every event has the same `ms` field.
 
@@ -118,19 +119,19 @@ To see the screen at an event, print its frame path and open that image. A pink
 ripple marks the click. Do not write awk/ls pipelines.
 
 ```bash
-playwriter recorder frame 42               # screen when event 42 happened
-playwriter recorder frame 42 --offset 1500 # result of the click, 1.5s later
+better-playwriter recorder frame 42               # screen when event 42 happened
+better-playwriter recorder frame 42 --offset 1500 # result of the click, 1.5s later
 ```
 
 ## Prototype against the live page
 
-Do not trust recorded locators blindly. Use the same playwriter session. First
+Do not trust recorded locators blindly. Use the same better-playwriter session. First
 pick the tab the user recorded in (last match = most recently opened):
 
 ```bash
-playwriter -s <session> -e 'state.page = context.pages().findLast((p) => p.url().includes("directory.example.com"))'
-playwriter -s <session> -e 'console.log(await snapshot({ page: state.page }))'
-playwriter -s <session> -e 'await state.page.getByRole("button", { name: "Submit" }).click()'
+better-playwriter -s <session> -e 'state.page = context.pages().findLast((p) => p.url().includes("directory.example.com"))'
+better-playwriter -s <session> -e 'console.log(await snapshot({ page: state.page }))'
+better-playwriter -s <session> -e 'await state.page.getByRole("button", { name: "Submit" }).click()'
 ```
 
 Loop: snapshot → run one recorded action → snapshot again. Drop actions the user
@@ -153,7 +154,7 @@ script for what it does (`submit.js`, `sdk.js`). Do not default to
 `utils.js`.
 
 `SKILL.md` frontmatter has `name` and `description` (when to load the skill).
-The body explains the flow as **markdown instructions with example playwriter
+The body explains the flow as **markdown instructions with example better-playwriter
 commands** built from the recorded events:
 
 ````markdown
@@ -166,57 +167,57 @@ description: >
 
 # Submit to directory
 
-Preconditions: the user is already signed in. Playwriter drives their browser.
+Preconditions: the user is already signed in. Better Playwriter drives their browser.
 
 1. Open the submit page
 
 ```bash
-playwriter -s 1 -e 'state.page = await context.newPage(); await state.page.goto("https://directory.example.com/submit")'
+better-playwriter -s 1 -e 'state.page = await context.newPage(); await state.page.goto("https://directory.example.com/submit")'
 ```
 
 2. Fill the product name (parameter), then the website URL
 
 ```bash
-playwriter -s 1 -e 'const name = "Acme"; await state.page.getByRole("textbox", { name: "Product name" }).fill(name)'
-playwriter -s 1 -e 'const url = "https://acme.com"; await state.page.getByRole("textbox", { name: "Website URL" }).fill(url)'
+better-playwriter -s 1 -e 'const name = "Acme"; await state.page.getByRole("textbox", { name: "Product name" }).fill(name)'
+better-playwriter -s 1 -e 'const url = "https://product.example.com"; await state.page.getByRole("textbox", { name: "Website URL" }).fill(url)'
 ```
 
 3. Click Submit. Expect POST `/api/products` and confirmation text.
 
 ```bash
-playwriter -s 1 -e 'await state.page.getByRole("button", { name: "Submit" }).click()'
-playwriter -s 1 -e 'await state.page.getByText("Thanks! Your product is under review.").waitFor()'
+better-playwriter -s 1 -e 'await state.page.getByRole("button", { name: "Submit" }).click()'
+better-playwriter -s 1 -e 'await state.page.getByText("Thanks! Your product is under review.").waitFor()'
 ```
 
 Or import the helper script (preferred for replay; fewer tokens).
 Never put a machine-specific absolute path in SKILL.md or the script.
-Relative to the playwriter cwd for a project skill:
+Relative to the better-playwriter cwd for a project skill:
 
 ```bash
-playwriter -s 1 -e 'const { submitProduct } = await import("./.agents/skills/submit-to-directory/submit.js"); state.page ??= await context.newPage(); await submitProduct({ page: state.page, name, url })'
+better-playwriter -s 1 -e 'const { submitProduct } = await import("./.agents/skills/submit-to-directory/submit.js"); state.page ??= await context.newPage(); await submitProduct({ page: state.page, name, url })'
 ```
 
 For a personal skill, resolve the home directory at runtime:
 
 ```bash
-playwriter -s 1 -e 'const { join } = require("node:path"); const { homedir } = require("node:os"); const { submitProduct } = await import(join(homedir(), ".agents/skills/submit-to-directory/submit.js")); state.page ??= await context.newPage(); await submitProduct({ page: state.page, name, url })'
+better-playwriter -s 1 -e 'const { join } = require("node:path"); const { homedir } = require("node:os"); const { submitProduct } = await import(join(homedir(), ".agents/skills/submit-to-directory/submit.js")); state.page ??= await context.newPage(); await submitProduct({ page: state.page, name, url })'
 ```
 ````
 
 The helper is an importable ESM script. Name it for the flow. For UI replay,
 export functions that accept `{ page }` plus parameters. For a recorded JSON
-API, export a class from `sdk.js` (see below). The playwriter sandbox can
+API, export a class from `sdk.js` (see below). The better-playwriter sandbox can
 import local files.
 
 Rules:
 
-- Always `playwriter -s <id> -e '...'`. Never raw Playwright.
+- Always `better-playwriter -s <id> -e '...'`. Never raw Playwright.
 - Use locators verified against the live page. Recorded `.code` is the starting point.
 - After each action, wait for the outcome seen in the events (`waitForURL`,
   `locator.waitFor`, or the mutating network request). No blind sleeps.
 - Parameterize demo-typed values. Keep everything else literal.
 - Never hardcode absolute filesystem paths (`/Users/...`, `C:\...`, `/abs/path/...`)
-  in SKILL.md or helper scripts. Relative import from the playwriter cwd, or
+  in SKILL.md or helper scripts. Relative import from the better-playwriter cwd, or
   `join(homedir(), '.agents/skills/<name>/<script>.js')`.
 - If the flow needs auth, check a signed-in indicator first and tell the user
   to log in if it is missing.
@@ -239,7 +240,7 @@ Put the SDK in **`sdk.js`** next to `SKILL.md` (or another name that matches
 the site, like `directory-sdk.js`). Use a **class**. Pass shared handles in
 the constructor (`page`, origin). Methods take **one object argument**.
 Annotate inputs and returns with **JSDoc comments**. For a typed SDK that
-other code imports outside playwriter, see "Standalone TypeScript SDK" below.
+other code imports outside better-playwriter, see "Standalone TypeScript SDK" below.
 
 Never call the site API with Node `fetch`. Node has no session cookies and
 trips bot checks.
@@ -303,7 +304,7 @@ export class DirectoryClient {
 Replay:
 
 ```bash
-playwriter -s 1 -e 'const { DirectoryClient } = await import("./.agents/skills/submit-to-directory/sdk.js"); state.page ??= await context.newPage(); const client = new DirectoryClient({ page: state.page }); console.log(await client.submitProduct({ name: "Acme", url: "https://acme.com" }))'
+better-playwriter -s 1 -e 'const { DirectoryClient } = await import("./.agents/skills/submit-to-directory/sdk.js"); state.page ??= await context.newPage(); const client = new DirectoryClient({ page: state.page }); console.log(await client.submitProduct({ name: "Acme", url: "https://product.example.com" }))'
 ```
 
 Rules:
@@ -320,12 +321,11 @@ Rules:
 ## Standalone TypeScript SDK
 
 Use this when the user wants a typed SDK that other code imports (a script, a
-bot, a cron job), not only replay inside `playwriter -e`. Write `sdk.ts` and
-connect with the `playwriter` package. Docs:
-https://playwriter.dev/docs/sessions#node-api
+bot, a cron job), not only replay inside `better-playwriter -e`. Write `sdk.ts` and
+connect with the `better-playwriter` package and its `connectViaExtension()` API.
 
 ```ts
-import { connectViaExtension } from 'playwriter'
+import { connectViaExtension } from 'better-playwriter'
 
 export interface Product {
   id: string
@@ -333,7 +333,7 @@ export interface Product {
 }
 
 export async function listProducts(): Promise<Product[]> {
-  // throws a clear "install the Playwriter extension" error if Chrome is not connected.
+  // throws a clear "install the Better Playwriter extension" error if Chrome is not connected.
   // `await using` disconnects and deletes the session at scope end, also on throw.
   await using connection = await connectViaExtension({ tabGroup: 'directory' })
   // the connection never closes tabs: `await using page` closes the tab this function opened.
@@ -349,7 +349,7 @@ export async function listProducts(): Promise<Product[]> {
 
 Rules:
 
-- `playwriter` must be a dependency of the project that runs `sdk.ts`.
+- `better-playwriter` must be a dependency of the project that runs `sdk.ts`.
 - Export typed interfaces for every input and return value.
 - Always `await using connection = ...` and `await using page = ...` for every tab the SDK opens. The connection does not close tabs. Never leave tabs or sessions open.
 - `fetch` still runs inside `page.evaluate`, same as the JS SDK.
@@ -370,7 +370,7 @@ the page's own `new WebSocket` goes through your wrapper. `page.evaluate`
 alone is too late. `addInitScript` survives the reload.
 
 ```bash
-playwriter -s 1 -e '
+better-playwriter -s 1 -e '
 /**
  * @typedef {"construct" | "send" | "message" | "close" | "error"} WsTapKind
  * @typedef {{ t: number, kind: WsTapKind, url: string, data?: string }} WsTapEvent
@@ -423,7 +423,7 @@ await state.page.reload({ waitUntil: "domcontentloaded" })
 '
 
 # replay the user action (submit, generate, …), then dump the tap
-playwriter -s 1 -e '
+better-playwriter -s 1 -e '
 /**
  * @typedef {{ t: number, kind: string, url: string, data?: string }} WsTapEvent
  * @type {WsTapEvent[]}
@@ -474,7 +474,7 @@ or compare locators, fix the root cause, keep working parts, re-validate.
 - Waits reflect real timing (user remarks + event gaps)
 - Secrets are never hardcoded
 - No absolute filesystem paths in SKILL.md or helper scripts
-- Replay uses playwriter commands (inline `-e` or an imported helper script)
+- Replay uses better-playwriter commands (inline `-e` or an imported helper script)
 - XHR skills use an in-page class SDK; fetch errors include status and body
 - Standalone `sdk.ts` uses `await using connection = await connectViaExtension()`
 - The flow was validated end-to-end at least once

@@ -1,5 +1,5 @@
 ---
-'playwriter': patch
+'better-playwriter': patch
 ---
 
 Attach tabs reliably when another extension's iframe is still loading.

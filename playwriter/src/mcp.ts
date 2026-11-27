@@ -1,3 +1,4 @@
+import { readEnv } from './runtime-config.js'
 /**
  * MCP server. A thin client of the relay /cli/* API, like the CLI: code runs in
  * relay sessions, so MCP sessions get session-owned tabs, focus only while an
@@ -39,7 +40,7 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const require = createRequire(import.meta.url)
 
-const DEFAULT_EXEC_TIMEOUT = Number(process.env.PLAYWRITER_EXEC_TIMEOUT) || 10000
+const DEFAULT_EXEC_TIMEOUT = Number(readEnv('EXEC_TIMEOUT')) || 10000
 const LOG_TIMEOUT_MS = 1000
 const REMOTE_CHECK_TIMEOUT_MS = 3000
 const SESSION_LIST_EXTENSION_WAIT_MS = 2000
@@ -48,11 +49,11 @@ const HTTP_NOT_FOUND = 404
 const HTTP_SERVICE_UNAVAILABLE = 503
 
 const REMOVED_DIRECT_ENV_ERROR = dedent`
-  PLAYWRITER_DIRECT is no longer supported by the Playwriter MCP. Remove it from the MCP config.
+  BETTER_PLAYWRITER_DIRECT is no longer supported by the Better Playwriter MCP. Remove it from the MCP config.
   The agent connects to Chrome over CDP with the session_new tool instead: direct "auto" or a ws:// URL.
 `
 
-// PLAYWRITER_HOST and PLAYWRITER_TOKEN are the remote relay. startMcp sets them from --host and --token.
+// BETTER_PLAYWRITER_HOST and BETTER_PLAYWRITER_TOKEN are the remote relay. startMcp sets them from --host and --token.
 const relay: RelayTarget = {}
 
 /** Session used by execute and reset calls without `session`. Set by the first execute or by session_new */
@@ -65,7 +66,7 @@ const pendingCreations = new Set<Promise<unknown>>()
 let exiting = false
 
 function getLogServerUrl(): string {
-  const host = process.env.PLAYWRITER_HOST
+  const host = readEnv('HOST')
   if (host) {
     return `${parseRelayHost(host, RELAY_PORT).httpBaseUrl}/mcp-log`
   }
@@ -75,7 +76,7 @@ function getLogServerUrl(): string {
 async function sendLogToRelayServer(level: string, ...args: any[]) {
   try {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-    const token = process.env.PLAYWRITER_TOKEN
+    const token = readEnv('TOKEN')
     if (token) {
       headers['Authorization'] = `Bearer ${token}`
     }
@@ -111,7 +112,7 @@ async function ensureLocalRelay(): Promise<void> {
 
 async function checkRemoteServer(host: string): Promise<void> {
   const { httpBaseUrl } = parseRelayHost(host, RELAY_PORT)
-  const token = process.env.PLAYWRITER_TOKEN
+  const token = readEnv('TOKEN')
   try {
     const response = await fetch(`${httpBaseUrl}/version`, {
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,
@@ -124,7 +125,7 @@ async function checkRemoteServer(host: string): Promise<void> {
     const isConnectionError = error.cause?.code === 'ECONNREFUSED' || error.name === 'TimeoutError'
     if (isConnectionError) {
       throw new Error(
-        `Cannot connect to remote relay server at ${host}. Make sure 'npx -y playwriter serve' is running on the host machine.`,
+        `Cannot connect to remote relay server at ${host}. Make sure 'npx -y better-playwriter serve' is running on the host machine.`,
       )
     }
     throw new Error(`Failed to connect to remote relay server: ${error.message}`)
@@ -147,7 +148,7 @@ function errorResult(error: unknown) {
  */
 async function createSession(options: Omit<NewSessionOptions, 'relay' | 'cwd' | 'client' | 'logger'>) {
   if (exiting) {
-    throw new Error('The Playwriter MCP is shutting down.')
+    throw new Error('The Better Playwriter MCP is shutting down.')
   }
   // Registered inside the tracked promise, so exit cleanup sees the id once the creation settles
   const creation = newSession({ ...options, relay, cwd: process.cwd(), client: 'mcp', logger: mcpLogger }).then((result) => {
@@ -204,13 +205,13 @@ function sessionLostResult({ sessionId, explicit }: { sessionId: string; explici
 }
 
 const server = new McpServer({
-  name: 'playwriter',
+  name: 'better-playwriter',
   title: 'The better playwright MCP: works as a browser extension. No context bloat. More capable.',
   version: VERSION,
 })
 
 for (const name of ['debugger-api', 'editor-api', 'styles-api']) {
-  const uri = `https://playwriter.dev/resources/${name}.md`
+  const uri = `better-playwriter://resources/${name}.md`
   server.resource(name, uri, { mimeType: 'text/plain' }, async () => {
     const packageDir = path.dirname(require.resolve('playwriter/package.json'))
     const text = fs.readFileSync(path.join(packageDir, 'dist', `${name}.md`), 'utf-8')
@@ -255,7 +256,7 @@ server.tool(
     timeout: z
       .number()
       .default(DEFAULT_EXEC_TIMEOUT)
-      .describe('Timeout in milliseconds for code execution (default: 10000ms, or PLAYWRITER_EXEC_TIMEOUT)'),
+      .describe('Timeout in milliseconds for code execution (default: 10000ms, or BETTER_PLAYWRITER_EXEC_TIMEOUT)'),
     session: sessionParam,
   },
   async ({ code, timeout, session }, extra) => {
@@ -269,7 +270,7 @@ server.tool(
       if (result.status === HTTP_SERVICE_UNAVAILABLE) {
         // The relay drains for an upgrade and its sessions end with it
         forgetSession(sessionId)
-        return textResult({ text: 'The Playwriter relay is restarting to upgrade. Call execute again in a few seconds. Session state is lost; tabs stay open.', isError: true })
+        return textResult({ text: 'The Better Playwriter relay is restarting to upgrade. Call execute again in a few seconds. Session state is lost; tabs stay open.', isError: true })
       }
       if (result.status !== 200) {
         return textResult({ text: result.text, isError: true })
@@ -318,7 +319,7 @@ server.tool(
 server.tool(
   'session_list',
   dedent`
-    List the active Playwriter sessions and the browsers a new session can use.
+    List the active Better Playwriter sessions and the browsers a new session can use.
     Call it when execute says several browsers are connected, or to pick a browser for session_new.
   `,
   {},
@@ -340,7 +341,7 @@ server.tool(
         return `- ${s.id}${tags.length > 0 ? ` (${tags.join(', ')})` : ''}: ${s.browser || 'Chrome'} ${s.profile?.email || ''}${group}${state}`
       })
       const warnings = browsers.warnings.map((warning) => `Warning: ${warning}`)
-      const browserTable = browsers.options.length > 0 ? formatBrowserTable(browsers.options) : 'No browsers detected. Ask the user to click the Playwriter extension icon on a tab.'
+      const browserTable = browsers.options.length > 0 ? formatBrowserTable(browsers.options) : 'No browsers detected. Ask the user to click the Better Playwriter extension icon on a tab.'
       const text = [
         'Sessions:',
         ...(sessionLines.length > 0 ? sessionLines : ['(none)']),
@@ -485,18 +486,18 @@ async function cleanupAndExit(): Promise<void> {
 export async function startMcp(options: { host?: string; token?: string } = {}) {
   installProcessGuard({ logger: mcpLogger })
 
-  if (process.env.PLAYWRITER_DIRECT) {
+  if (readEnv('DIRECT')) {
     console.error(REMOVED_DIRECT_ENV_ERROR)
     process.exit(1)
   }
   if (options.host) {
-    process.env.PLAYWRITER_HOST = options.host
+    process.env.BETTER_PLAYWRITER_HOST = options.host
   }
   if (options.token) {
-    process.env.PLAYWRITER_TOKEN = options.token
+    process.env.BETTER_PLAYWRITER_TOKEN = options.token
   }
 
-  const remoteHost = process.env.PLAYWRITER_HOST
+  const remoteHost = readEnv('HOST')
   if (remoteHost) {
     mcpLogger.log(`Using remote CDP relay server: ${remoteHost}`)
     await checkRemoteServer(remoteHost)

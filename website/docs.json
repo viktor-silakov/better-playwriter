@@ -1,7 +1,7 @@
 {
   "$schema": "https://holocron.so/docs.json",
-  "name": "Playwriter",
-  "description": "Docs for Playwriter, the CLI and MCP that lets agents control your real Chrome browser.",
+  "name": "Better Playwriter",
+  "description": "Documentation for Better Playwriter, the local Chrome automation CLI and MCP server.",
   "logo": {
     "light": "/playwriter-logo.svg",
     "dark": "/playwriter-logo.svg",
@@ -12,14 +12,26 @@
     "dark": "/favicon-32.png"
   },
   "colors": {
-    "primary": "#FF9500",
-    "light": "#FF9500",
-    "dark": "#FF9500"
+    "primary": "#315BDA",
+    "light": "#315BDA",
+    "dark": "#A7BEFF"
   },
-  "knownPaths": ["/api/*", "/login", "/dashboard", "/device", "/privacy"],
+  "knownPaths": [
+    "/api/*",
+    "/login",
+    "/dashboard",
+    "/device",
+    "/privacy",
+    "/.well-known/*",
+    "/resources/*",
+    "/SKILL"
+  ],
   "redirects": [
-    { "source": "/changelog/intro", "destination": "https://github.com/remorses/playwriter/releases", "permanent": true },
-    { "source": "/changelog", "destination": "https://github.com/remorses/playwriter/releases", "permanent": true }
+    {
+      "source": "/changelog",
+      "destination": "/changelog/intro",
+      "permanent": true
+    }
   ],
   "decorativeLines": "none",
   "layout": {
@@ -62,7 +74,12 @@
           {
             "group": "Guides",
             "icon": "lucide:book-open",
-            "pages": ["docs/remote-access", "docs/use-cases", "docs/troubleshooting"]
+            "pages": [
+              "docs/remote-access",
+              "docs/cloud-browsers",
+              "docs/use-cases",
+              "docs/troubleshooting"
+            ]
           },
           {
             "group": "Comparison",
@@ -79,61 +96,55 @@
           {
             "group": "Reference",
             "icon": "lucide:book-text",
-            "pages": ["docs/skill", "docs/configuration", "privacy"]
+            "pages": [
+              "docs/skill",
+              "docs/configuration",
+              "privacy"
+            ]
           }
         ]
       },
       {
         "tab": "Skill Recorder",
         "icon": "lucide:circle-dot",
-        "pages": ["docs/skill-recorder"]
+        "pages": [
+          "docs/skill-recorder"
+        ]
       },
       {
-        "tab": "Cloud Browsers",
-        "icon": "lucide:dollar-sign",
-        "pages": ["docs/cloud-browsers"]
+        "tab": "Changelog",
+        "icon": "lucide:newspaper",
+        "pages": [
+          "changelog/intro"
+        ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "GitHub",
-          "icon": "github",
-          "href": "https://github.com/remorses/playwriter",
-          "placement": "tabs"
-        },
-        {
-          "anchor": "Changelog",
-          "icon": "lucide:newspaper",
-          "href": "https://github.com/remorses/playwriter/releases"
-        }
-      ]
-    }
+    ]
   },
   "navbar": {
     "primary": {
-      "label": "Cloud Login",
-      "href": "/login"
+      "label": "Install",
+      "href": "/docs/installation"
     }
   },
   "footer": {
     "links": [
       {
-        "header": "platform",
+        "header": "Better Playwriter",
         "items": [
-          { "label": "Rent Cloud Browsers", "href": "/login" },
-          { "label": "Changelog", "href": "https://github.com/remorses/playwriter/releases" },
-          { "label": "Privacy", "href": "/privacy" },
-          { "label": "GitHub", "href": "https://github.com/remorses/playwriter" },
           {
-            "label": "Chrome Extension",
-            "href": "https://chromewebstore.google.com/detail/playwriter/jfeammnjpkecdekppnclgkkffahnhfhe"
+            "label": "Installation",
+            "href": "/docs/installation"
+          },
+          {
+            "label": "Changelog",
+            "href": "/changelog/intro"
+          },
+          {
+            "label": "Privacy",
+            "href": "/privacy"
           }
         ]
       }
-    ],
-    "socials": {
-      "github": "https://github.com/remorses/playwriter"
-    }
+    ]
   }
 }

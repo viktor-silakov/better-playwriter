@@ -17,12 +17,12 @@
  * OS username. `captureUncaughtErrors: false` keeps its process handlers out
  * of the relay: error reporting is off on purpose.
  *
- * Sent: event name, a random install id (~/.playwriter/telemetry-id),
+ * Sent: event name, a random install id (~/.better-playwriter/telemetry-id),
  * playwriter version, OS, arch, Node version, session kind, client kind,
  * execute counts, extension version and browser name.
  * Never sent: code, URLs, page content, emails, hostnames, paths.
  *
- * Opt out with PLAYWRITER_TELEMETRY=0 or DO_NOT_TRACK=1. The relay reads
+ * Opt in with BETTER_PLAYWRITER_TELEMETRY=1 and a telemetry project ID. The relay reads
  * env when it starts, so restart it after changing: `playwriter serve restart`.
  *
  * Anonymous ingest (no token): the npm package is public, so any token here
@@ -31,20 +31,20 @@
 
 import crypto from 'node:crypto'
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import { flush, initStrada, track } from '@strada.sh/sdk'
 import dedent from 'string-dedent'
 import { VERSION } from './utils.js'
+import { dataPath, readEnv } from './runtime-config.js'
 
-const STRADA_PROJECT_ID = '01M3BT2HC9BZ9TB2Y2D8JTR7J6'
-const TELEMETRY_ID_PATH = path.join(os.homedir(), '.playwriter', 'telemetry-id')
+const projectId = process.env.BETTER_PLAYWRITER_TELEMETRY_PROJECT_ID
+const TELEMETRY_ID_PATH = dataPath('telemetry-id')
 const USAGE_REPORT_INTERVAL_MS = 60 * 60 * 1000
 
 export const TELEMETRY_ENABLED = (() => {
-  const optOut = process.env.PLAYWRITER_TELEMETRY?.toLowerCase()
+  const optIn = readEnv('TELEMETRY')?.toLowerCase()
   const doNotTrack = process.env.DO_NOT_TRACK?.toLowerCase()
-  return optOut !== '0' && optOut !== 'false' && doNotTrack !== '1' && doNotTrack !== 'true'
+  return Boolean(projectId) && (optIn === '1' || optIn === 'true') && doNotTrack !== '1' && doNotTrack !== 'true'
 })()
 
 const FLUSH_INTERVAL_MS = 10_000
@@ -113,13 +113,13 @@ function reportUsage(): void {
 
 /** Called once by the relay daemon entry. The only place that initializes Strada. */
 export function startRelayTelemetry(): void {
-  if (relayTelemetryStarted || !TELEMETRY_ENABLED) {
+  if (relayTelemetryStarted || !TELEMETRY_ENABLED || !projectId) {
     return
   }
   // Failures are returned as values and already warned once by the SDK.
   void initStrada({
-    projectId: STRADA_PROJECT_ID,
-    service: 'playwriter',
+    projectId,
+    service: 'better-playwriter',
     version: VERSION,
     captureUncaughtErrors: false,
     telemetry: { logs: { scheduledDelayMillis: FLUSH_INTERVAL_MS } },
@@ -151,8 +151,8 @@ export function printTelemetryNoticeOnce(): void {
   getAnonymousId()
   console.error(dedent`
 
-    Playwriter collects anonymous usage stats (version, OS, command counts). No code, URLs, or page data.
-    Opt out: PLAYWRITER_TELEMETRY=0 or DO_NOT_TRACK=1
+    Better Playwriter collects anonymous usage stats (version, OS, command counts). No code, URLs, or page data.
+    Opt out: BETTER_PLAYWRITER_TELEMETRY=0 or DO_NOT_TRACK=1
 
   `)
 }

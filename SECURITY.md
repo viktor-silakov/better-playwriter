@@ -1,25 +1,17 @@
-# Security Policy
+# Security policy
 
-## Remote control gives browser-wide access
+## Local browser access
 
-Remote control shares your **browser** through a secret id. The recipient gets
-the same access as a local Playwriter agent:
+The default relay listens on loopback. Existing tabs become available after the user enables them with the extension icon. Code in a session can open new tabs. Browser output, local logs, and recordings may include private page content and account information.
 
-- every tab where Playwriter is enabled
-- new tabs it opens (in the background, in its tab group)
-- anything those tabs can reach, including other sites and extension pages
+## Remote control
 
-It is not a sandbox. A short denylist only blocks whole-profile cookie APIs
-(`Network.getAllCookies`, `Network.clearBrowserCookies`, `Storage.*Cookies`) and
-`Network.clearBrowserCache`, so an agent cannot nuke every login by accident.
-It does not make a malicious recipient safe.
+If a tunnel service is explicitly configured, the extension asks for confirmation before sharing a browser. Anyone with the link can control all enabled tabs and open new tabs until sharing ends. This access includes page content and can include cookies and browser storage. Share the link only with a recipient you trust.
 
-Share the id only with a person or agent you fully trust. **Stop sharing** (from
-any Playwriter tab), closing or disconnecting the tab where sharing started, or
-cancelling Chrome's debugging banner closes the tunnel immediately. Tabs the
-remote opened are then detached and left open.
+To revoke access, click **Stop sharing**, close or detach the tab where sharing began, or cancel Chrome's debugging banner. New tabs created by the recipient are detached and left open.
+
+For a relay you host yourself, configure an authentication token and use a trusted transport. See [Remote access](./docs/remote-access.md).
 
 ## Reporting
 
-Open a private security advisory at
-https://github.com/remorses/playwriter/security/advisories/new
+Use this project's GitHub **Security → Report a vulnerability** feature if available, or contact the maintainer privately. Include a minimal reproduction with synthetic data. Keep browser logs, session tokens, and any personal or account information private.

@@ -1,3 +1,4 @@
+import { readEnv, dataPath } from './runtime-config.js'
 // Action recording for the `playwriter recorder` CLI feature.
 //
 // Playwright's API-mode recorder is the only action source. We persist those
@@ -6,16 +7,15 @@
 // change into a timestamped folder. A click ripple marks user clicks in those
 // frames. No post-action page work: it froze typing.
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import type { BrowserContext, Frame, Page, Request } from '@xmorse/playwright-core'
 import { getCDPSessionForPage, type ICDPSession } from './cdp-session.js'
 import { isRemoteExtensionKey } from './relay-state.js'
 
 // Read at call time (not module load) so tests can point recordings at a temp
-// dir via PLAYWRITER_RECORDINGS_DIR without polluting ~/.playwriter
+// dir via PLAYWRITER_RECORDINGS_DIR without polluting ~/.better-playwriter
 export function getRecordingsDir(): string {
-  return process.env.PLAYWRITER_RECORDINGS_DIR || path.join(os.homedir(), '.playwriter', 'recordings')
+  return readEnv('RECORDINGS_DIR') || dataPath('recordings')
 }
 
 export function recordingFilePath(recordingId: string): string {
@@ -1483,7 +1483,7 @@ function extraActionFields({
 
 // ============================================================================
 // Manager: tracks active recordings in the relay process. Recording ids are
-// incremental numbers persisted as JSON filenames in ~/.playwriter/recordings
+// incremental numbers persisted as JSON filenames in ~/.better-playwriter/recordings
 // so ids survive relay restarts (files outlive the process).
 // ============================================================================
 

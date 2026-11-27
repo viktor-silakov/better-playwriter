@@ -1,3 +1,4 @@
+import { readEnv, getRelayPort } from './runtime-config.js'
 /**
  * PlaywrightExecutor - Manages browser connection and code execution per session.
  * Used by both MCP and CLI to execute Playwright code with persistent state.
@@ -268,7 +269,7 @@ export function wrapCode(code: string): string {
 }
 
 const CLOUD_SESSION_EXPIRED_ERROR =
-  'Cloud browser session expired or was destroyed. Create a new session with: playwriter session new --browser cloud'
+  'Cloud browser session expired or was destroyed. Create a new session with: better-playwriter session new --browser cloud'
 
 /** Patterns that indicate the browser/page/context was closed or the WebSocket died.
  *  Used to detect cloud VM expiration vs other Playwright errors. */
@@ -1153,11 +1154,11 @@ export class PlaywrightExecutor {
     activeTargets: number
     playwriterVersion: string | null
   }> {
-    const { host = '127.0.0.1', port = Number(process.env.PLAYWRITER_PORT) || 19988, extensionId, token } = this.cdpConfig
+    const { host = '127.0.0.1', port = getRelayPort(), extensionId, token } = this.cdpConfig
     const { httpBaseUrl } = parseRelayHost(host, port)
     const notConnected = { connected: false, activeTargets: 0, playwriterVersion: null }
     const headers: Record<string, string> = {}
-    const effectiveToken = token || process.env.PLAYWRITER_TOKEN
+    const effectiveToken = token || readEnv('TOKEN')
     if (effectiveToken) {
       headers['Authorization'] = `Bearer ${effectiveToken}`
     }
@@ -1455,7 +1456,7 @@ export class PlaywrightExecutor {
     }
   }
 
-  /** Used by the action recorder (`playwriter recorder`) to attach
+  /** Used by the action recorder (`better-playwriter recorder`) to attach
    *  context-level instrumentation. Connects to the browser if needed. */
   withBrowserContext<T>({ operation }: { operation: (context: BrowserContext) => Promise<T> }): Promise<T> {
     return this.runExclusive({
@@ -1561,7 +1562,7 @@ export class PlaywrightExecutor {
             this.lastCloudTimeoutWarningMinute = mins
             this.enqueueWarning(
               `Cloud browser expires in ~${mins} minute${mins === 1 ? '' : 's'}. ` +
-                `Create a new session soon with: playwriter session new --browser cloud`,
+                `Create a new session soon with: better-playwriter session new --browser cloud`,
             )
           }
         }
@@ -1837,7 +1838,7 @@ export class PlaywrightExecutor {
       const inspectPinnedElement = async (pageUrl: string, elementExpression: string) => {
         const targetPage = context.pages().findLast((candidate) => candidate.url() === pageUrl)
         if (!targetPage) {
-          throw new Error(`No Playwriter tab with url ${pageUrl}. Enable Playwriter on that tab and pin the element again.`)
+          throw new Error(`No Better Playwriter tab with url ${pageUrl}. Enable Better Playwriter on that tab and pin the element again.`)
         }
 
         this.userState.page = targetPage
@@ -1948,7 +1949,7 @@ export class PlaywrightExecutor {
         // The relay handles 'ghost-browser' on any session; a tab is only the transport.
         const transportPage = context.pages().find((p) => !p.isClosed())
         if (!transportPage) {
-          throw new Error('Ghost Browser API needs at least one Playwriter tab. Create one with `state.page = await context.newPage()`.')
+          throw new Error('Ghost Browser API needs at least one Better Playwriter tab. Create one with `state.page = await context.newPage()`.')
         }
         const cdp = await getCDPSession({ page: transportPage })
         const result = await cdp.send('ghost-browser' as any, { namespace, method, args })
@@ -2297,7 +2298,7 @@ export class PlaywrightExecutor {
         }
         if (isTimeoutError) return ''
         if (this.cloudSession && isDisconnect) {
-          return `\n\n[Cloud browser expired or disconnected. Create a new session with: playwriter session new --browser cloud]`
+          return `\n\n[Cloud browser expired or disconnected. Create a new session with: better-playwriter session new --browser cloud]`
         }
         return '\n\n[HINT: If this is an internal Playwright error, page/browser closed, or connection issue, call reset to reconnect.]'
       })()

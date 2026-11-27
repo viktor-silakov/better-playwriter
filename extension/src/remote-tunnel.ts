@@ -12,7 +12,7 @@ import {
   type TraforoDownstreamMessage,
   type TraforoUpstreamMessage,
   type TraforoWsOpenMessage,
-} from 'playwriter/src/remote-control'
+} from 'better-playwriter/src/remote-control'
 
 export type TunnelStatus = 'connecting' | 'online' | 'error'
 
@@ -68,7 +68,7 @@ export class RemoteTunnel {
 
   /** Link the user shares. Points at the viewer page, not at the tunnel host. */
   get url(): string {
-    return buildRemoteControlUrl({ tunnelId: this.options.tunnelId })
+    return buildRemoteControlUrl({ tunnelId: this.options.tunnelId, baseUrl: `https://${this.options.baseDomain}` })
   }
 
   start(): void {

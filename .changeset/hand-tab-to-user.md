@@ -1,5 +1,5 @@
 ---
-'playwriter': minor
+'better-playwriter': minor
 ---
 
 Add `handoff`, `waitForHandoff` and `clearHandoff` so agents hand the tab to the user for sign-ins, 2FA codes, captchas and approvals.

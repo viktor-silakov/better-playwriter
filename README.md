@@ -1,440 +1,63 @@
-<div align='center'>
-    <br/>
-    <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="banner-dark.png" />
-        <source media="(prefers-color-scheme: light)" srcset="banner.png" />
-    <img src="banner.png" alt="Playwriter - For browser automation MCP" width="400" height="278" />
-    </picture>
-    <br/>
-    <br/>
-    <p>Let your agents control your own Chrome, via CLI or MCP. Your logins, extensions, cookies — already there.</p>
-    <br/>
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="banner-dark.png" />
+    <img src="banner.png" alt="Better Playwriter" width="400" />
+  </picture>
 </div>
 
-https://github.com/user-attachments/assets/72fe022b-63ce-41f3-a1ff-1107286f5c2b
+# Better Playwriter
 
-Other browser MCPs spawn a fresh Chrome — no logins, no extensions, instantly flagged by bot detectors, double the memory. Playwriter connects to **your running browser** instead. One Chrome extension, full Playwright API, everything you're already logged into.
+Control your Chrome tabs with Playwright from a CLI or MCP client. The extension connects the tabs you enable to a local relay. Better Playwriter is a fork of [Playwriter](https://github.com/remorses/playwriter).
 
 ## Installation
 
-1. Build the project and load `extension/dist` as an unpacked Chrome extension.
-
-2. Click extension icon on a tab → turns green when connected
-
-3. Install the CLI and start automating the browser:
+1. Install the **Better Playwriter** extension from its Chrome Web Store listing when available. Until then, extract the Better Playwriter ZIP from this repository's GitHub Releases, or [build it from source](#build-from-source). To load an extracted build, open `chrome://extensions`, enable **Developer mode**, and select **Load unpacked**.
+2. Install the CLI once the package is published, or link it from a source checkout as shown below.
 
    ```bash
-   cd playwriter && npm link
-   playwriter -s 1 -e 'state.page = await context.newPage(); await state.page.goto("https://example.com")'
+   npm install -g better-playwriter
    ```
 
-On macOS, `playwriter browser list` identifies previously unknown local Chrome profiles using `cmux-cua` and Accessibility access, then caches their names locally. The first lookup can take a few seconds. You can also run `playwriter browser identify` to retry manually or set a label in the extension options. `playwriter session new --browser <label>` selects a profile; duplicate labels require the browser key.
+3. Open a tab and click the extension icon. It turns green when the CLI starts the relay and the tab connects.
 
-Use `playwriter session list` to see each session's idle time and group. To finish a session and keep its tabs, run `playwriter session delete <id> --release-created-tabs`; its tabs are detached and ungrouped. Alternatively use `--close-created-tabs` to close its own tabs. Both options remove the group when it becomes empty; neither touches tabs owned by another session. Chrome does not expose already-closed saved groups to extensions, so old groups cannot be safely removed automatically by title. Idle time is only a clue, not proof that a session has been abandoned.
+If you want a separate browser, `better-playwriter browser start` launches Chrome for Testing or Chromium with the bundled extension. For automated tests with no browser window, use `better-playwriter browser install` and `better-playwriter session new --browser headless`.
 
-4. Install the skill so your agent knows how to use Playwriter:
-   ```bash
-   playwriter skill
-   ```
-
-## Quick Start
+## First session
 
 ```bash
-playwriter browser start  # starts Chrome for Testing/Chromium with bundled Playwriter extension
-playwriter session new  # creates stateful sandbox, outputs session id (e.g. 1)
-playwriter -s 1 -e 'state.page = await context.newPage(); await state.page.goto("https://example.com")'
-playwriter -s 1 -e 'console.log(await snapshot({ page: state.page }))'
-playwriter -s 1 -e 'await state.page.locator("aria-ref=e5").click()'
+better-playwriter session new --tab-group docs
+better-playwriter -s 1 -e 'state.page = await context.newPage(); await state.page.goto("https://example.com")'
+better-playwriter -s 1 -e 'console.log(await snapshot({ page: state.page }))'
 ```
 
-> **Tip:** Always use single quotes for `-e` to prevent bash from interpreting `$`, backticks, and `\` in your JS code. Use double quotes for strings inside the JS.
+Replace `1` with the session ID returned by `session new`. Each session has its own `state` and sees the tabs it creates plus tabs the user has made available. On macOS, `better-playwriter browser list` can use local Accessibility access to identify unnamed Chrome profiles and cache their labels. Use `better-playwriter browser identify` to try again or enter a label in the extension options. Select a profile with `better-playwriter session new --browser <label>`. Use the browser key if two profiles have the same label.
 
-## CLI Usage
+`better-playwriter session list` shows session groups and idle times. End a session with `better-playwriter session delete <id> --release-created-tabs` to keep its tabs open and ungrouped, or with `--close-created-tabs` to close them. Both remove its empty group when Chrome exposes it. They leave tabs owned by other sessions alone. Use short single-word group names such as `docs` or `test`.
 
-Each session has **isolated state**. Browser tabs are **shared** across sessions.
+## Use with an agent or SDK
+
+- **CLI** — Run `better-playwriter skill` for agent instructions, commands, locator tips, and examples.
+- **MCP** — See [MCP setup](./MCP.md) for client configuration and session tools.
+- **Node.js** — Import `connectViaExtension` from `better-playwriter` to use the Playwright API in a script. See the [session and SDK reference](./website/src/pages/docs/sessions.mdx).
+
+## Build from source
+
+Use Node.js, pnpm, Bun, and Git with submodule support. From the repository root:
 
 ```bash
-# Browser management
-playwriter browser start             # auto-finds Chrome for Testing or Chromium
-playwriter browser start /path/to/browser-binary
-
-# Session management
-playwriter session new              # creates stateful sandbox, outputs id (e.g. 1)
-playwriter session new --tab-group agent1 --tab-group-color blue
-playwriter session update 1 --tab-group research
-playwriter session list             # show sessions + state keys + group
-playwriter session reset <id>       # fix connection issues
-
-# Execute (always use -s)
-playwriter -s 1 -e 'state.page = await context.newPage(); await state.page.goto("https://example.com")'
-playwriter -s 1 -e 'await state.page.click("button")'
-playwriter -s 1 -e 'console.log(await state.page.title())'
+pnpm bootstrap
+pnpm build
+node ./playwriter/bin.js --help
 ```
 
-There is no default `page`. Create your own tab and store it in `state`. To use a tab the user already opened, find it by URL:
+Load `extension/dist` as an unpacked extension. To put `better-playwriter` on your `PATH`, run `npm link` from `playwriter/`. The [Chrome Web Store runbook](./docs/chrome-web-store.md) covers packaging, the first submission, and automated updates.
 
-```bash
-playwriter -s 1 -e 'state.page = context.pages().findLast((p) => p.url().includes("github.com"))'
-```
+## Local data and remote connections
 
-### Tab groups
+The fork's default relay port is `19989` and its data directory is `~/.better-playwriter`. `better-playwriter logfile` shows the relay and CDP log paths. Logs, screenshots, and recordings can contain data from the browser. Keep them private.
 
-Local extension sessions use a Chrome **tab group** named `playwriter` by default. Remote-control sessions put the tabs they open into `remote`. Use the shortest clear single-word name with no spaces, such as `docs`, `shop`, `test`, or `scrape`.
+The default setup uses a local relay with usage telemetry disabled. Managed cloud and browser sharing require an explicit service URL. For token-protected access to a relay you run, see [Remote access](./docs/remote-access.md). See [Security](./SECURITY.md) for the scope of browser sharing and how to revoke it.
 
-```bash
-# Park a long scrape in its own group. The user can Move group to new window
-# (or another screen). New tabs from this session follow that group.
-playwriter session new --tab-group scrape --tab-group-color grey
+## License
 
-# Split concurrent agents so many open tabs stay readable
-playwriter session new --tab-group agent1 --tab-group-color blue
-playwriter session new --tab-group agent2 --tab-group-color pink
-
-# Name a group the user can collapse when they don't care about it
-playwriter session new --tab-group done --tab-group-color grey
-
-# Rename or recolor later
-playwriter session update 1 --tab-group research
-playwriter session update 1 --tab-group-color red
-
-# Remote tabs support the same title and color options
-playwriter session new --remote <id> --tab-group support
-playwriter session update 1 --tab-group review --tab-group-color cyan
-```
-
-`--tab-group-color` accepts: `grey`, `blue`, `red`, `yellow`, `green`, `pink`, `purple`, `cyan`, `orange`. Without it, color is derived from the name. The default local `playwriter` group stays green.
-
-Node programs should use `connectViaExtension()` instead of posting `/cli/session/new` themselves:
-
-```ts
-import { connectViaExtension } from 'playwriter'
-
-await using connection = await connectViaExtension({
-  tabGroup: 'email-check',
-  tabGroupColor: 'grey',
-})
-// the page closes its tab when the scope ends, also on throw
-await using page = await connection.browser.contexts()[0].newPage()
-await page.goto('https://example.com')
-```
-
-`tabGroupColor` is typed as Chrome's tab group colors. `await using` calls `close()` at scope end: it disconnects CDP and deletes the session. It does **not** close tabs: close every tab your script opens with `await using page` or `page.close()`. Pass `closeTabsOnEnd: true` to make `close()` also close the tabs this connection opened (never other sessions' tabs). Without `await using`, call `await connection.close()` in `finally`.
-
-A tab you do not close stays open, so a later process can reuse it:
-
-```ts
-// process A
-await using a = await connectViaExtension({ tabGroup: 'job' })
-await (await a.browser.contexts()[0].newPage()).goto('https://example.com')
-
-// process B, later
-await using b = await connectViaExtension({ tabGroup: 'job' })
-const page = b.browser.contexts()[0].pages().findLast((p) => p.url() === 'https://example.com/')
-```
-
-Match tabs by their exact url: `context.pages()` also lists tabs other sessions opened.
-
-Several processes can share one tab for `fetch` calls inside a signed-in site, and the last one closes it. See [Sharing one tab between processes](https://playwriter.dev/docs/sessions#sharing-one-tab-between-processes).
-
-If the extension runs in more than one browser or profile, pass `selectBrowser`. It gets every connected browser and returns the one to use:
-
-```ts
-await using connection = await connectViaExtension({
-  selectBrowser: (browsers) => {
-    // [{ id, browser: 'Brave', email: 'me@work.com', activeTabs, playwriterVersion }]
-    return browsers.find((b) => b.email === 'me@work.com')
-  },
-})
-```
-
-`id` is stable, so you can save it and match on it later. `listBrowsers()` returns the same list without connecting.
-
-Multiline:
-
-```bash
-playwriter -s 1 -e $'
-const title = await state.page.title();
-console.log({ title, url: state.page.url() });
-'
-```
-
-## Examples
-
-Variables in scope: `context`, `state` (persists between calls), `cloud` (local CLI sessions), `require`, `importModule`, native `import()`, and Node.js globals. Relative imports resolve from the session working directory. There is no default `page`; examples below assume `state.page` was set as shown above.
-
-**Persist data in state:**
-
-```bash
-playwriter -e "state.users = await state.page.$$eval('.user', els => els.map(e => e.textContent))"
-playwriter -e "console.log(state.users)"
-```
-
-**Intercept network requests:**
-
-```bash
-playwriter -e "state.requests = []; state.page.on('response', r => { if (r.url().includes('/api/')) state.requests.push(r.url()) })"
-playwriter -e "await Promise.all([state.page.waitForResponse(r => r.url().includes('/api/')), state.page.click('button')])"
-playwriter -e "console.log(state.requests)"
-```
-
-**Set breakpoints and debug:**
-
-```bash
-playwriter -e "state.cdp = await getCDPSession({ page: state.page }); state.dbg = createDebugger({ cdp: state.cdp }); await state.dbg.enable()"
-playwriter -e "state.scripts = await state.dbg.listScripts({ search: 'app' }); console.log(state.scripts.map(s => s.url))"
-playwriter -e "await state.dbg.setBreakpoint({ file: state.scripts[0].url, line: 42 })"
-```
-
-**Live edit page code:**
-
-```bash
-playwriter -e "state.cdp = await getCDPSession({ page: state.page }); state.editor = createEditor({ cdp: state.cdp }); await state.editor.enable()"
-playwriter -e "await state.editor.edit({ url: 'https://example.com/app.js', oldString: 'const DEBUG = false', newString: 'const DEBUG = true' })"
-```
-
-**Screenshot with labels:**
-
-```bash
-playwriter -e "await screenshotWithAccessibilityLabels({ page: state.page })"
-```
-
-**Live stream a tab to X Live / Twitch (RTMP, survives CLI exit):**
-
-```bash
-playwriter -s 1 -e "state.page = await context.newPage(); await state.page.goto('https://example.com')"
-playwriter stream start -s 1 --rtmp rtmp://va.pscp.tv:80/x/<stream-key>
-playwriter stream status -s 1
-playwriter stream stop -s 1
-```
-
-## MCP Setup
-
-Using the CLI with the skill (step 4 above) is the recommended approach. For direct MCP server configuration, see [MCP.md](./MCP.md).
-
-## Visual Labels
-
-Vimium-style labels for AI agents to identify elements:
-
-```javascript
-await screenshotWithAccessibilityLabels({ page: state.page })
-// Returns screenshot + accessibility snapshot with aria-ref selectors
-await state.page.locator('aria-ref=e5').click()
-```
-
-Color-coded: yellow=links, orange=buttons, coral=inputs, pink=checkboxes, peach=sliders, salmon=menus, amber=tabs.
-
-## Comparison
-
-### vs Playwright MCP
-
-|               | Playwriter                        | Playwright MCP                       |
-| ------------- | --------------------------------- | ------------------------------------ |
-| Browser       | **Uses your Chrome**              | Separate managed profile by default  |
-| Extensions    | Your existing ones                | None by default                      |
-| Login state   | Already logged in                 | Persistent, but a separate profile   |
-| Attach to your Chrome | Core design               | `--extension` mode                   |
-| Bot handling  | Real browser (disconnect to solve) | Managed automation profile          |
-| Native video / raw CDP | Yes                      | Trace-based / not exposed            |
-
-> **Note:** Playwriter video recording is **100x more efficient than Playwright video recording**, which sends **base64 images for every frame**.
-
-|                 | Playwriter                    | Playwright CLI                     |
-| --------------- | ----------------------------- | ---------------------------------- |
-| Browser         | **Uses your Chrome**          | New browser by default             |
-| Login state     | Already logged in             | Persistent profile, separate       |
-| Extensions      | Your existing ones            | None by default                    |
-| Captchas        | Disconnect extension to solve | Managed automation profile         |
-| Programmable JS | `execute` with persistent state | `run-code` (no cross-call state) |
-| Raw CDP access  | First-class                   | Not exposed                        |
-| Video recording | CDP screencast + ffmpeg, page audio | Trace / screencast based     |
-
-### vs BrowserMCP
-
-|               | Playwriter               | BrowserMCP          |
-| ------------- | ------------------------ | ------------------- |
-| Tools         | **1 `execute` tool**     | 12+ dedicated tools |
-| API           | Full Playwright          | Limited actions     |
-| Context usage | Low                      | High (tool schemas) |
-| LLM knowledge | Already knows Playwright | Must learn tools    |
-
-### vs agent-browser
-
-|                    | Playwriter                     | agent-browser                    |
-| ------------------ | ------------------------------ | -------------------------------- |
-| Browser            | **Uses your Chrome**           | Fresh Chrome for Testing         |
-| API surface        | 1 `execute` + full Playwright  | 50+ CLI commands, one per action |
-| Actions per turn   | Real JS (loops, conditions)    | `batch` of command strings       |
-| Reusable logic     | Import a `.js` function         | Re-run bash sequences            |
-| Skill recorder     | Yes                            | No                               |
-| Cloud browsers     | Built-in stealth + proxy       | Plugin only                      |
-| Remote control tab | Yes (Devin, cloud bots)        | No                               |
-
-### vs Antigravity (Jetski)
-
-|          | Playwriter       | Jetski                       |
-| -------- | ---------------- | ---------------------------- |
-| Tools    | **1 tool**       | 17+ tools                    |
-| Subagent | Direct execution | Spawns for each browser task |
-| Latency  | Low              | High (agent overhead)        |
-
-### vs Claude Browser Extension
-
-|                      | Playwriter              | Claude Extension     |
-| -------------------- | ----------------------- | -------------------- |
-| Agent support        | **Any MCP client**      | Claude only          |
-| Windows WSL          | Yes                     | No                   |
-| Context method       | A11y snapshots (5-20KB) | Screenshots (100KB+) |
-| Playwright API       | Full                    | No                   |
-| Debugger/breakpoints | Yes                     | No                   |
-| Live code editing    | Yes                     | No                   |
-| Network interception | Full                    | Limited              |
-| Raw CDP access       | Yes                     | No                   |
-
-### vs Built-in Chrome CDP (`--remote-debugging-port`)
-
-|                       | Playwriter                   | Built-in CDP                                       |
-| --------------------- | ---------------------------- | -------------------------------------------------- |
-| Setup                 | **Click extension icon**     | Relaunch Chrome with special flags                 |
-| Your real profile     | Yes                          | Blocked on default profile since Chrome 136        |
-| Permission prompt     | None                         | "Allow remote debugging?" dialog agents can't click|
-| Autonomous agents     | Fully autonomous             | Blocked by dialog / throwaway profile              |
-| Existing session      | Uses your running browser    | Must relaunch Chrome (lose state)                  |
-
-> Chrome's `--remote-debugging-port` is ignored on your default profile since **Chrome 136**, so you must use a throwaway `--user-data-dir` with none of your logins. Connecting an external CDP client also shows an "Allow remote debugging?" dialog an agent cannot click. Playwriter uses an in-Chrome extension instead: no dialog, no flags, your real profile.
-
-## Architecture
-
-```
-+---------------------+     +-------------------+     +-----------------+
-|   BROWSER           |     |   LOCALHOST       |     |   MCP CLIENT    |
-|                     |     |                   |     |                 |
-|  +---------------+  |     | WebSocket Server  |     |  +-----------+  |
-|  |   Extension   |<--------->  :19988         |     |  | AI Agent  |  |
-|  +-------+-------+  | WS  |                   |     |  +-----------+  |
-|          |          |     |  /extension       |     |        |        |
-|    chrome.debugger  |     |       |           |     |        v        |
-|          v          |     |       v           |     |  +-----------+  |
-|  +---------------+  |     |  /cdp/:id <--------------> |  execute  |  |
-|  | Tab 1 (green) |  |     +-------------------+  WS |  +-----------+  |
-|  | Tab 2 (green) |  |                               |        |        |
-|  | Tab 3 (gray)  |  |     Tab 3 not controlled      |  Playwright API |
-+---------------------+     (no extension click)      +-----------------+
-```
-
-## Remote Control (share your browser with a remote agent)
-
-Let a remote agent (Devin, a cloud bot, a friend's CLI agent) drive **your own browser**. No playwriter install needed on your machine, only the extension. The agent sees every Playwriter tab and can open new ones, like a local agent.
-
-1. Click the light-blue **Remote control** cloud button and confirm that the agent may read and control your browser
-2. A prompt containing a secret tunnel URL is copied to your clipboard — paste it to the agent
-3. The agent runs `playwriter session new --remote <id>` on its machine
-4. Open **Remote ON** in any Playwriter tab and click **Stop sharing** anytime to **revoke**. The URL dies instantly. Tabs the agent opened are detached and left open.
-
-Opening that same link in **any browser** shows a live, clickable view of the tab where sharing started, so you can share with a person instead of an agent. The viewer page receives no tunnel id in its initial HTTP request because the id starts in the URL fragment. Its JavaScript then uses the id to connect to the tunnel path (`/tunnel/{id}/extension`), keeping the id out of DNS and TLS SNI.
-
-```
-YOUR MACHINE (extension only)                        AGENT MACHINE (any box with npx)
-┌───────────────────────────┐                       ┌────────────────────────────────┐
-│ Chrome + Extension        │   Cloudflare tunnel   │ playwriter CLI + local relay   │
-│  Playwriter tabs ◄────────┼───◄ playwriter.dev ◄──┼────── session new --remote     │
-└───────────────────────────┘   /remote-control#id  └────────────────────────────────┘
-```
-
-Remote control is **not a sandbox**. The agent gets the same access as a local Playwriter agent, so share the id only with a person or agent you fully trust. A short denylist blocks only whole-profile cookie APIs and cache clears, so an agent cannot wipe every login by accident. The id contains 128 bits of randomness and is never reusable after revocation.
-
-Sharing also ends when you close or disconnect the tab where you started it.
-
-Use case: you are logged into a website and want an agent to do work in your authenticated session without giving it your password.
-
-## Remote Access
-
-Control Chrome on a remote machine over the internet using [traforo](https://traforo.dev) tunnels:
-
-**On host:**
-
-```bash
-npx -y traforo -p 19988 -t my-machine -- playwriter serve --token <secret>
-```
-
-**From remote:**
-
-```bash
-export PLAYWRITER_HOST=https://my-machine-tunnel.traforo.dev
-export PLAYWRITER_TOKEN=<secret>
-playwriter -s 1 -e 'state.page = await context.newPage(); await state.page.goto("https://example.com")'
-```
-
-Also works on a LAN without traforo (`PLAYWRITER_HOST=192.168.1.10`). Full guide with use cases (remote Mac mini, user support, multi-machine control): [docs/remote-access.md](./docs/remote-access.md)
-
-## Security
-
-- **Local by default**: The normal WebSocket relay stays on `localhost:19988`. Traffic leaves your machine only when you enable Remote control or configure remote access.
-- **Origin validation**: Only our extension IDs allowed (browsers can't spoof Origin)
-- **Controlled tab scope**: Tabs are controlled after an extension click. Playwriter never opens a tab on its own. New tabs are created only when code calls `context.newPage()`.
-- **Visible automation**: Chrome shows automation banner on controlled tabs
-- **No remote access**: Malicious websites cannot connect
-
-## Telemetry
-
-The local relay sends **anonymous usage stats** to [Strada](https://strada.sh): event names, a random install id, Playwriter version, OS, session kind, and hourly execute counts. It never sends code, URLs, page content, emails, or hostnames.
-
-Opt out with an env var, then restart the relay:
-
-```bash
-export PLAYWRITER_TELEMETRY=0   # or DO_NOT_TRACK=1
-playwriter serve restart
-```
-
-## Playwright API
-
-Connect programmatically (without CLI):
-
-```typescript
-import { chromium } from 'playwright-core'
-import { startPlayWriterCDPRelayServer, getCdpUrl } from 'playwriter'
-
-const server = await startPlayWriterCDPRelayServer()
-const browser = await chromium.connectOverCDP(getCdpUrl())
-const page = await browser.contexts()[0].newPage()
-
-await page.goto('https://example.com')
-await page.screenshot({ path: 'screenshot.png' })
-// Don't call browser.close() - it closes the user's Chrome
-server.close()
-```
-
-Or connect to a running server:
-
-```bash
-playwriter serve --host 127.0.0.1
-```
-
-```typescript
-const browser = await chromium.connectOverCDP('http://127.0.0.1:19988')
-```
-
-## Troubleshooting
-
-View relay server logs to debug issues:
-
-```bash
-playwriter logfile  # prints the log file path
-# typically: ~/.playwriter/relay-server.log
-```
-
-The relay log contains extension, MCP and WebSocket server logs. A separate CDP JSONL log is also created alongside it (see `playwriter logfile`). Both are recreated on each server start.
-
-Example: summarize CDP traffic counts by direction + method:
-
-```bash
-jq -r '.direction + "\t" + (.message.method // "response")' ~/.playwriter/cdp.jsonl | uniq -c
-```
-
-## Support
-
-If Playwriter is useful to you, consider [sponsoring the project](https://github.com/sponsors/remorses).
-
-## Known Issues
-
-- If all pages return `about:blank`, restart Chrome (Chrome bug in `chrome.debugger` API)
-- Browser may switch to light mode on connect ([Playwright issue](https://github.com/microsoft/playwright/issues/37627))
+See [LICENSE](./LICENSE). Upstream Playwriter notices remain with the relevant code.

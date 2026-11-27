@@ -16,7 +16,7 @@ import {
   decodeExtensionCdpMessage,
   encodeExtensionCdpCommand,
   readAttachedTargetSession,
-} from 'playwriter/src/remote-control'
+} from 'better-playwriter/src/remote-control'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { cn } from '../lib/utils.ts'
 

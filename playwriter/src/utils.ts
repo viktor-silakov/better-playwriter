@@ -1,38 +1,19 @@
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { DEV_EXTENSION_ID } from './brand.js'
+import { DEFAULT_DATA_DIR, dataPath, getRelayPort, readEnv } from './runtime-config.js'
 import type { TabGroupColor } from './protocol.js'
-
-// Playwriter extension IDs - used for validation and Chrome flag commands.
-//
-// An extension ID is always sha256(SOME_STRING) -> first 16 bytes -> each hex
-// nibble mapped 0-f to a-p. Only SOME_STRING differs by how it is loaded:
-//   - signed CRX / Web Store: SOME_STRING = the developer public key bytes
-//   - unpacked folder with no manifest "key": SOME_STRING = the absolute folder path
-// Production ships no "key" in manifest.json (see extension/vite.config.mts), so an
-// unpacked production build gets a path-derived ID instead of the store ID.
-export const EXTENSION_IDS = [
-  // hash of the developer public key baked into the Web Store listing
-  'jfeammnjpkecdekppnclgkkffahnhfhe', // Production (Chrome Web Store)
-  // hash of the public key injected into dev/test builds (stable across machines)
-  'pebbngnfojnignonigcnkdilknapkgid', // Dev extension (stable ID from manifest key)
-  // NOT a Ghost Browser identity: this is sha256 of the unpacked folder path
-  // "/Users/morse/Downloads/jfeammnjpkecdekppnclgkkffahnhfhe" on one Mac. Because
-  // the production manifest has no "key", loading it unpacked derived the ID from
-  // that path, not from any key. It only matches that exact path on that machine.
-  'laceiahnielojmkjcfpcjhjnnmjobckf', // Unpacked-from-Downloads path hash (machine-specific)
-]
 
 /**
  * Parse a relay host string into HTTP and WebSocket base URLs.
  * Supports both plain hostnames (appends port) and full URLs (uses as-is).
  *
  * Examples:
- *   "192.168.1.10"                        → http://192.168.1.10:19988, ws://192.168.1.10:19988
+ *   "192.168.1.10"                        → http://192.168.1.10:19989, ws://192.168.1.10:19989
  *   "https://my-machine-tunnel.traforo.dev" → https://my-machine-tunnel.traforo.dev, wss://my-machine-tunnel.traforo.dev
  */
-export function parseRelayHost(host: string, port: number = Number(process.env.PLAYWRITER_PORT) || 19988): { httpBaseUrl: string; wsBaseUrl: string } {
+export function parseRelayHost(host: string, port: number = getRelayPort()): { httpBaseUrl: string; wsBaseUrl: string } {
   if (host.startsWith('https://') || host.startsWith('http://')) {
     const url = new URL(host)
     const httpBaseUrl = url.origin
@@ -47,7 +28,7 @@ export function parseRelayHost(host: string, port: number = Number(process.env.P
 }
 
 export function getCdpUrl({
-  port = Number(process.env.PLAYWRITER_PORT) || 19988,
+  port = getRelayPort(),
   host = '127.0.0.1',
   token,
   extensionId,
@@ -97,28 +78,27 @@ export function getCdpUrl({
 
 export function redactRemoteControlSecrets(value: string): string {
   return value
-    .replace(/(playwriter\.dev\/remote-control#)[a-z0-9-]{1,63}/gi, '$1[redacted]')
+    .replace(/(\/remote-control#)[a-z0-9-]{1,63}/gi, '$1[redacted]')
     .replace(/[a-z0-9-]{1,63}(?=-tunnel\.)/gi, '[redacted]')
     .replace(/(_tunnelId=)[a-z0-9-]{1,63}/gi, '$1[redacted]')
     .replace(/(\/tunnel\/)[a-z0-9-]{1,63}/gi, '$1[redacted]')
 }
 
-// Use ~/.playwriter for logs so each OS user gets their own dir (avoids permission errors on shared machines, see #44)
-const LOG_BASE_DIR = path.join(os.homedir(), '.playwriter')
-export const LOG_FILE_PATH = process.env.PLAYWRITER_LOG_FILE_PATH || path.join(LOG_BASE_DIR, 'relay-server.log')
+// Use ~/.better-playwriter for logs so each OS user gets their own dir (avoids permission errors on shared machines, see #44)
+const LOG_BASE_DIR = dataPath()
+export const LOG_FILE_PATH = readEnv('LOG_FILE_PATH') || path.join(LOG_BASE_DIR, 'relay-server.log')
 export const LOG_CDP_FILE_PATH =
-  process.env.PLAYWRITER_CDP_LOG_FILE_PATH || path.join(path.dirname(LOG_FILE_PATH), 'cdp.jsonl')
+  readEnv('CDP_LOG_FILE_PATH') || path.join(path.dirname(LOG_FILE_PATH), 'cdp.jsonl')
 
 /** Logs hold cookies, typed text and page content: only this OS user may read them. */
 export const PRIVATE_FILE_MODE = 0o600
 const PRIVATE_DIR_MODE = 0o700
 
-/** Create a log file's folder and make the file private. Only ~/.playwriter itself is chmodded, never a custom folder. */
+/** Create a log file's folder and make the file private. Only the default data directory is chmodded. */
 export function preparePrivateLogFile(filePath: string): void {
   const dir = path.dirname(filePath)
   fs.mkdirSync(dir, { recursive: true, mode: PRIVATE_DIR_MODE })
-  // Older versions created ~/.playwriter as 0755
-  if (path.resolve(dir) === LOG_BASE_DIR) {
+  if (path.resolve(dir) === DEFAULT_DATA_DIR) {
     fs.chmodSync(dir, PRIVATE_DIR_MODE)
   }
   fs.writeFileSync(filePath, '', { mode: PRIVATE_FILE_MODE })
@@ -127,7 +107,16 @@ export function preparePrivateLogFile(filePath: string): void {
 }
 
 const packageJsonPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'package.json')
-export const VERSION = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8')).version as string
+const packageMetadata = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8')) as {
+  version: string
+  betterPlaywriter?: { storeId?: string | null }
+}
+export const VERSION = packageMetadata.version
+
+// Production installs have a Store ID. Development uses the public key in Vite's manifest transform.
+const storeId = readEnv('STORE_ID') || packageMetadata.betterPlaywriter?.storeId
+export const STORE_EXTENSION_ID = storeId && /^[a-p]{32}$/.test(storeId) ? storeId : undefined
+export const EXTENSION_IDS = STORE_EXTENSION_ID ? [DEV_EXTENSION_ID, STORE_EXTENSION_ID] : [DEV_EXTENSION_ID]
 
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))

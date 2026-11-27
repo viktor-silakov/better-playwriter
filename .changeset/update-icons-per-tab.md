@@ -1,5 +1,5 @@
 ---
-'playwriter': patch
+'better-playwriter': patch
 ---
 
 Stop the extension from keeping Chrome busy when pages change their title.

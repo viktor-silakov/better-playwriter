@@ -1,5 +1,5 @@
 ---
-'playwriter': patch
+'better-playwriter': patch
 ---
 
 Connect extensions without waiting for Chrome account identity, and update the relay if it arrives later.

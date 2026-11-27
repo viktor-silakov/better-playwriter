@@ -12,6 +12,7 @@ import { createFileLogger } from './create-logger.js'
 import './test-declarations.js'
 
 const TEST_PORT = 19990
+const remoteServiceUrl = process.env.BETTER_PLAYWRITER_REMOTE_URL || process.env.PLAYWRITER_REMOTE_URL
 
 describe('Extension Connection Tests', () => {
   let client: Awaited<ReturnType<typeof createMCPClient>>['client']
@@ -357,7 +358,7 @@ describe('Extension Connection Tests', () => {
   }, 60_000)
 
   // Start is idempotent, the icon menu Stop sharing closes the tunnel.
-  it('starts Remote control twice with one tunnel and stops it from the icon menu', async () => {
+  it.skipIf(!remoteServiceUrl)('starts Remote control twice with one tunnel and stops it from the icon menu', async () => {
     const browserContext = getBrowserContext()
     const serviceWorker = await getExtensionServiceWorker(browserContext)
     const page = await browserContext.newPage()
@@ -391,9 +392,9 @@ describe('Extension Connection Tests', () => {
     }
   }, 60_000)
 
-  // Full Remote control flow through the real playwriter.dev tunnel: the remote
+  // Full Remote control flow through the configured tunnel: the remote
   // relay sees every attached tab, opens new tabs, and loses access on Stop sharing.
-  it('lets a Remote control relay use every tab and open new ones', async () => {
+  it.skipIf(!remoteServiceUrl)('lets a Remote control relay use every tab and open new ones', async () => {
     const browserContext = getBrowserContext()
     const serviceWorker = await getExtensionServiceWorker(browserContext)
     const toggleActiveTab = async (page: Page) => {

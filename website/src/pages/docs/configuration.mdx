@@ -1,29 +1,27 @@
 ---
 title: Environment variables and MCP config
 sidebarTitle: Configuration
-description: Playwriter environment variables, CLI flags, and MCP server config examples for Claude, Cursor, OpenCode, and remote connections.
+description: Better Playwriter environment variables, CLI flags, and MCP server config examples for Claude, Cursor, OpenCode, and remote connections.
 icon: lucide:settings
 ---
 
-Playwriter is configured through **CLI flags** and **environment variables**. No config files needed.
+Better Playwriter is configured through **CLI flags** and **environment variables**. No config files needed.
 
 ## Environment variables
 
 | Variable | Description | Default |
 |---|---|---|
-| `PLAYWRITER_HOST` | Remote relay server URL | `ws://localhost:19988` |
-| `PLAYWRITER_TOKEN` | Auth token for remote connections | - |
-| `PLAYWRITER_API_KEY` | API key for cloud browsers | - |
+| `BETTER_PLAYWRITER_PORT` | Local relay port. Set the same value when building the unpacked extension. | `19989` |
+| `BETTER_PLAYWRITER_DATA_DIR` | Directory for local settings, logs, recordings, and downloaded browsers. | `~/.better-playwriter` |
+| `BETTER_PLAYWRITER_HOST` | Address of a remote relay you control. | Local relay |
+| `BETTER_PLAYWRITER_TOKEN` | Authentication token for remote connections. | Unset |
+| `BETTER_PLAYWRITER_EXEC_TIMEOUT` | Execution timeout in milliseconds. | `10000` |
+| `BETTER_PLAYWRITER_CLOUD_URL` | Compatible managed browser endpoint. | Unset |
+| `BETTER_PLAYWRITER_REMOTE_URL` | Compatible browser-sharing service endpoint. | Unset |
 
-### PLAYWRITER_HOST and PLAYWRITER_TOKEN
+Existing `PLAYWRITER_*` variables have lower precedence than the corresponding fork variables. To reuse the old data directory, stop its relay first and point `BETTER_PLAYWRITER_DATA_DIR` at `~/.playwriter` explicitly. The fork normally keeps its files separate.
 
-For [remote access](./remote-access.mdx), point to a relay server running on another machine:
-
-```bash
-export PLAYWRITER_HOST=https://my-tunnel.traforo.dev
-export PLAYWRITER_TOKEN=MY_SECRET
-playwriter session new
-```
+For token-protected connections, use a trusted relay URL and set `BETTER_PLAYWRITER_TOKEN` through your environment. See [remote access](./remote-access.mdx).
 
 ## CLI global flags
 
@@ -42,8 +40,8 @@ playwriter session new
 |---|---|
 | `--browser <key>` | Browser type: extension ID, `headless`, `cloud`, `direct:port` |
 | `--direct [endpoint]` | Direct CDP: auto-discover or explicit endpoint |
-| `--proxy <region>` | Cloud proxy region (us, de, jp, etc.) |
-| `--custom-proxy <url>` | Custom proxy (host:port or user:pass@host:port) |
+| `--proxy <region>` | Region supported by the configured cloud provider |
+| `--custom-proxy <url>` | Custom proxy used by the configured cloud provider |
 | `--timeout <minutes>` | Cloud browser timeout (1-240, default 60) |
 | `--disable-proxy-bandwidth-acceleration` | Load images/video with proxy |
 | `--patchright` | Connect with Patchright and human-like input. Switch later with `session update <id> --patchright`. See [sessions](./sessions.mdx#patchright) |
@@ -72,9 +70,9 @@ playwriter session new
 ```json
 {
   "mcpServers": {
-    "playwriter": {
+    "better-playwriter": {
       "command": "npx",
-      "args": ["-y", "playwriter@latest"]
+      "args": ["-y", "better-playwriter@latest"]
     }
   }
 }
@@ -82,19 +80,19 @@ playwriter session new
 
 ### Direct CDP and cloud browser providers
 
-There is no MCP config for these. The agent calls the `session_new` tool with `direct: "auto"` to find Chrome with debugging on, or with an endpoint like `wss://xxx.cdp.browser-use.com`. See [MCP setup](./mcp-setup.mdx).
+There is no MCP config for these. The agent calls the `session_new` tool with `direct: "auto"` to find Chrome with debugging on, or with an endpoint like `wss://browser.example.com`. See [MCP setup](./mcp-setup.mdx).
 
 ### Remote relay
 
 ```json
 {
   "mcpServers": {
-    "playwriter": {
+    "better-playwriter": {
       "command": "npx",
-      "args": ["-y", "playwriter@latest"],
+      "args": ["-y", "better-playwriter@latest"],
       "env": {
-        "PLAYWRITER_HOST": "https://my-tunnel.traforo.dev",
-        "PLAYWRITER_TOKEN": "MY_SECRET"
+        "BETTER_PLAYWRITER_HOST": "https://relay.example.com",
+        "BETTER_PLAYWRITER_TOKEN": "MY_SECRET"
       }
     }
   }
@@ -103,15 +101,15 @@ There is no MCP config for these. The agent calls the `session_new` tool with `d
 
 ## Debugging configuration
 
-Playwriter logs to files for debugging:
+Better Playwriter logs to files for debugging:
 
 ```bash
 # Get log file paths
-playwriter logfile
-# typically: ~/.playwriter/relay-server.log
+better-playwriter logfile
+# typically: ~/.better-playwriter/relay-server.log
 
 # CDP JSONL log for protocol debugging
-jq -r '.direction + "\t" + (.message.method // "response")' ~/.playwriter/cdp.jsonl | uniq -c
+jq -r '.direction + "\t" + (.message.method // "response")' ~/.better-playwriter/cdp.jsonl | uniq -c
 ```
 
 Both files are recreated every time the relay server starts.

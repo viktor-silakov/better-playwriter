@@ -1,3 +1,4 @@
+import { readEnv } from './runtime-config.js'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -129,16 +130,16 @@ export function resolveBrowserExecutablePath({
     return resolvedExplicitPath
   }
 
-  const envPath = env.PLAYWRITER_BROWSER_PATH?.trim()
+  const envPath = readEnv('BROWSER_PATH', env)?.trim()
   if (envPath) {
     const resolvedEnvPath = expandHomeDirectory({ filePath: envPath, homeDir })
     if (!existsSync(resolvedEnvPath)) {
-      throw new Error(`PLAYWRITER_BROWSER_PATH does not exist: ${resolvedEnvPath}`)
+      throw new Error(`BETTER_PLAYWRITER_BROWSER_PATH does not exist: ${resolvedEnvPath}`)
     }
     return resolvedEnvPath
   }
 
-  // Check Chrome downloaded by `playwriter install` first (highest priority)
+  // Check Chrome downloaded by `better-playwriter install` first (highest priority)
   const installedChrome = findInstalledChrome()
   if (installedChrome) {
     return installedChrome
@@ -158,8 +159,8 @@ export function resolveBrowserExecutablePath({
   })
 
   throw new Error(
-    'Could not find a supported browser binary. Run `playwriter browser install` to download Chrome for Testing, or pass a binary path.' +
-      `\n\nSearched paths:\n- ~/.playwriter/browsers/ (playwriter browser install)\n${searchedPathsText.join('\n')}`,
+    'Could not find a supported browser binary. Run `better-playwriter browser install` to download Chrome for Testing, or pass a binary path.' +
+      `\n\nSearched paths:\n- ~/.better-playwriter/browsers/ (better-playwriter browser install)\n${searchedPathsText.join('\n')}`,
   )
 }
 

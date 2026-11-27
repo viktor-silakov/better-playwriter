@@ -68,9 +68,7 @@ await state.dbg.setPauseOnExceptions({ state: 'uncaught' })
 
 For the full debugger API, fetch the reference docs:
 
-```bash
-curl https://playwriter.dev/resources/debugger-api.md
-```
+[Debugger API reference](/resources/debugger-api.md)
 
 ## Live code editor
 
@@ -107,9 +105,7 @@ Edits are **in-memory only**. They persist until the page reloads. The editor al
 
 For the full editor API, fetch the reference docs:
 
-```bash
-curl https://playwriter.dev/resources/editor-api.md
-```
+[Editor API reference](/resources/editor-api.md)
 
 ## CSS inspection
 
@@ -126,9 +122,7 @@ console.log(formatStylesAsText(styles))
 
 For the full styles API, fetch the reference docs:
 
-```bash
-curl https://playwriter.dev/resources/styles-api.md
-```
+[Styles API reference](/resources/styles-api.md)
 
 ## React component inspection
 
@@ -167,4 +161,4 @@ const { cookies } = await cdp.send('Network.getCookies', { urls: [state.page.url
 const { metrics: perfMetrics } = await cdp.send('Performance.getMetrics')
 ```
 
-Always use `getCDPSession({ page: state.page })`, never `context.newCDPSession()`. The latter doesn't work through the Playwriter relay.
+Always use `getCDPSession({ page: state.page })`, never `context.newCDPSession()`. The latter doesn't work through the Better Playwriter relay.

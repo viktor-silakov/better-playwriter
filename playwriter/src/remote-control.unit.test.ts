@@ -91,12 +91,19 @@ describe('remote-control', () => {
     )
   })
 
+  test('requires explicit configuration for a bare id when hosted sharing is disabled', () => {
+    expect(() => parseRemoteControlUrl('abc123', { baseUrl: null })).toThrow('BETTER_PLAYWRITER_REMOTE_URL')
+    expect(parseRemoteControlUrl('https://example.com/remote-control#abc123', { baseUrl: null }).wsUrl).toBe(
+      'wss://example.com/tunnel/abc123/extension',
+    )
+  })
+
   test('explains the unquoted-shell case when the hash is missing', () => {
     expect(() =>
       parseRemoteControlUrl('https://playwriter.dev/remote-control'),
     ).toThrowErrorMatchingInlineSnapshot(`
       [Error: Remote control id is missing. Pass the id from the copied prompt, for example:
-        playwriter session new --remote your-id]
+        better-playwriter session new --remote your-id]
     `)
     expect(extractViewerTunnelId('https://playwriter.dev/remote-control#BAD_ID')).toBe(null)
     expect(extractViewerTunnelId('https://playwriter.dev/other#abc123')).toBe(null)
@@ -206,9 +213,9 @@ describe('remote-control', () => {
     expect(prompt).toMatchInlineSnapshot(`
       "Connect to my Chrome browser:
 
-      npx -y playwriter@latest session new --remote abc123
+      npx -y better-playwriter@latest session new --remote abc123
 
-      Then use the printed session id. Read https://playwriter.dev/SKILL.md. NEVER share this id."
+      Then use the printed session id. Run better-playwriter skill for usage instructions. NEVER share this id."
     `)
   })
 

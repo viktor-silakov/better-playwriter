@@ -5,7 +5,7 @@ description: Record browser sessions as up to 4K 60 fps MP4 video with Chrome's 
 icon: lucide:video
 ---
 
-Have the agent **record what it's doing** as video. Playwriter uses Chrome's native recorder (CDP `Page.startScreenRecording`): Chrome encodes the video itself, out of process, at up to **4K and 60 fps**. No permission prompt, no extension click, and the **recording survives page navigation**, also cross-site.
+Have the agent **record what it's doing** as video. Better Playwriter uses Chrome's native recorder (CDP `Page.startScreenRecording`): Chrome encodes the video itself, out of process, at up to **4K and 60 fps**. No permission prompt, no extension click, and the **recording survives page navigation**, also cross-site.
 
 ```
 Page.startScreenRecording ──> AV1 fragments ──> ffmpeg (live) ──> H.264 .mp4
@@ -156,7 +156,7 @@ Several pages can record **at the same time**, one recording per page. Each `rec
 
 ## Ghost cursor
 
-The extension injects a **ghost cursor** overlay on every Playwriter-attached tab. It follows mouse actions automatically, making recordings look natural.
+The extension injects a **ghost cursor** overlay on every Better Playwriter-attached tab. It follows mouse actions automatically, making recordings look natural.
 
 ```js
 // Change cursor style
@@ -193,7 +193,7 @@ This can take **60-120+ seconds**. Always pass `--timeout 120000` or higher.
 Record any Playwright page from your own Node.js code:
 
 ```ts
-import { startRecording } from 'playwriter'
+import { startRecording } from 'better-playwriter'
 
 const rec = await startRecording({
   page,

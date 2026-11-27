@@ -34,14 +34,14 @@ Use it to answer four practical questions quickly:
 Create a session and open a page:
 
 ```bash
-playwriter session new
-playwriter -s 1 -e 'state.page = await context.newPage(); await state.page.goto("https://example.com", { waitUntil: "domcontentloaded" })'
+better-playwriter session new
+better-playwriter -s 1 -e 'state.page = await context.newPage(); await state.page.goto("https://example.com", { waitUntil: "domcontentloaded" })'
 ```
 
 Collect a concise vitals report:
 
 ```bash
-playwriter -s 1 -e "$(cat <<'EOF'
+better-playwriter -s 1 -e "$(cat <<'EOF'
 await state.page.evaluate(() => {
   const metrics = { paints: {}, lcp: 0, cls: 0 }
   globalThis.__pwMetrics = metrics
@@ -93,7 +93,7 @@ EOF
 List the heaviest requests with CDP:
 
 ```bash
-playwriter -s 1 -e "$(cat <<'EOF'
+better-playwriter -s 1 -e "$(cat <<'EOF'
 const cdp = await getCDPSession({ page: state.page })
 await cdp.send('Network.enable')
 await cdp.send('Network.setCacheDisabled', { cacheDisabled: true })
@@ -133,7 +133,7 @@ EOF
 Check interactivity blockers:
 
 ```bash
-playwriter -s 1 -e "$(cat <<'EOF'
+better-playwriter -s 1 -e "$(cat <<'EOF'
 await state.page.evaluate(() => {
   globalThis.__pwLongTasks = []
   globalThis.__pwEvents = []

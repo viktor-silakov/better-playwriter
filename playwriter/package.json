@@ -1,11 +1,10 @@
 {
-  "name": "playwriter",
-  "description": "",
+  "name": "better-playwriter",
+  "description": "Drive a Chrome browser you control through a local CLI or MCP server.",
   "version": "0.12.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "repository": "https://github.com/remorses/playwriter",
   "scripts": {
     "build": "rm -rf dist *.tsbuildinfo && mkdir dist && bun scripts/build-client-bundles.ts && tsc && bun scripts/build-extension-bundle.ts && bun scripts/build-resources.ts",
     "prepublishOnly": "pnpm build",
@@ -16,15 +15,20 @@
     "test": "vitest run -u",
     "test:watch": "vitest"
   },
-  "bin": "./bin.js",
+  "bin": {
+    "better-playwriter": "./bin.js"
+  },
   "files": [
     "dist",
-    "src",
+    "!dist/**/*.test.*",
+    "!dist/test-utils.*",
+    "!dist/test-declarations.*",
+    "src/skill.md",
+    "src/recorder-prompt.md",
     "bin.js"
   ],
   "keywords": [],
-  "author": "Tommaso De Rossi, morse <beats.by.morse@gmail.com>",
-  "license": "",
+  "license": "MIT",
   "devDependencies": {
     "@mizchi/selector-generator": "1.50.0-next",
     "@mozilla/readability": "^0.6.0",
@@ -68,5 +72,8 @@
   },
   "optionalDependencies": {
     "sharp": "^0.35.4"
+  },
+  "betterPlaywriter": {
+    "storeId": null
   }
 }

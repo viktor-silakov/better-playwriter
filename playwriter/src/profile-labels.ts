@@ -1,8 +1,8 @@
+import { dataPath } from './runtime-config.js'
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 
-const file = path.join(os.homedir(), '.playwriter', 'local-profile-names.json')
+const file = dataPath('local-profile-names.json')
 
 /** Names observed locally, keyed by the extension installation. Never used for remote relays. */
 export function readLocalProfileNames(): Record<string, string> {

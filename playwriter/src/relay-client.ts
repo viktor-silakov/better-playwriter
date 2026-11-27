@@ -1,3 +1,5 @@
+import { PRODUCT_NAME } from './brand.js'
+import { readEnv, getRelayPort } from './runtime-config.js'
 /**
  * Shared utilities for connecting to the relay server.
  * Used by both MCP and CLI.
@@ -9,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 import pc from 'picocolors'
 import dedent from 'string-dedent'
 import { getListeningPidsForPort, killPid } from './kill-port.js'
-import { VERSION, getCdpUrl, sleep, LOG_FILE_PATH } from './utils.js'
+import { VERSION, STORE_EXTENSION_ID, getCdpUrl, sleep, LOG_FILE_PATH } from './utils.js'
 import { isRemoteExtensionKey } from './relay-state.js'
 import { getChromium, type Browser } from './playwright-import.js'
 import { readLocalProfileNames } from './profile-labels.js'
@@ -18,17 +20,19 @@ import type { TabGroupColor } from './protocol.js'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
-export const RELAY_PORT = Number(process.env.PLAYWRITER_PORT) || 19988
+export const RELAY_PORT = getRelayPort()
 
-export const PLAYWRITER_EXTENSION_URL =
-  'https://chromewebstore.google.com/detail/playwriter/jfeammnjpkecdekppnclgkkffahnhfhe'
+export const PLAYWRITER_EXTENSION_URL = STORE_EXTENSION_ID
+  ? `https://chromewebstore.google.com/detail/better-playwriter/${STORE_EXTENSION_ID}`
+  : 'chrome://extensions/'
 
-// One message for CLI, executor and library users (skills calling
-// connectViaExtension). Written for the agent to relay to the user.
+const installInstruction = STORE_EXTENSION_ID
+  ? `Install ${PRODUCT_NAME} from the Chrome Web Store: ${PLAYWRITER_EXTENSION_URL}`
+  : `Load the ${PRODUCT_NAME} extension in ${PLAYWRITER_EXTENSION_URL} using the project installation guide.`
+
 export const EXTENSION_NOT_CONNECTED_ERROR = dedent`
-  The Playwriter Chrome extension is not connected.
-  Tell the user to:
-  1. Install the Playwriter extension in Chrome: ${PLAYWRITER_EXTENSION_URL}
+  The ${PRODUCT_NAME} Chrome extension is not connected.
+  1. ${installInstruction}
   2. Keep Chrome open. If the extension icon is gray, click it on any tab.
   3. Run the command again.
 `
@@ -250,8 +254,8 @@ async function drainRelay({
   logger?: { log: (...args: any[]) => void }
 }): Promise<boolean> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-  if (process.env.PLAYWRITER_TOKEN) {
-    headers.Authorization = `Bearer ${process.env.PLAYWRITER_TOKEN}`
+  if (readEnv('TOKEN')) {
+    headers.Authorization = `Bearer ${readEnv('TOKEN')}`
   }
   const response = await fetch(`http://127.0.0.1:${port}/cli/drain`, {
     method: 'POST',
@@ -285,7 +289,7 @@ const DEFAULT_DRAIN_TIMEOUT_MS = 30_000
 
 /**
  * Stop the relay on `port`. A relay that supports it is drained first so running executes of
- * other agents can finish. Only Playwriter relay processes are ever killed.
+ * other agents can finish. Only Better Playwriter relay processes are ever killed.
  * `relay` is the /version probe; pass null when the port holder does not answer /version.
  */
 async function stopRelay({
@@ -313,7 +317,7 @@ async function stopRelay({
 }
 
 /**
- * Stop the local relay daemon, draining it first. Used by `playwriter serve restart`.
+ * Stop the local relay daemon, draining it first. Used by `better-playwriter serve restart`.
  * drainTimeoutMs 0 stops it right away and aborts running executes.
  */
 export async function stopRelayServer({
@@ -354,7 +358,7 @@ export function compareVersions(v1: string, v2: string): number {
 }
 
 /**
- * Check if the running playwriter package is older than the version the extension was built with.
+ * Check if the running better-playwriter package is older than the version the extension was built with.
  * The extension bundles the playwriter version at build time. If the extension reports a newer
  * version, it means the user's CLI/MCP needs updating.
  * Returns a warning message if outdated, null otherwise.
@@ -364,7 +368,7 @@ export function getExtensionOutdatedWarning(extensionPlaywriterVersion: string |
     return null
   }
   if (compareVersions(extensionPlaywriterVersion, VERSION) > 0) {
-    return `Playwriter ${VERSION} is outdated (extension requires ${extensionPlaywriterVersion}). Run \`npm install -g playwriter@latest\` or update the playwriter package in your project.`
+    return `Better Playwriter ${VERSION} is outdated (extension requires ${extensionPlaywriterVersion}). Run \`npm install -g better-playwriter@latest\` or update the better-playwriter package in your project.`
   }
   return null
 }
@@ -407,7 +411,7 @@ async function ensureRelayServerImpl(options: EnsureRelayServerOptions = {}): Pr
   }
 
   if (relay) {
-    // Do not let an older client replace a newer Playwriter relay.
+    // Do not let an older client replace a newer Better Playwriter relay.
     if (compareVersions(relay.version, VERSION) >= 0 || !restartOnVersionMismatch) {
       return
     }
@@ -474,7 +478,7 @@ export type PlaywriterBrowserConnection = {
   [Symbol.asyncDispose](): Promise<void>
 }
 
-/** A browser profile with the Playwriter extension connected to the local relay. */
+/** A browser profile with the Better Playwriter extension connected to the local relay. */
 export type ExtensionBrowser = {
   /** Stable across extension reconnects and relay restarts. Safe to persist. */
   id: string
@@ -484,7 +488,7 @@ export type ExtensionBrowser = {
   email: string | null
   /** User-assigned profile label, when configured. */
   profileLabel?: string | null
-  /** Tabs the extension has currently attached to Playwriter. */
+  /** Tabs the extension has currently attached to Better Playwriter. */
   activeTabs: number
   playwriterVersion: string | null
 }
@@ -513,7 +517,7 @@ function formatBrowserList(browsers: ExtensionBrowser[]): string {
 }
 
 /**
- * List browsers with the Playwriter extension connected. Starts the relay if needed
+ * List browsers with the Better Playwriter extension connected. Starts the relay if needed
  * and waits briefly for at least one extension. Returns [] if none connects.
  */
 export async function listBrowsers({
@@ -549,10 +553,10 @@ export async function createRelaySession({
   })
   const result = (await response.json()) as CreatedRelaySession & { error?: string }
   if (!response.ok) {
-    throw new Error(result.error || `Playwriter session create failed with HTTP ${response.status}`)
+    throw new Error(result.error || `Better Playwriter session create failed with HTTP ${response.status}`)
   }
   if (!result.id) {
-    throw new Error('Playwriter session create returned no id')
+    throw new Error('Better Playwriter session create returned no id')
   }
   return result
 }
@@ -580,7 +584,7 @@ export async function deleteRelaySession({
   }
   const result = (await response.json().catch(() => ({}))) as { error?: string; warning?: string }
   if (!response.ok) {
-    throw new Error(result.error || `Playwriter session delete failed with HTTP ${response.status}`)
+    throw new Error(result.error || `Better Playwriter session delete failed with HTTP ${response.status}`)
   }
   return { warning: result.warning }
 }
@@ -633,7 +637,7 @@ export async function connectViaExtension({
     }
     if (browsers.length > 1) {
       throw new Error(
-        `Playwriter is connected in ${browsers.length} browsers. Pass selectBrowser to connectViaExtension() to pick one:\n${formatBrowserList(browsers)}`,
+        `Better Playwriter is connected in ${browsers.length} browsers. Pass selectBrowser to connectViaExtension() to pick one:\n${formatBrowserList(browsers)}`,
       )
     }
     return browsers[0]
@@ -658,7 +662,7 @@ export async function connectViaExtension({
     })
 
   // Memoized so close() followed by dispose (or double close) runs cleanup once.
-  // browser.contexts() lists every Playwriter tab, including other sessions' tabs, so the
+  // browser.contexts() lists every Better Playwriter tab, including other sessions' tabs, so the
   // extension closes only the tabs this session created instead of every page we can see.
   let closing: Promise<void> | undefined
   const close = () => {

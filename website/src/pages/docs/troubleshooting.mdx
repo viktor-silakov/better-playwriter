@@ -1,6 +1,6 @@
 ---
 title: Troubleshooting
-description: Debug Playwriter connection issues. Read relay logs, inspect CDP traffic, and fix common Chrome debugger problems.
+description: Debug Better Playwriter connection issues. Read relay logs, inspect CDP traffic, and fix common Chrome debugger problems.
 icon: lucide:bug
 ---
 
@@ -9,10 +9,10 @@ icon: lucide:bug
 The relay server logs everything: extension connections, CDP events, MCP messages, and errors. Two log files are created each time the server starts:
 
 ```bash
-playwriter logfile
+better-playwriter logfile
 # prints paths like:
-#   ~/.playwriter/relay-server.log
-#   ~/.playwriter/cdp.jsonl
+#   ~/.better-playwriter/relay-server.log
+#   ~/.better-playwriter/cdp.jsonl
 ```
 
 **`relay-server.log`** contains human-readable logs from the extension, MCP, and WebSocket server.
@@ -21,10 +21,10 @@ playwriter logfile
 
 ```bash
 # Count CDP messages by direction and method
-jq -r '.direction + "\t" + (.message.method // "response")' ~/.playwriter/cdp.jsonl | uniq -c
+jq -r '.direction + "\t" + (.message.method // "response")' ~/.better-playwriter/cdp.jsonl | uniq -c
 
 # Find errors
-grep -i error ~/.playwriter/relay-server.log | tail -20
+grep -i error ~/.better-playwriter/relay-server.log | tail -20
 ```
 
 Both files are **recreated** every time the server starts, so they only contain logs from the current session.
@@ -47,9 +47,9 @@ The extension isn't connected to the relay. Check:
 
 1. Is Chrome running?
 2. Did you click the extension icon on at least one tab? (Icon should be green)
-3. Is the relay server running? The CLI starts it automatically, but if you killed it manually, run `playwriter serve` or just use any CLI command to restart it
+3. Is the relay server running? The CLI starts it automatically, but if you killed it manually, run `better-playwriter serve` or just use any CLI command to restart it
 
-### "No browser tabs have Playwriter enabled"
+### "No browser tabs have Better Playwriter enabled"
 
 You need to click the extension icon on a tab to make it controllable. The extension only attaches to tabs where you explicitly enable it.
 
@@ -58,18 +58,18 @@ You need to click the extension icon on a tab to make it controllable. The exten
 Reset the session to reconnect:
 
 ```bash
-playwriter session reset <sessionId>
+better-playwriter session reset <sessionId>
 ```
 
-If that doesn't help, restart the relay by killing the process on port 19988 and running any CLI command:
+If that doesn't help, restart the relay by killing the process on port 19989 and running any CLI command:
 
 ```bash
 # macOS/Linux
-PIDS=$(lsof -ti :19988)
+PIDS=$(lsof -ti :19989)
 [ -n "$PIDS" ] && kill $PIDS
 
 # Windows (PowerShell)
-Get-NetTCPConnection -LocalPort 19988 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
+Get-NetTCPConnection -LocalPort 19989 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
 ```
 
 ### Timeout errors
@@ -77,44 +77,44 @@ Get-NetTCPConnection -LocalPort 19988 -ErrorAction SilentlyContinue | ForEach-Ob
 Increase the timeout for slow operations:
 
 ```bash
-playwriter -s 1 --timeout 30000 -e 'await state.page.goto("https://slow-site.com")'
+better-playwriter -s 1 --timeout 30000 -e 'await state.page.goto("https://slow-site.com")'
 ```
 
 The default timeout is 10 seconds.
 
-### Port 19988 already in use
+### Port 19989 already in use
 
 Another instance of the relay is running. Kill it first:
 
 ```bash
 # macOS/Linux
-PIDS=$(lsof -ti :19988)
+PIDS=$(lsof -ti :19989)
 [ -n "$PIDS" ] && kill $PIDS
 
 # Or use --replace flag
-playwriter serve --token MY_SECRET --replace
+better-playwriter serve --token MY_SECRET --replace
 ```
 
 ### Skill recorder will not start, or stop is ambiguous
 
-The in-page **Record** button talks to the local relay. It no longer fails just because several playwriter sessions are open. If start still fails:
+The in-page **Record** button talks to the local relay. It no longer fails just because several better-playwriter sessions are open. If start still fails:
 
 1. Is the extension icon green on the tab?
-2. Is the relay up? Run any `playwriter` command or `playwriter serve`
-3. Read `playwriter logfile` and look for `Record start endpoint error`
+2. Is the relay up? Run any `better-playwriter` command or `better-playwriter serve`
+3. Read `better-playwriter logfile` and look for `Record start endpoint error`
 
-If `playwriter recorder stop` says **Multiple active recordings**, it prints each recording id with the current or last page URL. Pick the matching one:
+If `better-playwriter recorder stop` says **Multiple active recordings**, it prints each recording id with the current or last page URL. Pick the matching one:
 
 ```bash
-playwriter recorder status
-playwriter recorder stop 3
+better-playwriter recorder status
+better-playwriter recorder stop 3
 ```
 
 See [Skill Recorder](/docs/skill-recorder) for the full command list and more cases.
 
 ### Dialogs (alert, confirm, prompt) disappear instantly
 
-Playwright **auto-dismisses** JavaScript dialogs when no handler is registered. This is core Playwright behavior, not Playwriter-specific. When a dialog opens and nothing handles it:
+Playwright **auto-dismisses** JavaScript dialogs when no handler is registered. This is core Playwright behavior, not Better Playwriter-specific. When a dialog opens and nothing handles it:
 
 - **alert** is dismissed (same as clicking OK)
 - **confirm** is dismissed (same as clicking **Cancel**)

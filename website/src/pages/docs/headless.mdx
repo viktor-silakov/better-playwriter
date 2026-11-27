@@ -1,7 +1,7 @@
 ---
 title: Headless Chrome, Direct CDP, and CI Setup
 sidebarTitle: Headless & CDP
-description: Run Playwriter with headless Chrome for CI and servers, connect directly to any Chrome via CDP, or use cloud browser providers without an extension.
+description: Run Better Playwriter with headless Chrome for CI and servers, connect directly to any Chrome via CDP, or use cloud browser providers without an extension.
 icon: lucide:monitor-off
 ---
 
@@ -11,34 +11,34 @@ Launch a **headless Chrome** automatically with no extension setup and no user b
 
 ```bash
 # Install Chrome for Testing (first time only)
-playwriter browser install
+better-playwriter browser install
 
 # Launch headless Chrome and create a session
-playwriter session new --browser headless
+better-playwriter session new --browser headless
 
 # Use the session normally
-playwriter -s 1 -e "state.page = await context.newPage(); await state.page.goto('https://example.com')"
-playwriter -s 1 -e "snapshot({ page: state.page })"
+better-playwriter -s 1 -e "state.page = await context.newPage(); await state.page.goto('https://example.com')"
+better-playwriter -s 1 -e "snapshot({ page: state.page })"
 ```
 
 ## How it works
 
 `--browser headless` launches a headless Chromium process and connects to it via CDP, bypassing the extension entirely. Multiple sessions **reuse the same Chrome process**, so creating additional sessions is instant.
 
-If no Chrome binary is found, Playwriter will tell you to run `playwriter browser install` first to download Chrome for Testing.
+If no Chrome binary is found, Better Playwriter will tell you to run `better-playwriter browser install` first to download Chrome for Testing.
 
 ## Browser management
 
 ```bash
 # Download Chrome for Testing
-playwriter browser install
+better-playwriter browser install
 
 # Start Chrome manually (headed, with custom profile)
-playwriter browser start --user-data-dir ./my-profile
-playwriter browser start --headed
+better-playwriter browser start --user-data-dir ./my-profile
+better-playwriter browser start --headed
 
 # List available browsers
-playwriter browser list
+better-playwriter browser list
 ```
 
 ### browser start options
@@ -56,16 +56,16 @@ Connect to any Chrome instance with remote debugging enabled, including cloud br
 
 ```bash
 # Auto-discover local Chrome with debugging enabled
-playwriter session new --direct
+better-playwriter session new --direct
 
 # Explicit WebSocket endpoint
-playwriter session new --direct ws://localhost:9222/devtools/browser/...
+better-playwriter session new --direct ws://localhost:9222/devtools/browser/...
 
 # Cloud browser provider
-playwriter session new --direct wss://xxx.cdp.browser-use.com
+better-playwriter session new --direct wss://browser.example.com
 
 # Remote host:port (auto-resolves to ws://)
-playwriter session new --direct 192.168.1.50:9222
+better-playwriter session new --direct 192.168.1.50:9222
 ```
 
 ### Enable remote debugging in Chrome
@@ -73,7 +73,7 @@ playwriter session new --direct 192.168.1.50:9222
 Either:
 - Open `chrome://inspect/#remote-debugging` in Chrome
 - Launch Chrome with `--remote-debugging-port=9222`
-- Use `playwriter browser start` (enables debugging automatically)
+- Use `better-playwriter browser start` (enables debugging automatically)
 
 ## MCP
 
@@ -90,9 +90,9 @@ No MCP config is needed. The agent calls the `session_new` tool:
 For CI environments, combine headless mode with `--disable-sandbox`:
 
 ```bash
-playwriter browser install
-playwriter session new --browser headless
-playwriter -s 1 -e "state.page = await context.newPage(); await state.page.goto('https://example.com')"
+better-playwriter browser install
+better-playwriter session new --browser headless
+better-playwriter -s 1 -e "state.page = await context.newPage(); await state.page.goto('https://example.com')"
 ```
 
 Or connect to a Chrome instance running in the CI environment:
@@ -102,7 +102,7 @@ Or connect to a Chrome instance running in the CI environment:
 google-chrome --headless --remote-debugging-port=9222 --no-sandbox &
 
 # Connect to it
-playwriter session new --direct localhost:9222
+better-playwriter session new --direct localhost:9222
 ```
 
 ## Limitations

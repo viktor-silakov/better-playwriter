@@ -4,7 +4,7 @@ import { DurableObject } from 'cloudflare:workers'
 import type {
   TraforoDownstreamMessage,
   TraforoUpstreamMessage,
-} from 'playwriter/src/remote-control'
+} from 'better-playwriter/src/remote-control'
 
 type SocketAttachment =
   | { role: 'upstream'; connectedAt: number }

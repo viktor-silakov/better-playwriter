@@ -1,79 +1,31 @@
 ---
 title: Installation
-description: Install the Playwriter Chrome extension, CLI, and agent skill in under a minute, then click the icon on any tab.
+description: Install the Better Playwriter extension, CLI, and agent skill.
 icon: lucide:download
 ---
 
 ## Install the extension
 
-Install from the [Chrome Web Store](https://chromewebstore.google.com/detail/playwriter/jfeammnjpkecdekppnclgkkffahnhfhe), then click the extension icon on any tab. The icon turns **green** when connected.
+Use the Better Playwriter listing in Chrome Web Store once available. For a preview, get the extension ZIP from this project's GitHub Releases or build it from source. Extract it, open `chrome://extensions`, enable **Developer mode**, and select **Load unpacked** to choose the extracted folder.
 
-The extension works with Chrome, Chromium, Brave, Arc, Edge, and any Chromium-based browser.
-
-<Aside>
-<Note>
-Only tabs where you click the extension icon are controllable. Other tabs stay private.
-</Note>
-</Aside>
+For a local build, run `pnpm bootstrap` and `pnpm build` from the repository root, then select `extension/dist` in Chrome. Building from source requires Git, Node.js, pnpm, and Bun.
 
 ## Install the CLI
 
-```bash
-npm i -g playwriter
-```
-
-Or use without installing:
+Once the npm package is published:
 
 ```bash
-npx playwriter@latest session new
+npm install -g better-playwriter
 ```
 
-**Requirements:** Node.js 18+.
+In a built source checkout, run `npm link` from `playwriter/` or run `node ./playwriter/bin.js` from the repository root.
 
-## Install the skill
+## Connect a tab
 
-The **skill** teaches your AI agent how to use Playwriter: which selectors to use, how to read snapshots, how to avoid common mistakes, and all available utilities.
+Open a tab and click the Better Playwriter icon. Start `better-playwriter session new --tab-group docs` to launch the relay. The icon turns green when the tab connects. Continue with the [quick start](./quick-start.mdx).
 
-```bash
-npx -y skills add https://playwriter.dev -g -y
-```
+For a fresh browser with the extension bundled, run `better-playwriter browser start`. It uses Chrome for Testing or Chromium. For tests without a browser window, see [headless mode](./headless.mdx).
 
-This works with any agent that supports skills (OpenCode, Cursor, Claude Code, etc.). The skill is the recommended way to use Playwriter with agents; it gives them comprehensive instructions so they can use the full API without trial and error.
+## Load the agent skill
 
-## Quick start
-
-```bash
-playwriter session new                    # creates sandbox, outputs id (e.g. 1)
-playwriter -s 1 -e 'state.page = await context.newPage(); await state.page.goto("https://example.com")'
-playwriter -s 1 -e 'console.log(await snapshot({ page: state.page }))'
-playwriter -s 1 -e 'await state.page.locator("aria-ref=e5").click()'
-```
-
-## Start Chrome for Testing
-
-If you don't have Chrome running or want a clean instance with the extension pre-loaded:
-
-```bash
-playwriter browser start
-```
-
-This auto-finds **Chrome for Testing** or Chromium on your system, launches it, and loads the bundled Playwriter extension. You can also pass a specific browser binary:
-
-```bash
-playwriter browser start /path/to/chrome
-```
-
-## Verify it works
-
-After installing the extension and CLI:
-
-1. Open any website in Chrome
-2. Click the Playwriter extension icon (turns green)
-3. Run:
-
-```bash
-playwriter session new
-playwriter -s 1 -e 'console.log(context.pages().map((p) => p.url()))'
-```
-
-If you see the tab URL printed, everything is working.
+Run `better-playwriter skill` to get session instructions, locator tips, and API reference. See the [skill guide](./skill.mdx) for automatic discovery on a configured docs site.

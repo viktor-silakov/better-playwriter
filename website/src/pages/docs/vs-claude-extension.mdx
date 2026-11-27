@@ -1,7 +1,7 @@
 ---
-title: Playwriter vs Claude Browser Extension
+title: Better Playwriter vs Claude Browser Extension
 sidebarTitle: vs Claude Extension
-description: Playwriter works with any MCP client, the full Playwright API, and every Chromium browser. Claude's extension is Claude-only.
+description: Better Playwriter works with any MCP client, the full Playwright API, and every Chromium browser. Claude's extension is Claude-only.
 icon: lucide:bot
 ---
 
@@ -9,12 +9,12 @@ The Claude Browser Extension lets Claude interact with your browser through scre
 and DOM inspection. It's tightly coupled to Claude and uses a screenshot-based approach
 for page understanding.
 
-Playwriter works with **any MCP client** (Claude, Cursor, OpenCode, Windsurf, and more) and
+Better Playwriter works with **any MCP client** (Claude, Cursor, OpenCode, Windsurf, and more) and
 uses accessibility snapshots instead of screenshots by default.
 
 ## Comparison
 
-|  | Playwriter | Claude Extension |
+|  | Better Playwriter | Claude Extension |
 |---|---|---|
 | Agent support | **Any MCP client** | Claude only |
 | Windows/WSL | **Yes** | No |
@@ -28,30 +28,30 @@ uses accessibility snapshots instead of screenshots by default.
 ## Context efficiency
 
 Screenshots are expensive. Each one is 100KB+ of image tokens the model must process.
-Playwriter's accessibility snapshots are **5-20KB of text** that contain every interactive
+Better Playwriter's accessibility snapshots are **5-20KB of text** that contain every interactive
 element with ready-to-use locators. The agent can parse them without vision, which is
 faster and cheaper.
 
-When spatial layout matters (dashboards, image galleries), Playwriter offers
+When spatial layout matters (dashboards, image galleries), Better Playwriter offers
 `screenshotWithAccessibilityLabels` which overlays Vimium-style ref labels on interactive
 elements. You get visual context with actionable references in one call.
 
 ## Cross-platform and client-agnostic
 
-The Claude extension only works with Claude. Playwriter works with any tool that supports
+The Claude extension only works with Claude. Better Playwriter works with any tool that supports
 MCP or can call a CLI. Switch from Claude to Cursor to a custom script without changing
 your browser setup.
 
 ```bash
 # Works with any MCP client, any agent
-playwriter session new
-playwriter -s 1 -e "state.page = await context.newPage(); await state.page.goto('https://example.com')"
-playwriter -s 1 -e "snapshot({ page: state.page })"
-playwriter -s 1 -e "state.page.locator('button:has-text(\"Submit\")').click()"
+better-playwriter session new
+better-playwriter -s 1 -e "state.page = await context.newPage(); await state.page.goto('https://example.com')"
+better-playwriter -s 1 -e "snapshot({ page: state.page })"
+better-playwriter -s 1 -e "state.page.locator('button:has-text(\"Submit\")').click()"
 ```
 
 ## Advanced capabilities
 
-Playwriter exposes the full Chrome DevTools Protocol. Set breakpoints, step through code,
+Better Playwriter exposes the full Chrome DevTools Protocol. Set breakpoints, step through code,
 inspect variables, edit page scripts live, intercept network requests, and profile
 performance. None of this is possible with the Claude extension.

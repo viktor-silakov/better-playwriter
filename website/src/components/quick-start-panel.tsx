@@ -23,36 +23,39 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
   )
 }
 
-function CliContent() {
+function CliContent({ cloudUrl }: { cloudUrl: string }) {
+  const quotedCloudUrl = `'${cloudUrl.replaceAll("'", "'\\''")}'`
+
   return (
     <div className="flex flex-col gap-5">
       <CodeBlock lang="bash" showLineNumbers={false} bleed="none">
-        {`# Interactive login, then start a cloud browser and use it
-playwriter cloud login
-playwriter session new --browser cloud
-playwriter -s 1 -e "state.page = await context.newPage(); await state.page.goto('https://example.com')"
-playwriter -s 1 -e "console.log(await snapshot({ page: state.page }))"
+        {`# Sign in to this service, then open a cloud browser
+export BETTER_PLAYWRITER_CLOUD_URL=${quotedCloudUrl}
+better-playwriter cloud login
+better-playwriter session new --browser cloud
+better-playwriter -s 1 -e "state.page = await context.newPage(); await state.page.goto('https://example.com')"
+better-playwriter -s 1 -e "console.log(await snapshot({ page: state.page }))"
 
 # Or just set your API key and run directly
-export PLAYWRITER_API_KEY=pw_xxxxx
-playwriter session new --browser cloud --proxy us
-playwriter -s 1 -e "state.page = await context.newPage(); await state.page.goto('https://example.com')"`}
+export BETTER_PLAYWRITER_API_KEY="your-api-key"
+better-playwriter session new --browser cloud`}
       </CodeBlock>
     </div>
   )
 }
 
-function McpContent() {
+function McpContent({ cloudUrl }: { cloudUrl: string }) {
   return (
     <div className="flex flex-col gap-5">
       <CodeBlock lang="json" showLineNumbers={false} bleed="none">
         {`{
   "mcpServers": {
-    "playwriter": {
+    "better-playwriter": {
       "command": "npx",
-      "args": ["playwriter@latest", "mcp"],
+      "args": ["-y", "better-playwriter@latest"],
       "env": {
-        "PLAYWRITER_API_KEY": "pw_xxxxx"
+        "BETTER_PLAYWRITER_CLOUD_URL": ${JSON.stringify(cloudUrl)},
+        "BETTER_PLAYWRITER_API_KEY": "your-api-key"
       }
     }
   }
@@ -62,7 +65,7 @@ function McpContent() {
   )
 }
 
-export function QuickStartPanel() {
+export function QuickStartPanel({ cloudUrl }: { cloudUrl: string }) {
   const [tab, setTab] = useState<Tab>('cli')
 
   return (
@@ -75,7 +78,7 @@ export function QuickStartPanel() {
         </div>
       </div>
 
-      {tab === 'cli' ? <CliContent /> : <McpContent />}
+      {tab === 'cli' ? <CliContent cloudUrl={cloudUrl} /> : <McpContent cloudUrl={cloudUrl} />}
     </div>
   )
 }

@@ -7,7 +7,7 @@
 // with the same sessionId and uses this module to restore what Playwright saw before.
 // Chromium marked this Won't Fix (Intended Behavior): https://issues.chromium.org/issues/498987209
 // See https://github.com/remorses/playwriter/issues/127
-import type { Protocol } from 'playwriter/src/cdp-types'
+import type { Protocol } from 'better-playwriter/src/cdp-types'
 
 type SetupCommand = {
   method: string

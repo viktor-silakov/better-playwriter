@@ -1,5 +1,5 @@
 ---
-title: Playwriter vs Playwright CLI
+title: Better Playwriter vs Playwright CLI
 sidebarTitle: vs Playwright CLI
 description: Full Playwright API in your real Chrome instead of the Playwright CLI launching a fresh browser instance.
 icon: lucide:terminal
@@ -10,11 +10,11 @@ new browser and exposes a small utility command set. The newer `@playwright/cli`
 `run-code` command and can attach to a browser, but by default both still drive a **separate
 browser profile**, not the Chrome you're using right now.
 
-Playwriter gives you the **full Playwright API** and, by design, runs it against your existing Chrome.
+Better Playwriter gives you the **full Playwright API** and, by design, runs it against your existing Chrome.
 
 ## Comparison
 
-|  | Playwriter | Playwright CLI |
+|  | Better Playwriter | Playwright CLI |
 |---|---|---|
 | Browser | **Your running Chrome** (extension) | New browser by default |
 | Login state | **Your live sessions, zero setup** | Persistent profile, separate from your daily Chrome |
@@ -23,41 +23,41 @@ Playwriter gives you the **full Playwright API** and, by design, runs it against
 | Collaboration | **Same tab as user** | Separate window |
 | Programmable JS | **`execute` with persistent `state`** | `run-code` (no cross-call state) |
 | Raw CDP access | **First-class** | Not exposed |
-| Video recording | **CDP screencast + ffmpeg (up to 60fps), page audio** | Trace / screencast based |
-| Cloud + remote tab share | **Built-in** | No |
+| Video recording | **Native Chrome recording, page audio** | Trace / screencast based |
+| Cloud and remote sharing | Optional configured services | — |
 
 ## Same API, different browser
 
-Playwriter uses the same Playwright API you already know. The difference is where it runs.
+Better Playwriter uses the same Playwright API you already know. The difference is where it runs.
 Instead of spawning a new browser, your code controls the browser you're already using.
 
 ```bash
 # Playwright CLI: fresh browser, no state
 npx playwright screenshot https://example.com shot.png
 
-# Playwriter: your browser, your cookies, your extensions
-playwriter -s 1 -e "state.page = await context.newPage(); await state.page.goto('https://example.com'); await state.page.screenshot({ path: './shot.png', scale: 'css' })"
+# Better Playwriter: your browser, your cookies, your extensions
+better-playwriter -s 1 -e "state.page = await context.newPage(); await state.page.goto('https://example.com'); await state.page.screenshot({ path: './shot.png', scale: 'css' })"
 ```
 
 ## Raw CDP access
 
-Playwriter exposes the full Chrome DevTools Protocol through `getCDPSession`. This lets
+Better Playwriter exposes the full Chrome DevTools Protocol through `getCDPSession`. This lets
 agents set breakpoints, profile performance, intercept network requests, and live-edit
 page scripts. The Playwright CLI doesn't expose CDP at all.
 
 ```bash
-playwriter -s 1 -e "state.cdp = getCDPSession({ page: state.page })"
-playwriter -s 1 -e "state.cdp.send('Performance.getMetrics').then(console.log)"
+better-playwriter -s 1 -e "state.cdp = getCDPSession({ page: state.page })"
+better-playwriter -s 1 -e "state.cdp.send('Performance.getMetrics').then(console.log)"
 ```
 
 ## Video recording
 
-Playwright CLI records via tracing (file-based, low FPS). Playwriter pipes CDP screencast frames
+Playwright CLI records via tracing (file-based, low FPS). Better Playwriter pipes CDP screencast frames
 to `ffmpeg` for up to 60fps recording with optional page audio. No permission click, and it
 survives page navigation.
 
 ```bash
-playwriter -s 1 -e "state.video = await recording.start({ page: state.page, outputPath: './demo.mp4' })"
-playwriter -s 1 -e "state.page.click('a'); state.page.waitForLoadState('domcontentloaded')"
-playwriter -s 1 -e "await state.video.stop()"
+better-playwriter -s 1 -e "state.video = await recording.start({ page: state.page, outputPath: './demo.mp4' })"
+better-playwriter -s 1 -e "state.page.click('a'); state.page.waitForLoadState('domcontentloaded')"
+better-playwriter -s 1 -e "await state.video.stop()"
 ```

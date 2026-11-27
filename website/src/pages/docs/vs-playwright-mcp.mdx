@@ -1,7 +1,7 @@
 ---
-title: Playwriter vs Playwright MCP
+title: Better Playwriter vs Playwright MCP
 sidebarTitle: vs Playwright MCP
-description: Why connecting Playwriter to your existing Chrome beats Playwright MCP spawning a fresh browser for agents.
+description: Why connecting Better Playwriter to your existing Chrome beats Playwright MCP spawning a fresh browser for agents.
 icon: lucide:drama
 ---
 
@@ -10,12 +10,12 @@ Playwright MCP is the official MCP server from the Playwright team. By default i
 survive between runs, but it is **not your everyday Chrome** with all your sessions and
 extensions. It also has an `--extension` mode to attach to your real browser.
 
-Playwriter is **extension-first**: it connects to the Chrome you're already using, and adds
-raw CDP, native video, cloud browsers, and one-click tab sharing on top.
+Better Playwriter is **extension-first**: it connects to the Chrome you're already using, and adds
+raw CDP and native screen recording.
 
 ## Comparison
 
-|  | Playwriter | Playwright MCP |
+|  | Better Playwriter | Playwright MCP |
 |---|---|---|
 | Browser | **Your running Chrome** (extension, no relaunch) | Separate managed profile by default |
 | Login state | **Your live sessions, zero setup** | Persistent, but a separate profile from your daily Chrome |
@@ -23,8 +23,8 @@ raw CDP, native video, cloud browsers, and one-click tab sharing on top.
 | Attach to your Chrome | **Core design** | `--extension` mode |
 | Bot handling | **Real browser; disconnect to solve manually** | Managed automation profile by default |
 | Raw CDP access | **First-class (`getCDPSession`)** | Not exposed |
-| Video recording | **CDP screencast + ffmpeg, survives navigation, page audio** | Trace / screencast based |
-| Cloud + remote tab share | **Built-in** | No |
+| Video recording | **Native Chrome recording, survives navigation, page audio** | Trace / screencast based |
+| Cloud and remote sharing | Optional configured services | — |
 
 ## The separate-browser problem
 
@@ -39,14 +39,13 @@ apart from your everyday browser. That means:
   collaborate in the same tab you're looking at.
 
 Its `--extension` mode narrows this gap by attaching to your Chrome, which is exactly the
-model Playwriter is built around, plus Playwriter layers on raw CDP, video recording
-with page audio, cloud browsers, remote tab sharing, and the Skill Recorder.
+model Better Playwriter is built around, plus Better Playwriter layers on raw CDP, video recording
+with page audio and the Skill Recorder.
 
-## How Playwriter is different
+## How Better Playwriter is different
 
-Playwriter runs in your existing Chrome session. Your cookies, extensions, and browsing
-history are all there. Sites that require login just work. CAPTCHAs are rare because
-your browser looks like a real user's browser; it **is** a real user's browser.
+Better Playwriter runs in your existing Chrome session. Your cookies, extensions, and browsing
+history stay in that profile. Use the profile that the user authorizes.
 
 When the agent hits something it can't handle (a CAPTCHA, a consent wall, a two-factor
 prompt), you see it in your own browser and can step in to help. The agent picks up
@@ -54,9 +53,8 @@ where you left off.
 
 ```bash
 # Playwright MCP: agent is alone in a fresh browser
-# Playwriter: agent works in your browser, you collaborate in real time
+# Better Playwriter: agent works in your browser, you collaborate in real time
 
-playwriter session new
-playwriter -s 1 -e "state.page = await context.newPage(); await state.page.goto('https://gmail.com')"
-# Already logged in, no credentials needed
+better-playwriter session new
+better-playwriter -s 1 -e "state.page = await context.newPage(); await state.page.goto('https://example.com')"
 ```

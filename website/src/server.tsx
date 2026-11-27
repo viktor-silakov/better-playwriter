@@ -1,9 +1,6 @@
 // Custom entry: mounts holocron as a child of a Spiceflow app.
 // Auth middleware (better-auth) runs first, then auth/dashboard pages,
-// then holocron docs. Also serves /.well-known/agent-skills/* so
-// `npx skills add https://playwriter.dev` installs the skill from this
-// domain instead of the GitHub repo. Cloudflare Workers fetch handler
-// is provided by spiceflow/cloudflare-entrypoint.
+// then holocron docs. Serves /.well-known/agent-skills/* for skill discovery.
 
 import './globals.css'
 
@@ -11,26 +8,27 @@ import { Spiceflow, redirect, json } from 'spiceflow'
 import { Head, Link, router } from 'spiceflow/react'
 import { z } from 'zod'
 import { app as holocronApp } from '@holocron.so/vite/app'
-import { getAuth, getBaseUrl, getSession, requireSession, ensureOrg, getOrgSubscription, getOrgWithSubscription, listUserApiKeys } from './db.ts'
+import { getAuth, getSession, ensureOrg, getOrgSubscription, getOrgWithSubscription, listUserApiKeys } from './db.ts'
 import { normalizeAuthRedirectPath } from './auth-redirect.ts'
 import { cloudApp } from './cloud-api.ts'
 import { stripeWebhookApp } from './stripe-webhook.ts'
 import { approveDevice, denyDevice, createApiKey, revokeApiKey } from './actions.tsx'
 import { enforceProxyBudgets } from './scheduled.ts'
 import { routeRemoteControlRequest } from './remote-control-tunnel.ts'
-import playwriterSkillMd from '../../skills/playwriter/SKILL.md?raw'
+import { extensionInstallUrl } from './lib/branding.ts'
+import betterPlaywriterSkillMd from '../../skills/better-playwriter/SKILL.md?raw'
 
 export { RemoteControlTunnel } from './remote-control-tunnel.ts'
 
-const PLAYWRITER_SKILL_DESCRIPTION =
-  "Control the user own Chrome browser via Playwriter extension with Playwright code snippets in a stateful local js sandbox. Use this over other Playwright MCPs to automate the browser — it connects to the user's existing Chrome instead of launching a new one. Use this cli for navigating JS-heavy websites (Instagram, Twitter, cookie/login walls, lazy-loaded UIs) instead of webfetch/curl. ALWAYS load this skill before using any playwriter commands"
+const SKILL_NAME = 'better-playwriter'
+const SKILL_DESCRIPTION = 'Inspect, test, or operate Chrome with Playwright through a local Better Playwriter CLI session.'
 
 // skills.sh validates the artifact against this sha256 digest, so it must
-// match the exact bytes served at /.well-known/agent-skills/playwriter/SKILL.md.
+// match the exact bytes served by the skill artifact route.
 let skillDigestPromise: Promise<string> | undefined
 function getSkillDigest(): Promise<string> {
   skillDigestPromise ??= (async () => {
-    const bytes = new TextEncoder().encode(playwriterSkillMd)
+    const bytes = new TextEncoder().encode(betterPlaywriterSkillMd)
     const hash = await crypto.subtle.digest('SHA-256', bytes)
     const hex = Array.from(new Uint8Array(hash), (b) => b.toString(16).padStart(2, '0')).join('')
     return `sha256:${hex}`
@@ -155,18 +153,18 @@ export const app = new Spiceflow()
     const { QuickStartPanel } = await import('./components/quick-start-panel.tsx')
     const { CloudSessionsPanel } = await import('./components/cloud-sessions-panel.tsx')
 
-    const { PlaywriterLogo } = await import('./components/auth-page.tsx')
+    const { BetterPlaywriterLogo } = await import('./components/auth-page.tsx')
 
     return (
       <div className="mx-auto max-w-3xl px-6 py-10 min-h-screen flex flex-col">
         <Head>
-          <Head.Title>Dashboard</Head.Title>
+          <Head.Title>Dashboard | Better Playwriter</Head.Title>
           <Head.Meta name="robots" content="noindex" />
         </Head>
         <div className="flex items-center justify-between mb-8">
-          <PlaywriterLogo imageClassName="h-8" />
+          <BetterPlaywriterLogo imageClassName="h-8" />
           <div className="flex items-center gap-4">
-            <a href="https://playwriter.dev" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+            <a href="/" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
               Docs
             </a>
             <SignOutButton />
@@ -185,31 +183,25 @@ export const app = new Spiceflow()
           </div>
         )}
         <div className="mt-6">
-          <QuickStartPanel />
+          <QuickStartPanel cloudUrl={new URL(request.url).origin} />
         </div>
         <div className="mt-6">
           <ApiKeyPanel apiKeys={apiKeys} createAction={createApiKey} revokeAction={revokeApiKey} />
         </div>
         <footer className="mt-auto pt-6 border-t border-border">
           <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-muted-foreground">
-            <a href="https://chromewebstore.google.com/detail/playwriter/jfeammnjpkecdekppnclgkkffahnhfhe" className="hover:text-foreground transition-colors">
-              Chrome Extension
+            <a href={extensionInstallUrl} className="hover:text-foreground transition-colors">
+              Install extension
             </a>
-            <a href="https://playwriter.dev" className="hover:text-foreground transition-colors">
+            <a href="/" className="hover:text-foreground transition-colors">
               Docs
             </a>
-            <a href="https://github.com/remorses/playwriter" className="hover:text-foreground transition-colors">
-              GitHub
-            </a>
-            <a href="https://github.com/remorses/playwriter/releases" className="hover:text-foreground transition-colors">
+            <a href="/changelog/intro" className="hover:text-foreground transition-colors">
               Changelog
             </a>
             <Link href="/privacy" className="hover:text-foreground transition-colors">
               Privacy
             </Link>
-            <a href="https://playwriter.dev/#pricing" className="hover:text-foreground transition-colors">
-              Pricing
-            </a>
           </div>
         </footer>
       </div>
@@ -302,7 +294,7 @@ export const app = new Spiceflow()
     return (
       <>
         <Head>
-          <Head.Title>Live Browser View | Playwriter</Head.Title>
+          <Head.Title>Live Browser View | Better Playwriter</Head.Title>
           <Head.Meta name="description" content="Watch and interact with a remote browser session in real time." />
         </Head>
         <LivePage />
@@ -317,8 +309,8 @@ export const app = new Spiceflow()
     return (
       <>
         <Head>
-          <Head.Title>Remote Control | Playwriter</Head.Title>
-          <Head.Meta name="description" content="Watch and control a browser tab shared with you through Playwriter." />
+          <Head.Title>Remote Control | Better Playwriter</Head.Title>
+          <Head.Meta name="description" content="Watch and control a browser tab shared with you through Better Playwriter." />
           <Head.Meta name="referrer" content="no-referrer" />
           <Head.Meta name="robots" content="noindex, nofollow" />
         </Head>
@@ -327,7 +319,7 @@ export const app = new Spiceflow()
     )
   })
 
-  // Skill discovery for `npx skills add https://playwriter.dev` (skills.sh).
+  // Skill discovery for skills.sh.
   // The url is relative to this index file per the discovery schema.
   .route({
     method: 'GET',
@@ -338,10 +330,10 @@ export const app = new Spiceflow()
         $schema: 'https://schemas.agentskills.io/discovery/0.2.0/schema.json',
         skills: [
           {
-            name: 'playwriter',
+            name: SKILL_NAME,
             type: 'skill-md',
-            description: PLAYWRITER_SKILL_DESCRIPTION,
-            url: './playwriter/SKILL.md',
+            description: SKILL_DESCRIPTION,
+            url: `./${SKILL_NAME}/SKILL.md`,
             digest: await getSkillDigest(),
           },
         ],
@@ -349,10 +341,10 @@ export const app = new Spiceflow()
   })
   .route({
     method: 'GET',
-    path: '/.well-known/agent-skills/playwriter/SKILL.md',
+    path: `/.well-known/agent-skills/${SKILL_NAME}/SKILL.md`,
     detail: { hide: true },
     handler: () =>
-      new Response(playwriterSkillMd, {
+      new Response(betterPlaywriterSkillMd, {
         headers: { 'content-type': 'text/markdown; charset=utf-8' },
       }),
   })
