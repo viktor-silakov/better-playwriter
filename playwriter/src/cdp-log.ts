@@ -22,6 +22,9 @@ const EXCLUDED_METHODS = new Set(['Page.screencastFrame'])
 // Chatty web apps send thousands of these with long texts and stack traces. Keep the start of each text.
 const CONSOLE_METHODS = new Set(['Log.entryAdded', 'Runtime.consoleAPICalled'])
 const CONSOLE_MAX_STRING_LENGTH = 300
+// An accessibility tree or a flattened document is a megabyte of nodes per snapshot, logged in both
+// directions. Serializing it blocks the relay longer than Chrome takes to produce it.
+const DEFAULT_MAX_ARRAY_LENGTH = Number(readEnv('CDP_LOG_MAX_ARRAY_LENGTH') || 200)
 // Session secrets in headers and cookie results. Header names keep their case, so compare lowercased.
 const REDACTED_KEYS = new Set(['cookie', 'set-cookie', 'authorization', 'proxy-authorization', 'cookies', 'headerstext'])
 // Longer than any redacted secret plus its marker, so a secret cut by the length limit still matches.
@@ -38,6 +41,9 @@ function truncateString(value: string, maxLength: number): string {
 function createTruncatingReplacer({ maxStringLength, dropStackTrace }: { maxStringLength: number; dropStackTrace?: boolean }) {
   const seen = new WeakSet<object>()
   return (key: string, value: unknown) => {
+    if (Array.isArray(value) && value.length > DEFAULT_MAX_ARRAY_LENGTH) {
+      return `[${value.length} items omitted from the log]`
+    }
     if (dropStackTrace && key === 'stackTrace') {
       return undefined
     }

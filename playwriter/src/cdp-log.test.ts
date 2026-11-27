@@ -253,3 +253,26 @@ describe('CDP log console events', () => {
     fs.rmSync(tmpDir, { recursive: true })
   })
 })
+
+describe('CDP log large results', () => {
+  it('summarizes a long array instead of writing every node', async () => {
+    const tmpDir = makeTmpDir()
+    const logFile = path.join(tmpDir, 'cdp.jsonl')
+    const logger = createCdpLogger({ logFilePath: logFile })
+    const nodes = Array.from({ length: 5000 }, (_, i) => ({ nodeId: String(i), role: { value: 'button' } }))
+
+    logger.log({ timestamp: new Date().toISOString(), direction: 'to-playwright', message: { id: 7, result: { nodes } } })
+    logger.log({ timestamp: new Date().toISOString(), direction: 'to-playwright', message: { id: 8, result: { nodes: nodes.slice(0, 3) } } })
+    await logger.flush()
+
+    const [large, small] = fs
+      .readFileSync(logFile, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+    expect(large.message.result.nodes).toBe('[5000 items omitted from the log]')
+    expect(small.message.result.nodes).toHaveLength(3)
+
+    fs.rmSync(tmpDir, { recursive: true })
+  })
+})
