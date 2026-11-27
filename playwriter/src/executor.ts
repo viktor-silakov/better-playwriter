@@ -2046,6 +2046,10 @@ export class PlaywrightExecutor {
           page: targetPage,
           locator,
           interactiveOnly,
+          // Same refs as snapshot(): the label e12 on the image is @e12 in the text and in elementForRef.
+          reference: interactiveOnly === false
+            ? undefined
+            : (reference) => this.rememberSnapshotReference(targetPage, reference),
           collector: capture,
           shouldEmit: (buffer) => {
             fingerprint = crypto.createHash('sha256').update(buffer).digest('hex')

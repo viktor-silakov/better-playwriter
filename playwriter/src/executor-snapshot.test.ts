@@ -114,6 +114,15 @@ describe('agent snapshot views', () => {
       expect(first.isError).toBe(false)
       expect(first.images.length).toBe(1)
 
+      // The label on the image, the ref in the text and elementForRef name the button the same way.
+      const ref = first.screenshots[0]!.snapshot.match(/button "Capture" (@e\d+)/)?.[1]
+      expect(ref).toBeDefined()
+      const resolved = await executor.execute(`
+        const button = await elementForRef({ page: state.shotPage, ref: ${JSON.stringify(ref)} })
+        return await button.evaluate((element) => element.textContent)
+      `)
+      expect(resolved).toMatchObject({ isError: false, text: expect.stringContaining('Capture') })
+
       const unchanged = await executor.execute(screenshot)
       paths.push(...unchanged.screenshots.map((shot) => shot.path))
       expect(unchanged.isError).toBe(false)

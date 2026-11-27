@@ -1765,11 +1765,14 @@ export async function showAriaRefLabels({
   page,
   locator,
   interactiveOnly = true,
+  reference,
   logger,
 }: {
   page: Page
   locator?: Locator
   interactiveOnly?: boolean
+  /** Names each control like snapshot() does. Without it labels use refs local to this call. */
+  reference?: (node: SnapshotReference) => string
   logger?: { info?: (...args: unknown[]) => void; error?: (...args: unknown[]) => void }
 }): Promise<{
   snapshot: string
@@ -1790,7 +1793,14 @@ export async function showAriaRefLabels({
 
   try {
     const snapshotStart = Date.now()
-    const { snapshot, refs, getSelectorForRef } = await getAriaSnapshot({ page, locator, interactiveOnly, cdp })
+    // With a reference callback the labels carry the same @refs as snapshot(), so elementForRef resolves them.
+    const { snapshot, refs, getSelectorForRef } = await getAriaSnapshot({
+      page,
+      locator,
+      interactiveOnly,
+      cdp,
+      ...(reference && { mode: 'interactive' as const, reference }),
+    })
     const shortRefMap = new Map(
       refs.map((entry) => {
         return [entry.ref, entry.shortRef]
@@ -1902,6 +1912,7 @@ export async function screenshotWithAccessibilityLabels({
   page,
   locator,
   interactiveOnly = true,
+  reference,
   collector,
   logger,
   shouldEmit,
@@ -1909,13 +1920,15 @@ export async function screenshotWithAccessibilityLabels({
   page: Page
   locator?: Locator
   interactiveOnly?: boolean
+  /** Names each control like snapshot() does. Without it labels use refs local to this call. */
+  reference?: (node: SnapshotReference) => string
   collector: ScreenshotResult[]
   logger?: { info?: (...args: unknown[]) => void; error?: (...args: unknown[]) => void }
   shouldEmit?: (buffer: Buffer) => boolean
 }): Promise<{ refToLocator: Map<string, string> }> {
   const log = logger?.info ?? logger?.error
   const showLabelsStart = Date.now()
-  const { snapshot, labelCount, refToLocator } = await showAriaRefLabels({ page, locator, interactiveOnly, logger })
+  const { snapshot, labelCount, refToLocator } = await showAriaRefLabels({ page, locator, interactiveOnly, reference, logger })
   if (log) {
     log(`showAriaRefLabels: ${Date.now() - showLabelsStart}ms`)
   }
