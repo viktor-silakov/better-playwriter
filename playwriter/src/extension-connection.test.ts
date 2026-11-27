@@ -536,8 +536,7 @@ describe('Extension Connection Tests', () => {
     await clickRecord()
     await expect.poll(recordingCount).toBe(0)
 
-    // Toolbar start, CLI stop, CLI start: toolbar Stop must stop the new recording,
-    // not send the expired id of the first one.
+    // Toolbar start, CLI stop: the toolbar goes back to idle.
     const relayPost = async (route: string) => {
       const response = await fetch(`http://127.0.0.1:${TEST_PORT}${route}`, {
         method: 'POST',
@@ -551,10 +550,12 @@ describe('Extension Connection Tests', () => {
     await expect.poll(recordingCount).toBe(1)
     await relayPost('/recorder/stop')
     await expect.poll(toolbarWidth).toBe(idleWidth)
+    // A recording started from the CLI covers the whole context. The toolbar shows only the
+    // recording of its own tab, so it stays idle.
     await relayPost('/recorder/start')
-    // Wait for the toolbar to show "Stop recording…" before clicking it.
-    await expect.poll(toolbarWidth).not.toBe(idleWidth)
-    await clickRecord()
+    await expect.poll(recordingCount).toBe(1)
+    expect(await toolbarWidth()).toBe(idleWidth)
+    await relayPost('/recorder/stop')
     await expect.poll(recordingCount).toBe(0)
     await page.close()
   }, 120000)

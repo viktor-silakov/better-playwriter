@@ -11,6 +11,7 @@ import {
   type TestContext,
   withTimeout,
   createSimpleServer,
+  hasFfprobe,
 } from './test-utils.js'
 import './test-declarations.js'
 
@@ -513,7 +514,7 @@ describe('Relay Navigation Tests', () => {
   // Recording uses Chrome's native Page.startScreenRecording through chrome.debugger:
   // no extension click, survives a cross-site navigation (new renderer process),
   // records tab audio, and the relay stops it when the client disconnects.
-  it('records video and page audio across a cross-site navigation', async () => {
+  it.skipIf(!hasFfprobe)('records video and page audio across a cross-site navigation', async () => {
     const browserContext = getBrowserContext()
     const serviceWorker = await getExtensionServiceWorker(browserContext)
     const server = await createSimpleServer({
@@ -872,10 +873,10 @@ describe('Relay Navigation Tests', () => {
       expect({ createErrors, navigateError }).toMatchInlineSnapshot(`
         {
           "createErrors": [
-            "cdpSession.send: Protocol error (Target.createTarget): Playwriter clients cannot open extension pages.",
+            "cdpSession.send: Protocol error (Target.createTarget): Better Playwriter clients cannot open extension pages.",
             "cdpSession.send: Protocol error (Target.createTarget): Cannot open "src/welcome.html": pass an absolute URL.",
           ],
-          "navigateError": "page.goto: Protocol error (Page.navigate): Playwriter clients cannot open extension pages.",
+          "navigateError": "page.goto: Protocol error (Page.navigate): Better Playwriter clients cannot open extension pages.",
         }
       `)
     } finally {
@@ -904,7 +905,7 @@ describe('Relay Navigation Tests', () => {
       expect({ isConnected, title }).toMatchInlineSnapshot(`
         {
           "isConnected": true,
-          "title": "Welcome to Playwriter",
+          "title": "Welcome to Better Playwriter",
         }
       `)
     } finally {

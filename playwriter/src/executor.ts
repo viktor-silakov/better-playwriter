@@ -2175,10 +2175,11 @@ export class PlaywrightExecutor {
 
       const vmContext = vm.createContext(vmContextObj)
       // No default page: reading `page` throws so agents pick or create their own tab.
-      // Defined inside the context because vm swallows errors thrown by host-side sandbox getters
-      // (the global would just read as "page is not defined").
+      // The getter lives on the global's prototype, inside the context: vm swallows errors thrown by
+      // sandbox getters (host-side always, own properties of globalThis too since Node 26), and the
+      // global would just read as "page is not defined".
       vm.runInContext(
-        `Object.defineProperty(globalThis, 'page', { get() { throw new Error(${JSON.stringify(PAGE_GLOBAL_REMOVED_ERROR)}) } })`,
+        `Object.setPrototypeOf(globalThis, Object.create(Object.getPrototypeOf(globalThis), { page: { get() { throw new Error(${JSON.stringify(PAGE_GLOBAL_REMOVED_ERROR)}) } } }))`,
         vmContext,
       )
       const sandboxEntryPath = path.join(this.sessionCwd || process.cwd(), SANDBOX_FILENAME)

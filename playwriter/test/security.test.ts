@@ -5,6 +5,9 @@ import { createFileLogger } from '../src/create-logger.js'
 import { killPortProcess } from '../src/kill-port.js'
 import { createMCPClient } from '../src/mcp-client.js'
 import os from 'node:os'
+import { DEV_EXTENSION_ID } from '../src/brand.js'
+
+const EXTENSION_ORIGIN = `chrome-extension://${DEV_EXTENSION_ID}`
 
 const TEST_PORT = 19999
 
@@ -110,9 +113,10 @@ describe('Security Tests', () => {
     }
 
     // 1. Valid chrome-extension origin -> Should succeed
-    // Use a valid extension ID from ALLOWED_EXTENSION_IDS in cdp-relay.ts
-    await expect(tryConnectExtension('chrome-extension://jfeammnjpkecdekppnclgkkffahnhfhe')).resolves.not.toThrow()
-    await expect(tryConnectExtension('chrome-extension://laceiahnielojmkjcfpcjhjnnmjobckf')).resolves.not.toThrow()
+    // Use a valid extension ID from EXTENSION_IDS in utils.ts
+    await expect(tryConnectExtension(EXTENSION_ORIGIN)).resolves.not.toThrow()
+    // The upstream extension ID is unknown to this fork
+    await expect(tryConnectExtension('chrome-extension://jfeammnjpkecdekppnclgkkffahnhfhe')).rejects.toThrow(/Unexpected response: 403/)
 
     // 2. Invalid origin (e.g., http://evil.com) -> Should fail
     await expect(tryConnectExtension('http://evil.com')).rejects.toThrow(/Unexpected response: (400|401|403)/)
@@ -335,7 +339,7 @@ describe('Security Tests', () => {
     const extensionHeaders = {
       'Content-Type': 'application/json',
       'Sec-Fetch-Site': 'cross-site',
-      Origin: 'chrome-extension://jfeammnjpkecdekppnclgkkffahnhfhe',
+      Origin: EXTENSION_ORIGIN,
     }
     const recorderStart = await httpRequest({ path: '/recorder/start', headers: extensionHeaders })
     expect(recorderStart.status).not.toBe(403)
@@ -380,10 +384,10 @@ describe('Security Tests', () => {
     expect(website.headers.get('access-control-allow-origin')).toBeNull()
 
     const extension = await preflight({
-      origin: 'chrome-extension://jfeammnjpkecdekppnclgkkffahnhfhe',
+      origin: EXTENSION_ORIGIN,
     })
     expect(extension.headers.get('access-control-allow-origin')).toBe(
-      'chrome-extension://jfeammnjpkecdekppnclgkkffahnhfhe',
+      EXTENSION_ORIGIN,
     )
   })
 
@@ -397,7 +401,7 @@ describe('Security Tests', () => {
       headers: {
         'Content-Type': 'text/plain',
         'Sec-Fetch-Site': 'cross-site',
-        Origin: 'chrome-extension://jfeammnjpkecdekppnclgkkffahnhfhe',
+        Origin: EXTENSION_ORIGIN,
       },
     })
     expect(textPlain.status).toBe(415)

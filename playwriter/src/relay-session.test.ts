@@ -148,8 +148,8 @@ describe('CDP Session Tests', () => {
             return evalResult.result.value
         `)
 
-    expect(result.isError).toBe(false)
     expect(result.text).toContain('[return value] 4')
+    expect(result.isError).toBe(false)
 
     await page.close()
   }, 60000)

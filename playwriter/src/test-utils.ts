@@ -1,4 +1,4 @@
-import { exec } from 'node:child_process'
+import { exec, spawnSync } from 'node:child_process'
 import { promisify } from 'node:util'
 import http from 'node:http'
 import net from 'node:net'
@@ -10,6 +10,7 @@ import { startPlayWriterCDPRelayServer, type RelayServer } from './cdp-relay.js'
 import { createFileLogger } from './create-logger.js'
 import { createCdpLogger, type CdpLogger } from './cdp-log.js'
 import { killPortProcess } from './kill-port.js'
+import { AUTO_ATTACH_STORAGE_KEY } from './auto-attach-rules.js'
 
 const execAsync = promisify(exec)
 const extensionBuildQueues: Map<string, Promise<void>> = new Map()
@@ -33,6 +34,9 @@ async function buildExtension({ port, distDir }: { port: number; distDir: string
   )
   await buildPromise
 }
+
+/** Recording tests read the result with ffprobe. Machines without it skip them. */
+export const hasFfprobe = spawnSync('ffprobe', ['-version']).status === 0
 
 export async function getExtensionServiceWorker(context: BrowserContext) {
   let serviceWorkers = context.serviceWorkers().filter((sw) => sw.url().startsWith('chrome-extension://'))
@@ -81,6 +85,7 @@ export async function setupTestContext({
   port,
   tempDirPrefix,
   toggleExtension = false,
+  rememberConnections = false,
   additionalExtensions = [],
   executablePath = process.env.PLAYWRITER_TEST_BROWSER,
   relayOptions,
@@ -89,6 +94,9 @@ export async function setupTestContext({
   tempDirPrefix: string
   /** Create initial page and toggle extension on it */
   toggleExtension?: boolean
+  /** Keep the extension default: a manual connection makes later tabs of the same site connect themselves.
+   *  Off in tests, where such a tab would race with the next toggle and get disconnected by it. */
+  rememberConnections?: boolean
   /** Additional extension paths to load alongside the main playwriter extension */
   additionalExtensions?: string[]
   executablePath?: string
@@ -126,6 +134,12 @@ export async function setupTestContext({
   })
 
   const serviceWorker = await getExtensionServiceWorker(browserContext)
+
+  if (!rememberConnections) {
+    await serviceWorker.evaluate(async (key) => {
+      await chrome.storage.local.set({ [key]: { masks: [], remember: false } })
+    }, AUTO_ATTACH_STORAGE_KEY)
+  }
 
   if (toggleExtension) {
     const page = await browserContext.newPage()

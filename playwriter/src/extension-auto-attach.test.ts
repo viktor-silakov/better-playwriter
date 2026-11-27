@@ -16,7 +16,7 @@ let origin: string
 beforeAll(async () => {
   await new Promise<void>((resolve) => site.listen(0, '127.0.0.1', resolve))
   origin = `http://127.0.0.1:${(site.address() as AddressInfo).port}`
-  context = await setupTestContext({ port, tempDirPrefix: 'pw-auto-attach-' })
+  context = await setupTestContext({ port, tempDirPrefix: 'pw-auto-attach-', rememberConnections: true })
 }, 120_000)
 
 afterAll(async () => {

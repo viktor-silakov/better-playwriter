@@ -532,7 +532,7 @@ describe('Session tab groups', () => {
       `,
     })
     expect(denied.isError).toBe(true)
-    expect(denied.text).toContain('belongs to another Playwriter session')
+    expect(denied.text).toContain('belongs to another Better Playwriter session')
     expect(await listPages(sessions.second)).toMatchInlineSnapshot(`"["","second","second-popup"]"`)
 
     const switched = await fetch(`${SERVER_URL}/cli/session/update`, {
@@ -646,10 +646,11 @@ describe('Session tab groups', () => {
     const { id: nextId } = (await nextResponse.json()) as { id: string }
     expect(Number(nextId)).toBeGreaterThan(Number(sessionId))
 
-    // the stale id never runs in another agent's session
+    // the old id stays with its own session: it is restored with a notice, never handed to another agent
     const after = await executeCli({ sessionId, code: js`return 1` })
-    expect(after.isError).toBe(true)
-    expect(after.text.replace(`Session ${sessionId}`, 'Session N')).toMatchInlineSnapshot(`"Session N ended or was lost when the relay restarted. Run 'playwriter session new' to get a new one."`)
+    expect(after.isError).toBeFalsy()
+    expect(after.text).toContain('[Session restored]')
+    await fetch(`${SERVER_URL}/cli/session/delete`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ sessionId }) })
 
     await fetch(`${SERVER_URL}/cli/session/delete`, {
       method: 'POST',

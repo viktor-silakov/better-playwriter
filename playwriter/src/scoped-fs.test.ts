@@ -139,6 +139,7 @@ describe('ExecutorManager.listSessions', () => {
       expect(manager.listSessions()).toEqual([
         {
           id: '7',
+          idleMs: expect.any(Number),
           stateKeys: [],
           extensionId: 'profile:test',
           browser: 'Chrome',

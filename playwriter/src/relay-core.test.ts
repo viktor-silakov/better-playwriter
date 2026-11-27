@@ -19,6 +19,7 @@ import {
   createSimpleServer,
   safeCloseCDPBrowser,
   findTestPageJs,
+  hasFfprobe,
 } from './test-utils.js'
 import './test-declarations.js'
 
@@ -1971,7 +1972,7 @@ describe('Relay Core Tests', () => {
 
   // clock: 'manual' writes frames only inside wait(ms), so agent latency between
   // execute calls is cut. The handle in state works across execute calls.
-  it('records only wait() windows with a manual clock and switches tabs', async () => {
+  it.skipIf(!hasFfprobe)('records only wait() windows with a manual clock and switches tabs', async () => {
     await ensureConnectedTabForExecute()
     const page = (box: string) => {
       return `<!doctype html><html><body style="margin:0">
@@ -2033,7 +2034,7 @@ describe('Relay Core Tests', () => {
   }, 60000)
 
   // Agents forget stop() and close tabs. Every ending keeps a playable file and warns.
-  it('auto-stops, keeps the file when the page closes, and warns', async () => {
+  it.skipIf(!hasFfprobe)('auto-stops, keeps the file when the page closes, and warns', async () => {
     await ensureConnectedTabForExecute()
     const dir = path.join(process.cwd(), 'tmp', 'recording-endings')
     fs.rmSync(dir, { recursive: true, force: true })
