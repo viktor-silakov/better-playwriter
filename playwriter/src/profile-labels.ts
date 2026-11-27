@@ -23,17 +23,3 @@ export function saveLocalProfileName(key: string, name: string): void {
   fs.writeFileSync(temporary, JSON.stringify(names, null, 2) + '\n', { mode: 0o600 })
   fs.renameSync(temporary, file)
 }
-
-/** Only accept a unique marker in the window's AX tree and a Chrome profile suffix. */
-export function profileNameFromWindows(marker: string, snapshots: unknown[]): string | null {
-  const names = new Set<string>()
-  for (const snapshot of snapshots) {
-    if (!snapshot || typeof snapshot !== 'object') continue
-    const elements = (snapshot as { elements?: Array<{ label?: string; role?: string }> }).elements
-    if (!Array.isArray(elements) || !elements.some((element) => element.label === marker || element.label?.startsWith(`${marker} - `))) continue
-    const window = elements.find((element) => element.role === 'AXWindow')?.label
-    const name = window?.match(/ - Google Chrome - (.+)$/)?.[1]?.trim()
-    if (name) names.add(name)
-  }
-  return names.size === 1 ? [...names][0] : null
-}

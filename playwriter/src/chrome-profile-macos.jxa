@@ -1,0 +1,69 @@
+// Run with macOS's JavaScript for Automation. The Objective-C bridge reads
+// native Accessibility attributes and leaves Chrome windows and tabs alone.
+ObjC.import('AppKit')
+ObjC.import('ApplicationServices')
+
+function attribute(element, name) {
+  const result = Ref()
+  if ($.AXUIElementCopyAttributeValue(element, $(name), result) !== 0) return undefined
+  return ObjC.castRefToObject(result[0])
+}
+
+function textAttribute(element, name) {
+  const value = attribute(element, name)
+  return value ? ObjC.unwrap(value) : undefined
+}
+
+function forEachItem(array, visit) {
+  if (!array) return
+  for (let index = 0; index < array.count; index++) {
+    visit(array.objectAtIndex(index))
+  }
+}
+
+function matchesMarker(label, marker) {
+  return typeof label === 'string' && (label === marker || label.startsWith(marker + ' - '))
+}
+
+function hasMarkedTab(window, marker) {
+  const pending = [{ element: window, depth: 0 }]
+  while (pending.length) {
+    const { element, depth } = pending.pop()
+    const role = textAttribute(element, 'AXRole')
+    if (role === 'AXWebArea' || role === 'AXToolbar') continue
+    if (role === 'AXRadioButton' || role === 'AXTab') {
+      if (matchesMarker(textAttribute(element, 'AXTitle'), marker)) return true
+      if (matchesMarker(textAttribute(element, 'AXDescription'), marker)) return true
+    }
+    // The raw macOS tree includes wrappers around the tab strip and groups.
+    if (depth < 14) {
+      forEachItem(attribute(element, 'AXChildren'), child => {
+        pending.push({ element: child, depth: depth + 1 })
+      })
+    }
+  }
+  return false
+}
+
+function run(args) {
+  const marker = args[0]
+  if (!marker || !$.AXIsProcessTrusted()) return 'null'
+
+  const separator = ' - Google Chrome - '
+  const names = new Set()
+  const instances = $.NSRunningApplication.runningApplicationsWithBundleIdentifier('com.google.Chrome')
+  forEachItem(instances, instance => {
+    const application = $.AXUIElementCreateApplication(instance.processIdentifier)
+    $.AXUIElementSetMessagingTimeout(application, 0.5)
+    forEachItem(attribute(application, 'AXWindows'), window => {
+      const title = textAttribute(window, 'AXTitle')
+      if (typeof title !== 'string') return
+      const suffix = title.lastIndexOf(separator)
+      if (suffix < 0) return
+      const name = title.slice(suffix + separator.length).trim()
+      if (!name || name.length > 100) return
+      if (matchesMarker(title, marker) || hasMarkedTab(window, marker)) names.add(name)
+    })
+  })
+  return JSON.stringify(names.size === 1 ? names.values().next().value : null)
+}

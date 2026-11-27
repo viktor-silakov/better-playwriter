@@ -24,6 +24,7 @@
     "!dist/test-utils.*",
     "!dist/test-declarations.*",
     "src/skill.md",
+    "src/chrome-profile-macos.jxa",
     "src/recorder-prompt.md",
     "bin.js"
   ],

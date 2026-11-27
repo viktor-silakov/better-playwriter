@@ -30,7 +30,7 @@ better-playwriter -s 1 -e 'state.page = await context.newPage(); await state.pag
 better-playwriter -s 1 -e 'console.log(await snapshot({ page: state.page }))'
 ```
 
-Replace `1` with the session ID returned by `session new`. Each session has its own `state` and sees the tabs it creates plus tabs the user has made available. On macOS, `better-playwriter browser list` can use local Accessibility access to identify unnamed Chrome profiles and cache their labels. Use `better-playwriter browser identify` to try again or enter a label in the extension options. Select a profile with `better-playwriter session new --browser <label>`. Use the browser key if two profiles have the same label.
+Replace `1` with the session ID returned by `session new`. Each session has its own `state` and sees the tabs it creates plus tabs the user has made available. On macOS, `better-playwriter browser list` identifies unnamed Chrome profiles through the built-in Accessibility API and caches their labels. Grant Accessibility access to the app running the CLI, then run `better-playwriter browser identify` to try again. You can also enter a label in the extension options. Select a profile with `better-playwriter session new --browser <label>`. Use the browser key if two profiles have the same label.
 
 `better-playwriter session list` shows session groups and idle times. End a session with `better-playwriter session delete <id> --release-created-tabs` to keep its tabs open and ungrouped, or with `--close-created-tabs` to close them. Both remove its empty group when Chrome exposes it. They leave tabs owned by other sessions alone. Use short single-word group names such as `docs` or `test`.
 
