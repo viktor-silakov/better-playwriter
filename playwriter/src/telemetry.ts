@@ -23,7 +23,7 @@
  * Never sent: code, URLs, page content, emails, hostnames, paths.
  *
  * Opt in with BETTER_PLAYWRITER_TELEMETRY=1 and a telemetry project ID. The relay reads
- * env when it starts, so restart it after changing: `playwriter serve restart`.
+ * env when it starts, so restart it after changing: `better-playwriter serve restart`.
  *
  * Anonymous ingest (no token): the npm package is public, so any token here
  * would be public too. The collector rate limits per IP instead.

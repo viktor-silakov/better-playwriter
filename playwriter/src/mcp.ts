@@ -15,9 +15,10 @@ import { z } from 'zod'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createRequire } from 'node:module'
 import dedent from 'string-dedent'
 import { LOG_FILE_PATH, VERSION, parseRelayHost } from './utils.js'
+import { PRODUCT_NAME } from './brand.js'
+import { getInstalledPlaywriterPackageDir } from './package-paths.js'
 import { ensureRelayServer, RELAY_PORT } from './relay-client.js'
 import { boundExecuteOutput } from './executor.js'
 import { installProcessGuard } from './process-guard.js'
@@ -38,7 +39,6 @@ import {
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
-const require = createRequire(import.meta.url)
 
 const DEFAULT_EXEC_TIMEOUT = Number(readEnv('EXEC_TIMEOUT')) || 10000
 const LOG_TIMEOUT_MS = 1000
@@ -213,7 +213,7 @@ const server = new McpServer({
 for (const name of ['debugger-api', 'editor-api', 'styles-api']) {
   const uri = `better-playwriter://resources/${name}.md`
   server.resource(name, uri, { mimeType: 'text/plain' }, async () => {
-    const packageDir = path.dirname(require.resolve('playwriter/package.json'))
+    const packageDir = getInstalledPlaywriterPackageDir()
     const text = fs.readFileSync(path.join(packageDir, 'dist', `${name}.md`), 'utf-8')
     return { contents: [{ uri, text, mimeType: 'text/plain' }] }
   })
@@ -221,7 +221,7 @@ for (const name of ['debugger-api', 'editor-api', 'styles-api']) {
 
 const promptContent =
   fs.readFileSync(path.join(__dirname, '..', 'dist', 'prompt.md'), 'utf-8') +
-  `\n\nfor debugging internal playwriter errors, check playwriter relay server logs at: ${LOG_FILE_PATH}`
+  `\n\nFor ${PRODUCT_NAME} diagnostics, check the relay logs at ${LOG_FILE_PATH}`
 
 const sessionParam = z
   .string()

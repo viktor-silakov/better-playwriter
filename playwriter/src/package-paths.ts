@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
+import { COMMAND_NAME, PRODUCT_NAME } from './brand.js'
 
 const require = createRequire(import.meta.url)
 
@@ -12,7 +13,7 @@ export function getInstalledPlaywriterPackageDir(): string {
     return localPackageDir
   }
 
-  const packageJsonPath = require.resolve('playwriter/package.json')
+  const packageJsonPath = require.resolve(`${COMMAND_NAME}/package.json`)
   return path.dirname(packageJsonPath)
 }
 
@@ -31,6 +32,6 @@ export function getBundledExtensionPath(): string {
   }
 
   throw new Error(
-    `Bundled Playwriter extension not found under ${packageDir}. Rebuild or reinstall the playwriter package.`,
+    `Could not find the bundled ${PRODUCT_NAME} extension under ${packageDir}. Rebuild or reinstall ${COMMAND_NAME}.`,
   )
 }
