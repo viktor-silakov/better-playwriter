@@ -3389,6 +3389,20 @@ const debuggerStartup = resetDebugger().then(() => {
 void debuggerStartup.then(refreshAutomaticTabs).catch(() => logger.debug('Could not initialize automatic tab connections'))
 void connectionManager.maintainLoop()
 
+// Chrome stops an idle service worker after about 30 seconds. With the relay down there is no socket to
+// keep it awake, and a stopped worker cannot notice that the relay came back: the profile stays
+// disconnected until someone touches the browser. The alarm starts the worker again, which runs the
+// maintain loop above. It does nothing while the worker is already running.
+const RECONNECT_ALARM = 'playwriter-reconnect'
+if (chrome.alarms) {
+  void chrome.alarms.create(RECONNECT_ALARM, { periodInMinutes: 0.5 })
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === RECONNECT_ALARM) {
+      logger.debug('Reconnect alarm: worker awake, relay socket', connectionManager.ws?.readyState === WebSocket.OPEN ? 'open' : 'closed')
+    }
+  })
+}
+
 // ============================================================================
 // Menus. Record skill and Share browser start only from the in-page toolbar
 // (toolbar/toolbar.ts); the menus add element actions and sharing shortcuts:

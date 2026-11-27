@@ -1472,6 +1472,42 @@ describe('Extension connect during relay handshake', () => {
     }
   })
 
+  it('reconnects after Chrome stopped the idle service worker while the relay was down', async () => {
+    const ctx = testCtx!
+    const [before] = await getExtensionsStatus(PORT)
+    expect(before?.stableKey).toBeDefined()
+
+    ctx.relayServer.close()
+    // What Chrome does on its own after 30 idle seconds without a socket.
+    const page = await ctx.browserContext.newPage()
+    const browserSession = await ctx.browserContext.browser()!.newBrowserCDPSession()
+    const workerTargets = async () => {
+      const { targetInfos } = await browserSession.send('Target.getTargets')
+      return targetInfos.filter((target) => target.type === 'service_worker' && target.url.startsWith('chrome-extension://'))
+    }
+    for (const target of await workerTargets()) {
+      await browserSession.send('Target.closeTarget', { targetId: target.targetId })
+    }
+    await expect.poll(async () => (await workerTargets()).length, { timeout: 10_000 }).toBe(0)
+
+    ctx.relayServer = await startPlayWriterCDPRelayServer({
+      port: PORT,
+      cdpLogger: ctx.cdpLogger,
+      sessionCounterFile: ctx.sessionCounterFile,
+      logger: createFileLogger({ logFilePath: path.join(process.cwd(), 'relay-server.log') }),
+    })
+    try {
+      // Nothing touches the browser here: only the alarm can start the worker again.
+      await expect.poll(async () => {
+        const [status] = await getExtensionsStatus(PORT)
+        return status?.stableKey
+      }, { timeout: 75_000, interval: 1000 }).toBe(before!.stableKey)
+    } finally {
+      await browserSession.detach().catch(() => {})
+      await page.close()
+    }
+  }, 120_000)
+
   it('reconnects under the stored install id when storage answers after the connect', async () => {
     const ctx = testCtx!
     const worker = await getExtensionServiceWorker(ctx.browserContext)
