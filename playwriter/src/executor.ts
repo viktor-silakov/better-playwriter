@@ -657,6 +657,8 @@ export function condenseSnapshotLines(input: string[]): { lines: string[]; disab
         counts.disabled++
         return []
       }
+      const childrenBefore = node.children.length
+      const disabledBefore = counts.disabled
       // A row named by joining the names of its cells says everything twice.
       const [first, second] = node.children
       if (node.name && !hasRef(node) && first?.name && second?.name && node.name.startsWith(first.name) && node.name.includes(second.name)) {
@@ -670,9 +672,14 @@ export function condenseSnapshotLines(input: string[]): { lines: string[]; disab
         const isEmptyText = node.role === 'text' && node.name !== undefined && !/[\p{L}\p{N}]/u.test(node.name)
         // An icon or label that repeats the name of the control it sits in, or a part of it.
         const repeatsParent = !!node.name && !hasRef(node) && !!parent?.name?.includes(node.name)
-        // A group left with nothing in it, such as a toolbar section whose buttons are all disabled.
+        // A group left with nothing in it: unnamed, or a toolbar section whose buttons were all disabled.
+        // A named group that never had children is content, such as a chat message.
+        const emptiedByDisabled = childrenBefore > 0 && counts.disabled - disabledBefore >= childrenBefore
         const isEmptyContainer =
-          !hasRef(node) && (EMPTY_CONTAINER_ROLES.has(node.role) || (node.name === undefined && UNNAMED_CONTAINER_ROLES.has(node.role)))
+          !hasRef(node) &&
+          (node.name === undefined
+            ? EMPTY_CONTAINER_ROLES.has(node.role) || UNNAMED_CONTAINER_ROLES.has(node.role)
+            : EMPTY_CONTAINER_ROLES.has(node.role) && emptiedByDisabled)
         if (isEmptyRegion || isEmptyText || repeatsParent || isEmptyContainer) {
           counts.empty++
           return []
@@ -702,7 +709,8 @@ export function condenseSnapshotLines(input: string[]): { lines: string[]; disab
     for (const node of nodes) {
       let body = node.body
       if (node.role !== 'text') {
-        if (node.name !== undefined && node.name.length > MAX_CONDENSED_NAME_CHARS) {
+        // Only controls: the name of a paragraph or a message is the content the agent came to read.
+        if (hasRef(node) && node.name !== undefined && node.name.length > MAX_CONDENSED_NAME_CHARS) {
           const head = node.name.slice(0, MAX_CONDENSED_NAME_CHARS).replace(/\\$/, '')
           body = body.replace(`"${node.name}"`, () => `"${head}…"`)
         }

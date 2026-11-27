@@ -49,6 +49,8 @@ describe('condenseSnapshotLines', () => {
       '- group "Respond":',
       '    - button "Reply" [disabled] @e4:',
       '        - text: "to this message"',
+      '- group "Ada: the build is red, and this sentence is the whole message that an agent wants to read in full, so it must stay as long as it is":',
+      '    - button "Mark as read" @e6',
       '- treeitem "Chat Ada Away" @e5:',
       '    - generic "Away"',
       '- status',
@@ -64,6 +66,8 @@ describe('condenseSnapshotLines', () => {
     expect(out.lines.join('\n')).toMatchInlineSnapshot(`
       "- region "Ribbon":
         - button "New" @e1
+      - group "Ada: the build is red, and this sentence is the whole message that an agent wants to read in full, so it must stay as long as it is":
+        - button "Mark as read" @e6
       - treeitem "Chat Ada Away" @e5
       - status:
         - text: "Saved"
@@ -72,8 +76,7 @@ describe('condenseSnapshotLines', () => {
           - button "Mark as read" @e11
         - option "Message 1" @e12:
           - button "Mark as read" @e13
-        - option "Message 2" @e14:
-          - button "Mark as read" @e15
+        - option "Message 2" @e14
         - option "Message 3" @e16
         - option "Message 4" @e18
         - button "Calendar" @e30
@@ -83,7 +86,7 @@ describe('condenseSnapshotLines', () => {
       {
         "disabled": 3,
         "empty": 5,
-        "repeated": 2,
+        "repeated": 3,
       }
     `)
   })

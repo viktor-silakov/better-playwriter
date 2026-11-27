@@ -489,27 +489,27 @@ export function buildSnapshotLines(nodes: SnapshotNode[], indent = 0): SnapshotL
   })
 }
 
-function limitSnapshotTree(nodes: SnapshotNode[], compact: boolean, depth: number): SnapshotNode[] {
-  return nodes.flatMap((node) => {
+function limitSnapshotTree(nodes: SnapshotNode[], compact: boolean, depth: number, ancestorName = ''): SnapshotNode[] {
+  return nodes.flatMap((node): SnapshotNode[] => {
     if (compact && !node.name && !node.baseLocator && !CONTEXT_ROLES.has(node.role) && !SIGNAL_ROLES.has(node.role)) {
-      return limitSnapshotTree(node.children, compact, depth)
+      return limitSnapshotTree(node.children, compact, depth, ancestorName)
     }
-    const children = depth === 0 ? [] : limitSnapshotTree(node.children, compact, depth - 1)
+    // A chat message is named with its whole text, and so are the blocks inside it: the same sentences
+    // three times over. A node whose name its named ancestor already contains gives way to its children.
+    if (compact && node.name && !node.ref && !SIGNAL_ROLES.has(node.role) && ancestorName.includes(node.name)) {
+      return depth === 0 ? [] : limitSnapshotTree(node.children, compact, depth, ancestorName)
+    }
+    const children = depth === 0 ? [] : limitSnapshotTree(node.children, compact, depth - 1, node.name || ancestorName)
     if (compact && node.name && !node.ref) {
       // A cell inside a cell inside a cell, all with one name: keep the innermost, which may be the control.
       const [only] = children
       if (children.length === 1 && only!.name === node.name) {
-        return only!
+        return [only!]
       }
     }
     // Compact drops unnamed wrappers, so offsets that stood for skipped levels would leave children
     // indented deeper or shallower than their siblings. The tree itself gives the depth.
-    return {
-      ...node,
-      ...(compact && { indentOffset: 0 }),
-      // A leaf that only repeats the name of its parent, such as the icon of a button.
-      children: compact ? children.filter((child) => child.ref || child.children.length > 0 || child.name !== node.name) : children,
-    }
+    return [{ ...node, ...(compact && { indentOffset: 0 }), children }]
   })
 }
 

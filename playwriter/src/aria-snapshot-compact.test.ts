@@ -61,6 +61,13 @@ describe('compact accessibility snapshots', () => {
           <tr><td>Quarterly numbers</td></tr>
           <tr><td><a href="#">Open report</a></td></tr>
         </table>
+        <div role="group" aria-label="Ada: Quoting Bo, the build is red. It is fixed now">
+          <div aria-label="Quoting Bo, the build is red. It is fixed now" role="group">
+            <div aria-label="Quoting Bo, the build is red" role="group"><p>the build is red</p></div>
+            <p>It is fixed now</p>
+          </div>
+          <button aria-label="More message options"></button>
+        </div>
       `)
       const { snapshot } = await getAriaSnapshot({ page, mode: 'compact' })
       expect(snapshot).toMatchInlineSnapshot(`
@@ -68,7 +75,9 @@ describe('compact accessibility snapshots', () => {
           - role=button[name="Calendar"i]
           - role=button[name="Mail"i]
         - layouttablecell "Quarterly numbers"
-        - role=link[name="Open report"i]"
+        - role=link[name="Open report"i]
+        - group "Ada: Quoting Bo, the build is red. It is fixed now":
+          - role=button[name="More message options"i]"
       `)
     } finally {
       await page.close()
