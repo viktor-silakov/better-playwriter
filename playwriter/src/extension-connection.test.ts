@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { createMCPClient } from './mcp-client.js'
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, onTestFinished } from 'vitest'
 import { chromium, type Browser, type Page } from '@xmorse/playwright-core'
 import { getCdpUrl } from './utils.js'
 import { setupTestContext, cleanupTestContext, getExtensionServiceWorker, type TestContext, js } from './test-utils.js'
@@ -498,6 +498,10 @@ describe('Extension Connection Tests', () => {
     const browserContext = getBrowserContext()
     const serviceWorker = await getExtensionServiceWorker(browserContext)
     const page = await browserContext.newPage()
+    // A tab left open here is picked up by later tests that look for example.com.
+    onTestFinished(async () => {
+      await page.close().catch(() => {})
+    })
     await page.goto('https://example.com/')
     await page.bringToFront()
     await serviceWorker.evaluate(async () => {
@@ -526,15 +530,17 @@ describe('Extension Connection Tests', () => {
       await page.mouse.click(box.x + 155, box.y + box.height / 2)
     }
 
+    // The toolbar follows the recorder through the extension, which takes over a second on a busy machine.
+    const SLOW_POLL = { timeout: 10000 }
     // The toolbar starts as a small tab at the top edge. Click it to expand.
     await page.mouse.click(tabBox.x + tabBox.width / 2, tabBox.y + tabBox.height / 2)
-    await expect.poll(toolbarWidth).toBeGreaterThan(tabBox.width)
+    await expect.poll(toolbarWidth, SLOW_POLL).toBeGreaterThan(tabBox.width)
     const idleWidth = await toolbarWidth()
 
     await clickRecord()
-    await expect.poll(recordingCount).toBe(1)
+    await expect.poll(recordingCount, SLOW_POLL).toBe(1)
     await clickRecord()
-    await expect.poll(recordingCount).toBe(0)
+    await expect.poll(recordingCount, SLOW_POLL).toBe(0)
 
     // Toolbar start, CLI stop: the toolbar goes back to idle.
     const relayPost = async (route: string) => {
@@ -545,19 +551,20 @@ describe('Extension Connection Tests', () => {
       })
       expect({ route, status: response.status, body: await response.text() }).toMatchObject({ status: 200 })
     }
-    await expect.poll(toolbarWidth).toBe(idleWidth)
+    await expect.poll(toolbarWidth, SLOW_POLL).toBe(idleWidth)
     await clickRecord()
-    await expect.poll(recordingCount).toBe(1)
+    await expect.poll(recordingCount, SLOW_POLL).toBe(1)
+    // This stop sometimes lands while the recording is still starting. The start then fails, and the
+    // toolbar must leave "Starting…" all the same.
     await relayPost('/recorder/stop')
-    await expect.poll(toolbarWidth).toBe(idleWidth)
+    await expect.poll(toolbarWidth, SLOW_POLL).toBe(idleWidth)
     // A recording started from the CLI covers the whole context. The toolbar shows only the
     // recording of its own tab, so it stays idle.
     await relayPost('/recorder/start')
-    await expect.poll(recordingCount).toBe(1)
+    await expect.poll(recordingCount, SLOW_POLL).toBe(1)
     expect(await toolbarWidth()).toBe(idleWidth)
     await relayPost('/recorder/stop')
-    await expect.poll(recordingCount).toBe(0)
-    await page.close()
+    await expect.poll(recordingCount, SLOW_POLL).toBe(0)
   }, 120000)
 
   // Agent clicks used to fail with "<div data-playwriter-toolbar> intercepts pointer

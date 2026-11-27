@@ -3669,6 +3669,7 @@ async function copyElementLocator(options: { info: chrome.contextMenus.OnClickDa
 async function startSkillRecording(tabId: number): Promise<void> {
   const targetId = store.getState().tabs.get(tabId)?.targetId
   if (!targetId) {
+    syncToolbarState(tabId)
     await toastTab(tabId, 'Reconnect this tab first')
     return
   }
@@ -3689,10 +3690,13 @@ async function startSkillRecording(tabId: number): Promise<void> {
     if (!response.ok || !result.recordingId) {
       logger.error('Action recorder start failed:', result.error || response.status)
       const oldRelay = !result.error && (response.status === 404 || response.status === 403)
+      // The toolbar shows "Starting…" until it hears a state. A failed start sends none, so reset it here.
+      syncToolbarState(tabId)
       await toastTab(tabId, result.error || (oldRelay ? 'Update Better Playwriter CLI' : 'Failed to start recording'))
     }
   } catch (error) {
     logger.error('Action recorder start failed:', error)
+    syncToolbarState(tabId)
     await toastTab(tabId, 'Failed to start recording')
   } finally {
     skillRecordingStarts.delete(targetId)
