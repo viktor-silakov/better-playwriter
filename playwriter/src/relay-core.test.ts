@@ -99,6 +99,22 @@ describe('Relay Core Tests', () => {
     })
   }
 
+  it('returns a compatibility response for removed Ghost Browser commands', async () => {
+    await ensureConnectedTabForExecute()
+    const cdpBrowser = await chromium.connectOverCDP(getCdpUrl({ port: TEST_PORT }))
+    try {
+      const page = cdpBrowser.contexts()[0].pages()[0]
+      const cdp = await getCDPSessionForPage({ page })
+      expect(await cdp.send('ghost-browser' as any, {})).toEqual({
+        success: false,
+        error: 'Ghost Browser APIs are no longer supported by Better Playwriter.',
+      })
+      expect(await cdp.send('Page.getFrameTree')).toHaveProperty('frameTree')
+    } finally {
+      await safeCloseCDPBrowser(cdpBrowser)
+    }
+  })
+
   it('should inject script via addScriptTag through CDP relay', async () => {
     const browserContext = getBrowserContext()
     const serviceWorker = await withTimeout({
@@ -598,43 +614,16 @@ describe('Relay Core Tests', () => {
     }
   }, 30000)
 
-  it('should expose cloud cookie transfer in local CLI sessions', async () => {
-    const createResponse = await fetch(`${SERVER_URL}/cli/session/new`, {
+  it('points older managed-cloud clients to direct CDP without creating a session', async () => {
+    const response = await fetch(`${SERVER_URL}/cli/session/new`, {
       method: 'POST',
       headers: JSON_HEADERS,
-      body: JSON.stringify({}),
+      body: JSON.stringify({ cdpEndpoint: 'ws://example.invalid/devtools/browser/test', cloud: {} }),
     })
-    const { id: sessionId } = (await createResponse.json()) as { id: string }
-
-    try {
-      const response = await fetch(`${SERVER_URL}/cli/execute`, {
-        method: 'POST',
-        headers: JSON_HEADERS,
-        body: JSON.stringify({
-          sessionId,
-          code: `return {
-            browsersList: typeof cloud.browsers.list,
-            sendCookies: typeof cloud.sendCookies,
-          }`,
-        }),
-      })
-      const result = (await response.json()) as { text: string; isError: boolean }
-      expect(result).toMatchInlineSnapshot(`
-        {
-          "images": [],
-          "isCloud": false,
-          "isError": false,
-          "screenshots": [],
-          "text": "[return value] { browsersList: 'function', sendCookies: 'function' }",
-        }
-      `)
-    } finally {
-      await fetch(`${SERVER_URL}/cli/session/delete`, {
-        method: 'POST',
-        headers: JSON_HEADERS,
-        body: JSON.stringify({ sessionId }),
-      })
-    }
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({
+      error: 'Managed browsers are provisioned by your provider. Connect with a direct CDP URL.',
+    })
   })
 
   it('should read cookies via Network.getCookies through page CDP session', async () => {

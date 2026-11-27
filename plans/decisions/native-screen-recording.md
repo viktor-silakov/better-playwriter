@@ -13,4 +13,4 @@
 - Default `maxSize` is 3840. Default output is H.264 MP4, transcoded live from Chrome's AV1 by
   ffmpeg. `codec: 'av1'` is an option that skips ffmpeg.
 - Open: none.
-- Lives in: `playwriter/src/screen-recording.ts`.
+- Native recording lives in `playwriter/src/screen-recording.ts`. RTMP capture loads on demand from `playwriter/src/rtmp-capture.ts`.

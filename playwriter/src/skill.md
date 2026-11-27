@@ -132,10 +132,6 @@ Multiple sessions reuse the same headless Chrome process. A headless session is 
 
 If no Chrome binary is found, `better-playwriter session new --browser headless` will tell you to run `better-playwriter browser install` first to download Chrome for Testing.
 
-### Managed cloud browsers
-
-Managed cloud requires an explicitly configured `BETTER_PLAYWRITER_CLOUD_URL` and credentials for that service. Use local or headless Chrome for ordinary tasks. Keep browser identity and authentication data local unless the user authorizes a specific transfer.
-
 ### Execute code
 
 ```bash
@@ -260,10 +256,6 @@ Run `better-playwriter recorder stop` when they say done, then `better-playwrite
 
 If the user started from the toolbar and then says "done", still run `better-playwriter recorder stop` (or `stop <id>` if several are listed). The toolbar **Stop recording…** button also works.
 
-### Live streaming to RTMP (X Live, Twitch, YouTube)
-
-Niche use case: `better-playwriter stream start|stop|status` streams `state.page` live to RTMP endpoints via CDP screencast and ffmpeg (must be on PATH). It survives navigation and CLI exit, and ends when the page closes or the session is reset.
-
 ### Debugging better-playwriter issues
 
 If some internal critical error happens you can read the relay server logs to understand the issue. The log file is located in the user home directory:
@@ -354,11 +346,10 @@ Writing to any other path (e.g. `~/Downloads`, `~/Desktop`) throws `EPERM: opera
 - **Never close**: never call `browser.close()` or `context.close()`. Only close pages you created or if user asks
 - **Hand off in the tab, not in chat**: for a sign-in, 2FA code, captcha or approval, call `handoff` and wait for the page to show it's done. Don't call `bringToFront()` otherwise unless the user asks, you can interact with background pages
 - **Click before keyboard input in extension mode.** Call `click()` on the target field immediately before `fill()` or `keyboard` methods. CDP sends keyboard input to the browser's OS-focused surface, so DOM focus and `bringToFront()` can still leave text in Chrome's omnibox.
-- **Check state after actions**: always verify page state after clicking/submitting (see next section)
+- **Check state after actions**: verify the visible result before the next action (see next section)
 - **Verification pages**: when a navigation lands on a verification or block page, execute prints a `[WARNING]` and already waited for checks that clear by themselves. Never reload or retry in a loop; hand it to the user with `handoff`, or stop on a block.
 - **Clean up only your listeners**: remove listeners you added by event name or handler reference. Never call `removeAllListeners()` because it also removes Better Playwriter's page error and console listeners.
 - **Tracked page errors are automatic**: uncaught errors from pages assigned directly to `state` keys appear in the current or next execute output as `[PAGE ERROR]`. Errors from pages tracked by other sessions are excluded.
-- **Always print page logs after every action**: call `getLatestLogs({ page: state.page, sinceLastCall: true })` after every goto, click, or submit to catch console errors and warnings. Do not manually collect `page.on('console')` events; manual listeners miss logs emitted before the listener is attached. The first `sinceLastCall` call returns all buffered logs including startup and hydration errors. `getLatestLogs` needs `page`. `snapshot` needs `page`, or a `locator`/`frame` from your tab.
 - **CDP sessions**: use `getCDPSession({ page: state.page })` not `state.page.context().newCDPSession()` - NEVER use `newCDPSession()` method, it doesn't work through better-playwriter relay
 - **Wait for load**: use `state.page.waitForLoadState('domcontentloaded')` not `state.page.waitForEvent('load')` - waitForEvent times out if already loaded
 - **Minimize timeouts**: prefer proper waits (`waitForSelector`, `waitForPageLoad`) over `state.page.waitForTimeout()`. Short timeouts (1-2s) are acceptable for non-deterministic events like animations, tab opens, or async UI updates where no specific selector is available
@@ -370,49 +361,25 @@ Writing to any other path (e.g. `~/Downloads`, `~/Desktop`) throws `EPERM: opera
 
 Every browser interaction must follow **observe → act → observe**. Never chain multiple actions blindly.
 
-1. **Open page** — get or create your page, navigate to URL
-2. **Observe** — print `state.page.url()` + `snapshot({ page: state.page })` + `getLatestLogs({ page: state.page, sinceLastCall: true })`. Always print URL — pages can redirect unexpectedly.
-3. **Check** — if page isn't ready (loading, wrong URL, content missing), wait and observe again
-4. **Act** — perform one action (click, type, submit)
-5. **Observe again** — print URL + snapshot + page logs to verify the action's effect
-6. **Repeat** from step 3 until task is complete
-
-**Always print page logs after every action** using `getLatestLogs({ page: state.page, sinceLastCall: true })`. This returns only new console messages and errors since the last call, so you catch hydration errors, failed network requests, and runtime exceptions without duplicates. The first call returns all buffered logs from the page, including logs emitted before your script started.
+1. **Observe** — take a `snapshot({ page: state.page })` to see the controls and current URL.
+2. **Act** — click, type, or submit once the target is ready.
+3. **Verify** — check the expected visible change with a locator or another snapshot before continuing. If the page is still loading, wait for the expected state.
 
 ```js
 // Each step should be a separate execute call:
 // Step 1: navigate + observe
 state.page = await context.newPage()
 await state.page.goto('https://example.com', { waitUntil: 'domcontentloaded' })
-console.log('URL:', state.page.url())
-console.log('Page logs:', await getLatestLogs({ page: state.page, sinceLastCall: true }))
 await snapshot({ page: state.page }).then(console.log)
 ```
 
 ```js
 // Step 2: act + observe
 await state.page.locator('button:has-text("Submit")').click()
-console.log('URL:', state.page.url())
-console.log('Page logs:', await getLatestLogs({ page: state.page, sinceLastCall: true }))
 await snapshot({ page: state.page }).then(console.log)
 ```
 
-If nothing changed after an action, try `waitForPageLoad({ page: state.page, timeout: 3000 })` or you may have clicked the wrong element.
-
-**Deeper observation** — when snapshots aren't enough to understand what happened, combine snapshot with filtered logs:
-
-```js
-// Search for specific errors in all logs (not just since last call)
-const errors = await getLatestLogs({ page: state.page, search: /error|fail/i, count: 20 })
-
-// Combine snapshot + filtered logs for full picture
-const snap = await snapshot({ page: state.page, search: /dialog|error|message/ })
-const logs = await getLatestLogs({ page: state.page, search: /error/i, count: 10 })
-console.log('UI:', snap)
-console.log('Logs:', logs)
-```
-
-Use `getLatestLogs({ page: state.page, sinceLastCall: true })` after every action, `getLatestLogs({ page: state.page, search })` for targeted debugging, `state.page.url()` for navigation, screenshots only for visual layout issues.
+If an action fails or the result is unclear, inspect the UI and use `getLatestLogs({ page: state.page, search: /error|fail/i, count: 20 })` when console output can help diagnose it.
 
 ## common mistakes to avoid
 
@@ -857,11 +824,10 @@ Always use this helper when inspecting browser logs. Do not attach new `page.on(
 
 Uncaught errors from pages assigned directly to `state` keys also appear automatically in execute output. `getLatestLogs()` keeps the full page log history for filtering and deeper diagnosis.
 
-Use `sinceLastCall: true` after every action to get only new logs since the previous call. The first call returns all buffered logs including pre-existing ones. Logs persist across navigations so you never miss errors from page transitions.
+Use `sinceLastCall: true` during debugging to get only new entries. The first call includes buffered entries, and logs persist across navigations.
 
 ```js
 await getLatestLogs({ page: state.page, count?, search?, sinceLastCall? })
-// After every action: get only new logs
 const newLogs = await getLatestLogs({ page: state.page, sinceLastCall: true })
 const errors = await getLatestLogs({ page: state.page, search: /error/i, count: 50 })
 const pageLogs = await getLatestLogs({ page: state.page, count: 100 })
@@ -1009,7 +975,7 @@ Labels are color-coded: yellow=links, orange=buttons, coral=inputs, pink=checkbo
 
 **resizeImageForAgent** - shrink an image so it consumes fewer tokens when read back into context. The resized image is automatically included in the response (visible to the LLM). `await resizeImageForAgent({ input: '/absolute/path/to/screenshot.png' })`. Also accepts `width`, `height`, `maxDimension`, `quality`, `format` (default: `'png'`), `output`. Alias: `resizeImage`.
 
-**recording.start** - record the page as a video with Chrome's native recorder (**Chrome 153+**), up to 4K 60 fps. Returns a handle; keep it in `state` to stop it in a later call. No user click needed; works in every mode (extension, direct CDP, headless, cloud, remote). **Recording survives page navigation**. Auto-overlays a ghost cursor that follows mouse actions. Auto-resizes viewport to 16:9 (only shrinks, override with `aspectRatio: null`). **Set the viewport before start**: output size is fixed at start. Output is H.264 `.mp4`/`.mov`/`.mkv` (`ffmpeg` **must be on PATH**) or `codec: 'av1'` (no ffmpeg, also `.webm`). Auto-stops after 60 min and saves the file (override with `maxDurationMs`). A closed page also saves the file; the next output shows a warning. One recording per page; a recording tab cannot stream or show the live view. `audio: true` records tab audio.
+**recording.start** - record the page as a video with Chrome's native recorder (**Chrome 153+**), up to 4K 60 fps. Returns a handle; keep it in `state` to stop it in a later call. No user click needed; works in extension, direct CDP, headless, and remote sessions. **Recording survives page navigation**. Auto-overlays a ghost cursor that follows mouse actions. Auto-resizes viewport to 16:9 (only shrinks, override with `aspectRatio: null`). **Set the viewport before start**: output size is fixed at start. Output is H.264 `.mp4`/`.mov`/`.mkv` (`ffmpeg` **must be on PATH**) or `codec: 'av1'` (no ffmpeg, also `.webm`). Auto-stops after 60 min and saves the file (override with `maxDurationMs`). A closed page also saves the file; the next output shows a warning. One recording per page; a recording tab cannot stream or show the live view. `audio: true` records tab audio.
 
 For demos, use interaction methods (`locator.click()`, `page.mouse.move()`) instead of `goto()` to show realistic cursor motion.
 
@@ -1032,7 +998,7 @@ await state.page.waitForLoadState('domcontentloaded')
 
 await state.video.setPage(otherPage) // record another tab from now on
 
-// Stop — save full result including executionTimestamps for createDemoVideo
+// Stop and save the recording result
 state.recordingResult = await state.video.stop() // { path, duration, size, endReason, executionTimestamps }
 
 // Lost the handle: await recording.stop({ page: state.page })
@@ -1049,6 +1015,8 @@ await state.video.stop()
 ```
 
 Put each action and its `wait()` in the **same execute call**, or the animation is over before recording resumes. Use `wait(ms)` instead of `waitForTimeout()` when the viewer should see time pass.
+
+For editing an existing real-time recording with `createDemoVideo()`, see **Demo video acceleration** in the MCP resource `recording-guide.md` or in `dist/recording-guide.md` in the installed package.
 
 **ghostCursor.show / ghostCursor.hide** - the ghost cursor overlay is always on: the extension injects it hidden on every Better Playwriter-attached tab, it appears on the first Playwright mouse action (click, move, wheel) and fades out after 5s idle. These methods only matter if you want to change the cursor style or temporarily hide it:
 
@@ -1073,21 +1041,6 @@ Wait in a separate execute with a long timeout, in the background if you can. It
 await waitForHandoff({ page: state.page, until: /\/channels\/@me/ }) // URL RegExp, or a function run in the page
 await waitForHandoff({ page: state.page }) // manual handoff: waits for Done
 await clearHandoff({ page: state.page }) // remove the card without waiting
-```
-
-**createDemoVideo** - for `clock: 'real'` recordings: speeds up idle sections (time between execute() calls) while keeping interactions at normal speed. Requires `ffmpeg`/`ffprobe`. Timestamps are tracked automatically during recording and returned by `state.video.stop()`. **Timeout**: can take 60–120+ seconds, always pass `--timeout 120000` or higher.
-
-```js
-// After stop(), save full result to state (executionTimestamps powers idle detection)
-state.recordingResult = await state.video.stop()
-
-// In a SEPARATE execute call with --timeout 120000:
-const demoPath = await createDemoVideo({
-  recordingPath: state.recordingResult.path,
-  durationMs: state.recordingResult.duration,
-  executionTimestamps: state.recordingResult.executionTimestamps,
-  speed: 6, // default 6x for idle sections
-})
 ```
 
 ## pinned elements
@@ -1284,7 +1237,3 @@ await state.page.screenshot({ path: '/absolute/path/to/region.png', scale: 'css'
 ```
 
 Prefer locator-based actions over coordinates — locators are stable across scroll/resize, auto-wait for elements, and don't require screenshot round-trips that burn ~800 image tokens per cycle.
-
-## Ghost Browser integration
-
-When running in [Ghost Browser](https://ghostbrowser.com/), the `chrome` object exposes APIs for multi-identity automation (identities, proxies, sessions). See `extension/src/ghost-browser-api.d.ts` for full API reference. Only works in Ghost Browser — calls fail in regular Chrome.

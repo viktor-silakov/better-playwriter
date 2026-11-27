@@ -49,7 +49,7 @@ export const TELEMETRY_ENABLED = (() => {
 
 const FLUSH_INTERVAL_MS = 10_000
 
-export type SessionKind = 'extension' | 'headless' | 'cdp' | 'cloud' | 'remote'
+export type SessionKind = 'extension' | 'headless' | 'cdp' | 'remote'
 
 type TelemetryEvents = {
   relay_started: { os: string; arch: string; node: string }

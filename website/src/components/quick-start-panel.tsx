@@ -29,22 +29,22 @@ function CliContent({ cloudUrl }: { cloudUrl: string }) {
   return (
     <div className="flex flex-col gap-5">
       <CodeBlock lang="bash" showLineNumbers={false} bleed="none">
-        {`# Sign in to this service, then open a cloud browser
-export BETTER_PLAYWRITER_CLOUD_URL=${quotedCloudUrl}
-better-playwriter cloud login
-better-playwriter session new --browser cloud
-better-playwriter -s 1 -e "state.page = await context.newPage(); await state.page.goto('https://example.com')"
-better-playwriter -s 1 -e "console.log(await snapshot({ page: state.page }))"
+        {`# Set the API key issued by this dashboard in CLOUD_API_KEY.
+response=$(curl --fail-with-body -sS -X POST ${quotedCloudUrl}/api/cloud/connect \\
+  -H "x-api-key: $CLOUD_API_KEY" -H "Content-Type: application/json" -d '{}') &&
+CDP_URL=$(printf '%s' "$response" | jq -er '.cdpUrl | strings | select(length > 0)') &&
+better-playwriter session new --direct "$CDP_URL"
 
-# Or just set your API key and run directly
-export BETTER_PLAYWRITER_API_KEY="your-api-key"
-better-playwriter session new --browser cloud`}
+# When finished, stop the browser with the provider.
+curl --fail-with-body -sS -X POST ${quotedCloudUrl}/api/cloud/disconnect \\
+  -H "x-api-key: $CLOUD_API_KEY" -H "Content-Type: application/json" \\
+  -d "$(printf '%s' "$response" | jq -c '{cloudSessionId}')"`}
       </CodeBlock>
     </div>
   )
 }
 
-function McpContent({ cloudUrl }: { cloudUrl: string }) {
+function McpContent() {
   return (
     <div className="flex flex-col gap-5">
       <CodeBlock lang="json" showLineNumbers={false} bleed="none">
@@ -52,15 +52,14 @@ function McpContent({ cloudUrl }: { cloudUrl: string }) {
   "mcpServers": {
     "better-playwriter": {
       "command": "npx",
-      "args": ["-y", "better-playwriter@latest"],
-      "env": {
-        "BETTER_PLAYWRITER_CLOUD_URL": ${JSON.stringify(cloudUrl)},
-        "BETTER_PLAYWRITER_API_KEY": "your-api-key"
-      }
+      "args": ["-y", "better-playwriter@latest"]
     }
   }
 }`}
       </CodeBlock>
+      <p className="text-sm text-muted-foreground">
+        Create the browser with the provider, then call <code>session_new</code> with its CDP URL in <code>direct</code>.
+      </p>
     </div>
   )
 }
@@ -78,7 +77,7 @@ export function QuickStartPanel({ cloudUrl }: { cloudUrl: string }) {
         </div>
       </div>
 
-      {tab === 'cli' ? <CliContent cloudUrl={cloudUrl} /> : <McpContent cloudUrl={cloudUrl} />}
+      {tab === 'cli' ? <CliContent cloudUrl={cloudUrl} /> : <McpContent />}
     </div>
   )
 }

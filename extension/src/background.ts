@@ -20,6 +20,7 @@ import {
   EXTENSION_INVENTORY_FAILED_CLOSE,
   EXTENSION_INVENTORY_TIMEOUT_CLOSE,
   INVENTORY_READY_CAPABILITY,
+  REMOVED_GHOST_BROWSER_RESULT,
   colorForTabGroupTitle,
   normalizeTabGroupColor,
   computeTabGroupSyncPlan,
@@ -29,7 +30,6 @@ import {
   type CreateInitialTabParams,
   type UpdateTabGroupResult,
 } from 'better-playwriter/src/protocol'
-import { handleGhostBrowserCommand, type GhostBrowserCommandParams } from 'better-playwriter/src/ghost-browser'
 import { RemoteTunnel } from './remote-tunnel'
 import {
   canReattach,
@@ -186,6 +186,7 @@ function browserNameFromBrands(brands: Array<{ brand: string; version: string }>
 }
 
 async function detectBrowserName(): Promise<string> {
+  // Keep the existing browser name so discovery keys for these profiles stay stable.
   if ((chrome as { ghostPublicAPI?: unknown }).ghostPublicAPI) {
     return 'Ghost'
   }
@@ -1125,26 +1126,10 @@ async function dispatchRelayMessage(message: any, sink: RelayMessageSink): Promi
     return
   }
 
-  // Handle Ghost Browser API commands
-  // This allows calling chrome.ghostPublicAPI, chrome.ghostProxies, chrome.projects
-  // from the playwriter executor sandbox when running in Ghost Browser
   if (message.method === 'ghost-browser') {
-    const params = message.params as GhostBrowserCommandParams
-    const result = await handleGhostBrowserCommand(params, chrome)
-    if (!result.success) {
-      logger.error('Ghost Browser API error:', result.error)
+    if (message.id !== undefined) {
+      sink.send({ id: message.id, result: REMOVED_GHOST_BROWSER_RESULT })
     }
-    // Auto-connect tabs created via ghostPublicAPI.openTab so they appear in context.pages()
-    if (result.success && params.namespace === 'ghostPublicAPI' && params.method === 'openTab') {
-      const tabId = result.result as number
-      if (tabId) {
-        logger.debug('Auto-connecting Ghost Browser tab:', tabId)
-        setTabConnecting(tabId)
-        await sleep(100)
-        await attachTab(tabId)
-      }
-    }
-    sink.send({ id: message.id, result })
     return
   }
 

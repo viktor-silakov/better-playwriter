@@ -37,18 +37,16 @@ import {
   type ScreenshotResult,
   type SnapshotFormat,
 } from './aria-snapshot.js'
-import { createGhostBrowserChrome, type GhostBrowserCommandResult } from './ghost-browser.js'
 export type { SnapshotFormat }
 import { getCleanHTML, type GetCleanHTMLOptions } from './clean-html.js'
 import { getPageMarkdown, type GetPageMarkdownOptions } from './page-markdown.js'
-import { createRecordingApi, createStreamApi } from './screen-recording.js'
+import { createRecordingApi, type CaptureTargetOptions } from './screen-recording.js'
+import type { createStreamApi, StartStreamOptions } from './screen-stream.js'
 import { createDemoVideo } from './ffmpeg.js'
 import { type GhostCursorClientOptions } from './ghost-cursor.js'
 import { GhostCursorController } from './ghost-cursor-controller.js'
 import { clearHandoff, handoff, waitForHandoff, type HandoffOptions, type WaitForHandoffOptions } from './handoff.js'
-import { createCloudScope } from './cloud-scope.js'
 import { challengeWarning, detectChallenge, MAX_CHALLENGE_WAIT_MS, PROBE_TIMEOUT_MS } from './challenge-detection.js'
-import type { CloudAuth } from './cloud-client.js'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
@@ -268,40 +266,6 @@ export function wrapCode(code: string): string {
   return `(async () => { ${code} })()`
 }
 
-const CLOUD_SESSION_EXPIRED_ERROR =
-  'Cloud browser session expired or was destroyed. Create a new session with: better-playwriter session new --browser cloud'
-
-/** Patterns that indicate the browser/page/context was closed or the WebSocket died.
- *  Used to detect cloud VM expiration vs other Playwright errors. */
-const DISCONNECTION_PATTERNS = [
-  'browser has been closed',
-  'browser.close',
-  'Target page, context or browser has been closed',
-  'Target closed',
-  'connection refused',
-  'WebSocket is not open',
-  'WebSocket error',
-  'connect ECONNREFUSED',
-  'Session closed',
-  'Connection closed',
-  'NS_ERROR_NET_RESET',
-]
-
-function isDisconnectionError(error: Error): boolean {
-  const msg = error.message || ''
-  const stack = error.stack || ''
-  const matchesHere = DISCONNECTION_PATTERNS.some((pattern) => {
-    return msg.includes(pattern) || stack.includes(pattern)
-  })
-  if (matchesHere) return true
-  // Walk the cause chain — ensureConnection wraps the real WebSocket error
-  // in a new Error with { cause }, so we need to check nested causes too.
-  if (error.cause instanceof Error) {
-    return isDisconnectionError(error.cause)
-  }
-  return false
-}
-
 const MAX_LOGS_PER_PAGE = 5000
 
 const ALLOWED_MODULES = new Set([
@@ -413,26 +377,12 @@ export interface SessionInfo {
   patchright: boolean
 }
 
-export interface CloudSessionInfo {
-  /** Timestamp (epoch ms) when the BU VM will hard-timeout */
-  timeoutAt?: number
-  /** Whether proxy is enabled — when true, images/video/fonts are blocked to save bandwidth.
-   *  Set to false via --disable-proxy-bandwidth-acceleration to allow all resources. */
-  blockProxyResources?: boolean
-}
-
 export interface ExecutorOptions {
   cdpConfig: CdpConfig
   sessionMetadata?: SessionMetadata
   logger?: ExecutorLogger
   /** Working directory for scoped fs access */
   cwd?: string
-  /** Set when this executor is connected to a cloud Browser Use VM */
-  cloudSession?: CloudSessionInfo
-  /** Expose local-to-cloud cookie transfer in the execution scope */
-  enableCloudScope?: boolean
-  /** Cloud API credentials kept outside the execution scope */
-  cloudAuth?: CloudAuth
   /** Connect with Patchright instead of Playwright. The relay also humanizes this connection's input. */
   patchright?: boolean
 }
@@ -660,13 +610,7 @@ export class PlaywrightExecutor {
   private hasWarnedExtensionOutdated = false
 
   private ghostCursorController: GhostCursorController
-  /** Non-null when this executor is backed by a cloud Browser Use VM */
-  private cloudSession: CloudSessionInfo | null
-  private enableCloudScope: boolean
-  private cloudAuth: CloudAuth | undefined
   private patchright: boolean
-  /** Last minute bucket for which a cloud timeout warning was enqueued (dedup) */
-  private lastCloudTimeoutWarningMinute: number | null = null
 
   constructor(options: ExecutorOptions) {
     this.cdpConfig = options.cdpConfig
@@ -681,9 +625,6 @@ export class PlaywrightExecutor {
     if (cwdWarning) {
       this.logger.log(`[session cwd] ${cwdWarning}`)
     }
-    this.cloudSession = options.cloudSession || null
-    this.enableCloudScope = options.enableCloudScope ?? false
-    this.cloudAuth = options.cloudAuth
     this.patchright = options.patchright ?? false
     // ScopedFS expects an array of allowed directories. If cwd is provided, use it; otherwise use defaults.
     this.scopedFs = new ScopedFS(
@@ -789,43 +730,6 @@ export class PlaywrightExecutor {
     options.deviceScaleFactor = 2
   }
 
-  /** Block images, video, and font resources via Network.setBlockedURLs to save
-   *  residential proxy bandwidth. Single CDP command, zero per-request overhead.
-   *  Applied per-context on every page (existing and future). */
-  private async applyProxyResourceBlocking(context: BrowserContext): Promise<void> {
-    // URL patterns using the URLPattern spec syntax (absolute patterns).
-    // Covers the vast majority of image/video/font resources by file extension.
-    const blockedPatterns = [
-      // Images (SVGs excluded — lightweight and often used for icons/UI)
-      '*.png', '*.jpg', '*.jpeg', '*.gif', '*.webp', '*.ico', '*.bmp', '*.avif',
-    ]
-
-    const applyToPage = async (page: Page) => {
-      try {
-        const cdpSession = await page.context().newCDPSession(page)
-        await cdpSession.send('Network.enable')
-        await cdpSession.send('Network.setBlockedURLs', {
-          urls: blockedPatterns,
-        })
-        await cdpSession.detach()
-      } catch (err) {
-        // Best-effort: don't break the session if blocking fails
-        this.logger.error('Failed to apply proxy resource blocking:', err)
-      }
-    }
-
-    // Apply to existing pages
-    const pages = context.pages().filter((p) => !p.isClosed())
-    await Promise.all(pages.map(applyToPage))
-
-    // Apply to future pages
-    context.on('page', (page) => {
-      void applyToPage(page)
-    })
-
-    this.logger.log('Proxy bandwidth acceleration enabled: blocking raster images')
-  }
-
   private clearExecutionState() {
     this.userState = {}
     this.browserLogs = new Map()
@@ -886,13 +790,6 @@ export class PlaywrightExecutor {
   private enqueueOutputEvent(event: Omit<OutputEvent, 'id'>) {
     this.nextOutputEventId += 1
     this.outputEvents.push({ id: this.nextOutputEventId, ...event })
-  }
-
-  /** Update the cloud session timeout from external tracking (relay timer). */
-  updateCloudTimeout(timeoutAt: number) {
-    if (this.cloudSession) {
-      this.cloudSession.timeoutAt = timeoutAt
-    }
   }
 
   private beginOutputScope(): OutputScope {
@@ -1282,13 +1179,6 @@ export class PlaywrightExecutor {
 
       await this.setDeviceScaleFactorForMacOS(context)
 
-      // Block images, video, and fonts for cloud sessions with proxy enabled
-      // to reduce residential proxy bandwidth costs. Uses Network.setBlockedURLs
-      // which is a single fire-and-forget CDP command with zero per-request overhead.
-      if (this.cloudSession?.blockProxyResources) {
-        await this.applyProxyResourceBlocking(context)
-      }
-
       return { browser, context }
     }
 
@@ -1438,22 +1328,12 @@ export class PlaywrightExecutor {
       return { browser: this.browser, context: this.context }
     }
 
-    try {
-      const { browser, context } = await this.connectToBrowser()
+    const { browser, context } = await this.connectToBrowser()
+    this.browser = browser
+    this.context = context
+    this.isConnected = true
 
-      this.browser = browser
-      this.context = context
-      this.isConnected = true
-
-      return { browser, context }
-    } catch (error) {
-      // Cloud sessions that fail to connect are likely expired VMs.
-      // Give a clear error instead of a cryptic WebSocket/connection error.
-      if (this.cloudSession && error instanceof Error && isDisconnectionError(error)) {
-        throw new Error(CLOUD_SESSION_EXPIRED_ERROR, { cause: error })
-      }
-      throw error
-    }
+    return { browser, context }
   }
 
   /** Used by the action recorder (`better-playwriter recorder`) to attach
@@ -1550,24 +1430,6 @@ export class PlaywrightExecutor {
       if (signal?.aborted) {
         throw new ExecuteCancelledError()
       }
-      // Warn if cloud VM is approaching its hard timeout (deduped by minute bucket)
-      if (this.cloudSession?.timeoutAt) {
-        const remainingMs = this.cloudSession.timeoutAt - Date.now()
-        if (remainingMs <= 0) {
-          throw new Error(CLOUD_SESSION_EXPIRED_ERROR)
-        }
-        if (remainingMs < 5 * 60_000) {
-          const mins = Math.ceil(remainingMs / 60_000)
-          if (this.lastCloudTimeoutWarningMinute !== mins) {
-            this.lastCloudTimeoutWarningMinute = mins
-            this.enqueueWarning(
-              `Cloud browser expires in ~${mins} minute${mins === 1 ? '' : 's'}. ` +
-                `Create a new session soon with: better-playwriter session new --browser cloud`,
-            )
-          }
-        }
-      }
-
       const { context } = await this.ensureConnection()
 
       this.logger.log('Executing code:', code)
@@ -1912,7 +1774,7 @@ export class PlaywrightExecutor {
         await ghostCursorController.hide({ page: targetPage })
       }
 
-      // Screen recording (native Page.startScreenRecording) and RTMP streaming (screencast), see screen-recording.ts
+      // Native screen recording
       const captureLogger = {
         log: (...args: unknown[]) => {
           this.logger.log('[playwriter]', ...args)
@@ -1941,25 +1803,11 @@ export class PlaywrightExecutor {
         },
       })
 
-      const streamApi = createStreamApi({ logger: captureLogger })
-
-      // Ghost Browser API - creates chrome object that mirrors Ghost Browser's APIs
-      // See extension/src/ghost-browser-api.d.ts for full API documentation
-      const chromeGhostBrowser = createGhostBrowserChrome(async (namespace, method, args) => {
-        // The relay handles 'ghost-browser' on any session; a tab is only the transport.
-        const transportPage = context.pages().find((p) => !p.isClosed())
-        if (!transportPage) {
-          throw new Error('Ghost Browser API needs at least one Better Playwriter tab. Create one with `state.page = await context.newPage()`.')
-        }
-        const cdp = await getCDPSession({ page: transportPage })
-        const result = await cdp.send('ghost-browser' as any, { namespace, method, args })
-        const typed = result as GhostBrowserCommandResult
-        if (!typed.success) {
-          throw new Error(typed.error || `Ghost Browser API call failed: ${namespace}.${method}`)
-        }
-        return typed.result
-      })
-
+      let streamApi: Promise<ReturnType<typeof createStreamApi>> | undefined
+      const getStreamApi = () => {
+        streamApi ??= import('./screen-stream.js').then(({ createStreamApi }) => createStreamApi({ logger: captureLogger }))
+        return streamApi
+      }
 
       const sandboxedGetBuiltinModule = (id: string) => {
         if (!ALLOWED_MODULES.has(id)) {
@@ -2083,13 +1931,10 @@ export class PlaywrightExecutor {
           stop: recordingApi.stop,
         },
         stream: {
-          start: streamApi.start,
-          stop: streamApi.stop,
-          status: streamApi.status,
+          start: async (options: Omit<StartStreamOptions, 'logger'>) => (await getStreamApi()).start(options),
+          stop: async (options?: CaptureTargetOptions) => (await getStreamApi()).stop(options),
+          status: async (options?: CaptureTargetOptions) => (await getStreamApi()).status(options),
         },
-        cloud: this.enableCloudScope
-          ? createCloudScope({ auth: this.cloudAuth })
-          : undefined,
         createDemoVideo,
         resetPlaywright: async () => {
           const { context: newContext } = await self.resetInternal()
@@ -2115,8 +1960,6 @@ export class PlaywrightExecutor {
           }
           return import(specifier)
         },
-        // Ghost Browser API - only works in Ghost Browser, mirrors chrome.ghostPublicAPI etc
-        chrome: chromeGhostBrowser,
         ...usefulGlobals,
         ...this.sandboxTimerGlobals,
         // Expose process with safety overrides:
@@ -2282,9 +2125,6 @@ export class PlaywrightExecutor {
       const logsText = formatConsoleLogs({ logs: consoleLogs, title: 'Console output (before error)' })
       const outputText = this.flushOutputForScope(outputScope)
 
-      // Cloud sessions: disconnection errors mean the VM expired or was destroyed.
-      // Give a clear actionable message instead of a generic "call reset" hint.
-      const isDisconnect = error instanceof Error && isDisconnectionError(error)
       const resetHint = (() => {
         const message = error instanceof Error ? error.message : String(error)
         if (/\b(?:Target|Page) crashed\b/i.test(message)) {
@@ -2297,9 +2137,6 @@ export class PlaywrightExecutor {
           return '\n\n[HINT: Navigation failed. Check page.url() and the network error before retrying. Do not reset the session or replay a script that may have submitted a form or changed data.]'
         }
         if (isTimeoutError) return ''
-        if (this.cloudSession && isDisconnect) {
-          return `\n\n[Cloud browser expired or disconnected. Create a new session with: better-playwriter session new --browser cloud]`
-        }
         return '\n\n[HINT: If this is an internal Playwright error, page/browser closed, or connection issue, call reset to reconnect.]'
       })()
 
@@ -2438,12 +2275,6 @@ export class ExecutorManager {
     tabGroup?: string
     /** Explicit tab group color (extension mode only) */
     tabGroupColor?: TabGroupColor
-    /** Cloud session info (set when connecting to a Browser Use VM) */
-    cloudSession?: CloudSessionInfo
-    /** Expose local-to-cloud cookie transfer in the execution scope */
-    enableCloudScope?: boolean
-    /** Cloud API credentials kept outside the execution scope */
-    cloudAuth?: CloudAuth
     /** Connect with Patchright instead of Playwright */
     patchright?: boolean
   }): PlaywrightExecutor {
@@ -2471,9 +2302,6 @@ export class ExecutorManager {
         sessionMetadata,
         logger: this.logger,
         cwd,
-        cloudSession: options.cloudSession,
-        enableCloudScope: options.enableCloudScope,
-        cloudAuth: options.cloudAuth,
         patchright: options.patchright,
       })
       this.executors.set(sessionId, executor)

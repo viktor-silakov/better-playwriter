@@ -6,7 +6,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import util from 'node:util'
 import { fileURLToPath } from 'node:url'
-import { goke, openInBrowser, isAgent } from 'goke'
+import { goke, isAgent } from 'goke'
 import { z } from 'zod'
 import pc from 'picocolors'
 
@@ -40,7 +40,6 @@ import {
   resetSession,
   updateSession,
 } from './relay-sessions.js'
-import { getCloudClient, loadCloudAuth, saveCloudAuth, CloudClient, buildLiveUrl } from './cloud-client.js'
 import { printTelemetryNoticeOnce } from './telemetry.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -275,11 +274,6 @@ async function executeCode(options: {
       }
     }
 
-    if (result.isCloud) {
-      console.error(pc.dim(`\nCloud session. Run \`better-playwriter session delete ${sessionId}\` when done.`))
-    }
-
-    // Not process.exit(1): it drops stdout/stderr past 64 KiB when piped
     if (result.isError) {
       process.exitCode = 1
     }
@@ -300,13 +294,9 @@ cli
   .command('session new', 'Create a new session and print the session ID')
   .option('--host <host>', 'Remote relay server host')
   .option('--token <token>', 'Authentication token (or use BETTER_PLAYWRITER_TOKEN env var)')
-  .option('--browser <key>', 'Browser key when multiple browsers are available. Special values: "headless" (launch headless Chrome, no extension), "cloud" (cloud browser with stealth/proxies)')
+  .option('--browser <key>', 'Browser key when multiple browsers are available. Use "headless" to launch Chrome without an extension.')
   .option('--direct [endpoint]', 'Use direct CDP connection without the extension. Enable debugging first at chrome://inspect/#remote-debugging or launch Chrome with --remote-debugging-port=9222. Auto-discovers instances or accepts an explicit ws:// endpoint')
   .option('--remote <id>', 'Connect to a browser another user shared via the extension `Remote control` button')
-  .option('--proxy <region>', 'Enable residential proxy for cloud browser (e.g. us, de, jp). Disabled by default. Use for anti-detection or geo-targeting.')
-  .option('--custom-proxy <url>', 'Custom proxy for cloud browser (host:port or user:pass@host:port)')
-  .option('--timeout <minutes>', 'Cloud browser timeout in minutes (1-240, default 60)')
-  .option('--disable-proxy-bandwidth-acceleration', 'Allow loading images, video, and fonts when proxy is enabled (they are blocked by default to save proxy bandwidth)')
   .option('--tab-group <name>', 'Tab group title for this session (default "playwriter", or "remote" with --remote)')
   .option('--tab-group-color <color>', 'Tab group color: grey, blue, red, yellow, green, pink, purple, cyan, orange (default derived from the group name)')
   .option('--patchright', 'Connect with Patchright (@playwriter/patchright-core) instead of Playwright, with human-like mouse, scroll and typing on every page')
@@ -321,9 +311,6 @@ cli
       console.error(`Error: --tab-group-color must be one of: ${TAB_GROUP_ALL_COLORS.join(', ')}`)
       process.exit(1)
     }
-    // NaN for non-integers, so newSession rejects it with the range message
-    const cloudTimeoutMinutes = options.timeout === undefined ? undefined : /^\d+$/.test(options.timeout) ? Number(options.timeout) : NaN
-
     try {
       const result = await newSession({
         relay: { host: options.host, token: options.token },
@@ -336,10 +323,6 @@ cli
         tabGroup,
         tabGroupColor: tabGroupColor || undefined,
         patchright: options.patchright || undefined,
-        proxy: options.proxy,
-        customProxy: options.customProxy,
-        cloudTimeoutMinutes,
-        disableProxyBandwidthAcceleration: options.disableProxyBandwidthAcceleration,
         logger: console,
       })
       for (const warning of result.warnings) {
@@ -358,10 +341,6 @@ cli
       for (const note of session.notes) {
         console.log(pc.dim(note))
       }
-      if (session.liveUrl) {
-        console.log(pc.dim(`Live view: ${session.liveUrl}`))
-      }
-
     } catch (error) {
       if (error instanceof ExtensionNotConnectedError) {
         console.error(`ERROR code=${error.code}`)
@@ -718,7 +697,7 @@ cli
         const newResponse = await fetch(`${serverUrl}/cli/session/new`, {
           method: 'POST',
           headers,
-          body: JSON.stringify({ cwd: process.cwd(), cloudAuth: loadCloudAuth() ?? undefined }),
+          body: JSON.stringify({ cwd: process.cwd() }),
         })
         const newResult = (await newResponse.json()) as { id?: string; error?: string }
         if (!newResponse.ok || !newResult.id) {
@@ -1153,247 +1132,6 @@ cli
       console.log(pc.dim('Chrome may ask to approve the debugging connection.'))
     } else {
       console.log(pc.dim('Use with: better-playwriter session new [--browser <key>]'))
-    }
-
-  })
-
-// ── Cloud commands ──────────────────────────────────────────────────
-
-cli
-  .command('cloud login', 'Authenticate with a configured cloud browser service')
-  .option('--base-url <url>', 'Cloud service base URL (or set BETTER_PLAYWRITER_CLOUD_URL)')
-  .action(async (options, ctx) => {
-    const baseUrl = options.baseUrl || readEnv('CLOUD_URL', ctx.process.env)
-    if (!baseUrl) {
-      ctx.console.error('Set BETTER_PLAYWRITER_CLOUD_URL or pass --base-url to connect to a cloud service.')
-      ctx.process.exit(1)
-      return
-    }
-
-    // Use the better-auth client SDK so we don't hardcode endpoint URLs.
-    // Hardcoded URLs broke before when better-auth changed paths between versions.
-    const { createAuthClient } = await import('better-auth/client')
-    const { deviceAuthorizationClient } = await import('better-auth/client/plugins')
-    const client = createAuthClient({
-      baseURL: baseUrl,
-      plugins: [deviceAuthorizationClient()],
-    })
-
-    if (ctx.daemon.isDaemon) {
-      // ── DAEMON: poll until user approves in browser ──
-      // Logs are visible to the parent when started with attach: true.
-      const deviceCode = readEnv('DEVICE_CODE', ctx.process.env)!
-      const pollInterval = Number(readEnv('POLL_INTERVAL', ctx.process.env) || 5) * 1000
-      const expiresIn = Number(readEnv('DEVICE_EXPIRES_IN', ctx.process.env) || 300)
-      const deadline = Date.now() + expiresIn * 1000
-
-      while (Date.now() < deadline) {
-        await new Promise((r) => { setTimeout(r, pollInterval) })
-        const { data: tokenData, error: pollError } = await client.device.token({
-          grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-          device_code: deviceCode,
-          client_id: 'playwriter-cli',
-        })
-        if (tokenData?.access_token) {
-          saveCloudAuth({ token: tokenData.access_token, baseUrl })
-          return // daemon exits, PID file is cleaned up
-        }
-        if (pollError?.error === 'authorization_pending' || pollError?.error === 'slow_down') continue
-        if (pollError) {
-          ctx.console.error(`Device authorization failed: ${pollError.error_description || pollError.error}`)
-          ctx.process.exit(1)
-          return
-        }
-      }
-      ctx.console.error('Device authorization timed out.')
-      ctx.process.exit(1)
-      return
-    }
-
-    // ── FOREGROUND CLIENT ──
-    ctx.console.log('Requesting device authorization...')
-    const { data: deviceData, error: requestError } = await client.device.code({
-      client_id: 'playwriter-cli',
-    })
-    if (requestError || !deviceData) {
-      ctx.console.error(`Error: failed to request device code — ${requestError?.error_description || requestError?.error || 'unknown error'}`)
-      ctx.process.exit(1)
-      return
-    }
-
-    const verificationUrl = deviceData.verification_uri_complete || `${baseUrl}/device?user_code=${deviceData.user_code}`
-    ctx.console.log(`\nOpen this URL in your browser:\n  ${verificationUrl}\n`)
-    ctx.console.log(`Code: ${deviceData.user_code}\n`)
-
-    await openInBrowser(verificationUrl)
-
-    const expiresIn = deviceData.expires_in || 300
-    const daemonEnv = {
-      BETTER_PLAYWRITER_DEVICE_CODE: deviceData.device_code,
-      BETTER_PLAYWRITER_POLL_INTERVAL: String(deviceData.interval || 5),
-      BETTER_PLAYWRITER_DEVICE_EXPIRES_IN: String(expiresIn),
-      BETTER_PLAYWRITER_CLOUD_URL: baseUrl,
-    }
-    const timeoutMs = expiresIn * 1000
-
-    if (isAgent) {
-      // Agent: start daemon detached, return immediately
-      await ctx.daemon.start({ timeoutMs, env: daemonEnv })
-      ctx.console.log('Login running in background.')
-      ctx.console.log('After approving in browser, verify with: better-playwriter cloud me')
-      return
-    }
-
-    // Interactive: attach to daemon, see real-time logs and errors
-    ctx.console.log('Waiting for approval...')
-    await ctx.daemon.start({ attach: true, timeoutMs, env: daemonEnv })
-    ctx.console.log(pc.green('\nLogged in successfully!'))
-    ctx.console.log('Cloud browsers will now appear in `better-playwriter session new`.')
-  })
-
-cli
-  .command('cloud me', 'Check cloud auth status (exits 1 if not logged in)')
-  .action(async (_options, ctx) => {
-    const auth = loadCloudAuth()
-    if (auth) {
-      ctx.console.log('Authenticated')
-      ctx.console.log(`Cloud URL: ${auth.baseUrl}`)
-      return
-    }
-
-    // Check if login daemon is still running (user might not have approved yet)
-    const loginDaemon = ctx.daemon.forCommand('cloud login')
-    if (await loginDaemon.isRunning()) {
-      ctx.console.error('Login in progress. Approve in browser first.')
-      ctx.process.exit(1)
-    }
-
-    ctx.console.error('Not logged in. Run `better-playwriter cloud login` first.')
-    ctx.process.exit(1)
-  })
-
-cli
-  .command('cloud logout', 'Clear cloud auth')
-  .action(async (_options, ctx) => {
-    // Stop any running login daemon
-    const loginDaemon = ctx.daemon.forCommand('cloud login')
-    await loginDaemon.stop()
-
-    // Remove the auth file
-    try {
-      const authFile = dataPath('auth.json')
-      fs.unlinkSync(authFile)
-    } catch {
-      // already gone
-    }
-
-    ctx.console.log('Logged out from cloud')
-  })
-
-cli
-  .command('cloud subscribe', 'Open the subscription page to purchase cloud browser sessions')
-  .action(async () => {
-    const auth = loadCloudAuth()
-    if (!auth) {
-      console.error('Not logged in. Run `better-playwriter cloud login` first.')
-      process.exit(1)
-    }
-    const subscribeUrl = new URL('/dashboard', auth.baseUrl).toString()
-    console.log(`Open your browser to manage your subscription:\n  ${subscribeUrl}\n`)
-    await openInBrowser(subscribeUrl)
-  })
-
-cli
-  .command('cloud status', 'Show active cloud browser sessions')
-  .action(async () => {
-    const client = getCloudClient()
-    if (!client) {
-      console.error('Not logged in. Run `better-playwriter cloud login` first.')
-      process.exit(1)
-    }
-
-    try {
-      const { sessions } = await client.getStatus()
-
-      if (sessions.length === 0) {
-        console.log('No active cloud sessions.')
-        console.log(pc.dim('Start one with: better-playwriter session new --browser cloud'))
-        return
-      }
-
-      const keyWidth = Math.max(3, ...sessions.map((s) => `cloud-${s.index}`.length))
-      console.log('KEY'.padEnd(keyWidth) + '  ' + 'STATUS'.padEnd(10) + '  ' + 'DETAILS')
-      console.log('-'.repeat(keyWidth + 30))
-
-      for (const s of sessions) {
-        const key = `cloud-${s.index}`
-        const timeoutAt = new Date(s.timeoutAt).toLocaleTimeString()
-        console.log(
-          key.padEnd(keyWidth) +
-            '  ' +
-            pc.green('running'.padEnd(10)) +
-            '  ' +
-            `expires ${timeoutAt}`,
-        )
-      }
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error)
-      console.error(`Error: ${msg}`)
-      process.exit(1)
-    }
-  })
-
-cli
-  .command('cloud live [key]', 'Open a live browser view for an active cloud session')
-  .action(async (key) => {
-    const client = getCloudClient()
-    if (!client) {
-      console.error('Not logged in. Run `better-playwriter cloud login` first.')
-      process.exit(1)
-    }
-
-    try {
-      const { sessions } = await client.getStatus()
-      if (sessions.length === 0) {
-        console.log('No active cloud sessions.')
-        console.log(pc.dim('Start one with: better-playwriter session new --browser cloud'))
-        process.exit(1)
-      }
-
-      let session: (typeof sessions)[number] | undefined
-      if (key) {
-        // Match by cloud-N key or by cloudSessionId
-        session = sessions.find((s) => {
-          return `cloud-${s.index}` === key || s.cloudSessionId === key || s.browserUseSessionId === key
-        })
-        if (!session) {
-          console.error(`No active session matching "${key}".`)
-          console.error('Active sessions: ' + sessions.map((s) => { return `cloud-${s.index}` }).join(', '))
-          process.exit(1)
-        }
-      } else if (sessions.length === 1) {
-        session = sessions[0]!
-      } else {
-        console.log('Multiple active sessions. Specify one:\n')
-        for (const s of sessions) {
-          console.log(`  cloud-${s.index}  (expires ${new Date(s.timeoutAt).toLocaleTimeString()})`)
-        }
-        console.log(`\nUsage: better-playwriter cloud live cloud-1`)
-        process.exit(1)
-      }
-
-      if (!session.cdpUrl) {
-        console.error('Session has no CDP URL — it may still be starting.')
-        process.exit(1)
-      }
-      const auth = loadCloudAuth()!
-      const liveUrl = buildLiveUrl(session.cdpUrl, auth.baseUrl)
-      console.log(liveUrl)
-      await openInBrowser(liveUrl)
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error)
-      console.error(`Error: ${msg}`)
-      process.exit(1)
     }
   })
 

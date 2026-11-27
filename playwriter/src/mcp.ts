@@ -210,7 +210,7 @@ const server = new McpServer({
   version: VERSION,
 })
 
-for (const name of ['debugger-api', 'editor-api', 'styles-api']) {
+for (const name of ['debugger-api', 'editor-api', 'styles-api', 'recording-guide']) {
   const uri = `better-playwriter://resources/${name}.md`
   server.resource(name, uri, { mimeType: 'text/plain' }, async () => {
     const packageDir = getInstalledPlaywriterPackageDir()
@@ -368,7 +368,7 @@ server.tool(
     browser: z
       .string()
       .optional()
-      .describe('Browser KEY from session_list. "headless" launches headless Chrome. "cloud" starts a cloud browser (stealth, proxies)'),
+      .describe('Browser KEY from session_list. "headless" launches headless Chrome'),
     direct: z
       .string()
       .optional()
@@ -377,13 +377,6 @@ server.tool(
     patchright: z.boolean().optional().describe('Patchright with human-like mouse, scroll and typing. Extension and remote sessions only'),
     tabGroup: z.string().optional().describe('Chrome tab group title for this session tabs (default "playwriter")'),
     tabGroupColor: tabGroupColorParam,
-    proxy: z.string().optional().describe('Cloud: residential proxy region, e.g. us, de, jp'),
-    customProxy: z.string().optional().describe('Cloud: proxy as host:port or user:pass@host:port'),
-    cloudTimeoutMinutes: z.number().int().optional().describe('Cloud: browser timeout in minutes (1-240, default 60)'),
-    disableProxyBandwidthAcceleration: z
-      .boolean()
-      .optional()
-      .describe('Cloud: load images, video and fonts through the proxy (blocked by default)'),
   },
   async (params) => {
     try {
@@ -398,7 +391,6 @@ server.tool(
       const lines = [
         `Session ${session.id} created${label}. It is now the default session.`,
         ...session.notes,
-        ...(session.liveUrl ? [`Live view: ${session.liveUrl}`] : []),
         ...warnings.map((warning) => `Warning: ${warning}`),
       ]
       return textResult({ text: lines.join('\n') })

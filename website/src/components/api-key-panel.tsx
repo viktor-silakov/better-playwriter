@@ -1,7 +1,6 @@
 // Dashboard panel for managing API keys.
 // Users can create keys (shown once), copy them, and revoke existing ones.
-// API keys authenticate cloud browser requests via x-api-key header,
-// as an alternative to the interactive `cloud login` device flow.
+// API keys authenticate managed browser API requests via the x-api-key header.
 'use client'
 
 import { useState } from 'react'
@@ -46,7 +45,7 @@ export function ApiKeyPanel({
         <div className="flex flex-col gap-1">
           <h2 className="text-base font-semibold">API Keys</h2>
           <p className="text-sm text-muted-foreground">
-            Use API keys for CI, VPS, or headless environments instead of <code className="text-xs">cloud login</code>.
+            Use an API key to provision browsers through this service.
           </p>
         </div>
       </div>

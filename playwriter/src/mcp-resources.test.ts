@@ -20,10 +20,14 @@ test('MCP reads the fork’s bundled documentation without the upstream package'
       args: [path.join(import.meta.dirname, '..', 'bin.js'), '--host', `http://127.0.0.1:${port}`],
     }))
     const { resources } = await client.listResources()
-    expect(resources).toHaveLength(3)
+    expect(resources).toHaveLength(4)
+    expect(resources.map(({ uri }) => uri)).toContain('better-playwriter://resources/recording-guide.md')
     for (const { uri } of resources) {
       expect(uri).toMatch(/^better-playwriter:\/\/resources\//)
       const { contents } = await client.readResource({ uri })
+      if (uri.endsWith('/recording-guide.md')) {
+        expect(contents[0]).toHaveProperty('text', expect.stringContaining('## Demo video acceleration'))
+      }
       expect(contents).toEqual([{ uri, mimeType: 'text/plain', text: expect.stringMatching(/\S/) }])
     }
   } finally {

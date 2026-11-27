@@ -16,6 +16,7 @@ import type {
 } from './protocol.js'
 import {
   DEFAULT_TAB_GROUP_TITLE,
+  REMOVED_GHOST_BROWSER_RESULT,
   REMOTE_TAB_GROUP_TITLE,
   normalizeTabGroupColor,
   normalizeTabGroupTitle,
@@ -39,8 +40,7 @@ import { appendSessionToWsUrl } from './chrome-discovery.js'
 import * as relayState from './relay-state.js'
 import { createHumanInput, isPacedInput, shouldHumanizeInput } from './human-input.js'
 import { WebSocket as NodeWebSocket } from 'ws'
-import { getRemoteDialRetryMs, parseRemoteControlUrl, REMOTE_DIAL_GIVE_UP_MS, type RemoteHelloMessage } from './remote-control.js'
-import { loadCloudAuth, type CloudAuth } from './cloud-client.js'
+import { getRemoteDialRetryMs, getRemoteExtensionMethodRejection, parseRemoteControlUrl, REMOTE_DIAL_GIVE_UP_MS, type RemoteHelloMessage } from './remote-control.js'
 import { recordExecute, trackEvent, type SessionKind } from './telemetry.js'
 import type { ExecutorManager } from './executor.js'
 
@@ -1019,13 +1019,11 @@ export async function startPlayWriterCDPRelayServer({
         )
       }
 
-      // Ghost Browser API - forward to extension for chrome.ghostPublicAPI/ghostProxies/projects
       case 'ghost-browser': {
-        return await sendToExtension({
-          extensionId: resolvedExtensionId,
-          method: 'ghost-browser',
-          params,
-        })
+        if (conn && relayState.isRemoteExtension(conn)) {
+          throw new Error(getRemoteExtensionMethodRejection(method)!)
+        }
+        return REMOVED_GHOST_BROWSER_RESULT
       }
 
       case 'Page.captureScreenshot': {
@@ -2926,7 +2924,6 @@ export async function startPlayWriterCDPRelayServer({
     const body = (await c.req.json().catch(() => ({}))) as {
       client?: string
       headless?: boolean
-      cloud?: object
       cdpEndpoint?: string
       remoteControlUrl?: string
     }
@@ -2936,7 +2933,6 @@ export async function startPlayWriterCDPRelayServer({
     }
     const kind: SessionKind = (() => {
       if (body.headless) return 'headless'
-      if (body.cloud) return 'cloud'
       if (body.cdpEndpoint) return 'cdp'
       if (body.remoteControlUrl) return 'remote'
       return 'extension'
@@ -3045,13 +3041,6 @@ export async function startPlayWriterCDPRelayServer({
       }
       recordExecute()
       wakeRemoteDialForSession(sessionId)
-      // Touch cloud session activity tracking if this session is cloud-backed
-      const cloudTracking = cloudSessionTracking.get(sessionId)
-      if (cloudTracking) {
-        cloudTracking.lastActivityAt = Date.now()
-        cloudTracking.activeExecutions++
-      }
-
       let result: Awaited<ReturnType<typeof existingExecutor.execute>>
       startSessionExecute(sessionId)
       try {
@@ -3059,16 +3048,8 @@ export async function startPlayWriterCDPRelayServer({
         result = await existingExecutor.execute(code, { timeout, signal: c.req.raw.signal })
       } finally {
         endSessionExecute(sessionId)
-        if (cloudTracking) {
-          cloudTracking.activeExecutions--
-          cloudTracking.lastActivityAt = Date.now()
-        }
       }
-
-      // Use the cloudTracking snapshot captured before execute (not a fresh
-      // map lookup) so long-running executes that outlive idle cleanup still
-      // report isCloud correctly.
-      return c.json({ ...result, isCloud: Boolean(cloudTracking) })
+      return c.json(result)
     } catch (error: any) {
       logger?.error('Execute endpoint error:', error)
       return c.json({ text: `Server error: ${error.message}`, images: [], screenshots: [], isError: true }, 500)
@@ -3137,18 +3118,9 @@ export async function startPlayWriterCDPRelayServer({
       tabGroupColor?: string
       /** Connect with Patchright and humanize input on every page (extension or remote-control sessions) */
       patchright?: boolean
-      /** Cloud API credentials for local-to-cloud execution helpers */
-      cloudAuth?: CloudAuth
-      /** Cloud session tracking metadata (set by CLI when connecting to a cloud browser) */
-      cloud?: {
-        cloudSessionId: string
-        cloudBaseUrl: string
-        cloudToken: string
-        /** BU VM hard timeout (ISO string or epoch ms) */
-        timeoutAt?: string | number
-        /** Block images/video/fonts to save proxy bandwidth */
-        blockProxyResources?: boolean
-      }
+    }
+    if ('cloud' in body && body.cloud) {
+      return c.json({ error: 'Managed browsers are provisioned by your provider. Connect with a direct CDP URL.' }, 400)
     }
     const patchright = body.patchright === true
     const sessionId = allocateSessionId()
@@ -3178,8 +3150,6 @@ export async function startPlayWriterCDPRelayServer({
           browser: 'Chrome (Headless)',
           profile: null,
         },
-        enableCloudScope: true,
-        cloudAuth: body.cloudAuth,
       })
       try {
         await executor.reset()
@@ -3205,9 +3175,6 @@ export async function startPlayWriterCDPRelayServer({
       }
       // Use first profile from discovery for session metadata (if available)
       const firstProfile = body.profiles?.[0]
-      const cloudTimeoutAt = body.cloud?.timeoutAt
-        ? (typeof body.cloud.timeoutAt === 'string' ? new Date(body.cloud.timeoutAt).getTime() : body.cloud.timeoutAt)
-        : undefined
       const manager = await getExecutorManager()
       const executor = manager.getExecutor({
         sessionId,
@@ -3218,24 +3185,8 @@ export async function startPlayWriterCDPRelayServer({
           browser: body.browser || null,
           profile: firstProfile ? { email: firstProfile.email, id: firstProfile.name } : null,
         },
-        cloudSession: body.cloud ? { timeoutAt: cloudTimeoutAt, blockProxyResources: body.cloud.blockProxyResources } : undefined,
-        enableCloudScope: !body.cloud,
-        cloudAuth: body.cloudAuth,
       })
       const metadata = executor.getSessionMetadata()
-
-      // Register cloud session tracking if cloud metadata was provided
-      if (body.cloud) {
-        cloudSessionTracking.set(sessionId, {
-          cloudSessionId: body.cloud.cloudSessionId,
-          cloudBaseUrl: body.cloud.cloudBaseUrl,
-          cloudToken: body.cloud.cloudToken,
-          lastActivityAt: Date.now(),
-          activeExecutions: 0,
-          timeoutAt: cloudTimeoutAt,
-        })
-        persistCloudSessions()
-      }
 
       return c.json({
         id: sessionId,
@@ -3347,8 +3298,6 @@ export async function startPlayWriterCDPRelayServer({
         browser: conn.info.browser || null,
         profile: conn.info ? { email: conn.info.email || '', id: conn.info.id || '', label: conn.info.profileLabel || '' } : null,
       },
-      enableCloudScope: true,
-      cloudAuth: body.cloudAuth,
       patchright,
     })
     const metadata = executor.getSessionMetadata()
@@ -3534,18 +3483,6 @@ export async function startPlayWriterCDPRelayServer({
       // Close the remote-control tunnel dial when its last session goes away
       releaseRemoteDialForSession(sessionId)
 
-      // If this was a cloud-backed session, stop the VM only if no other
-      // relay session is still using the same cloud VM (reference counting).
-      const cloudTracking = cloudSessionTracking.get(sessionId)
-      if (cloudTracking) {
-        const shouldStopVm = !hasOtherCloudReferences(sessionId, cloudTracking.cloudSessionId)
-        cloudSessionTracking.delete(sessionId)
-        persistCloudSessions()
-        if (shouldStopVm) {
-          disconnectCloudVm(cloudTracking)
-        }
-      }
-
       return c.json({ success: true, warning: closeTabsWarning })
     } catch (error: any) {
       logger?.error('Delete session endpoint error:', error)
@@ -3698,193 +3635,6 @@ export async function startPlayWriterCDPRelayServer({
     }
   })
 
-  // ============================================================================
-  // Cloud session idle tracking
-  //
-  // Tracks lastActivityAt for cloud-backed sessions (those created via
-  // cdpEndpoint pointing to Browser Use VMs). A background interval checks
-  // every 60s and disconnects sessions idle > 10 minutes by calling the
-  // website's /api/cloud/disconnect endpoint.
-  // ============================================================================
-
-  interface CloudSessionTracking {
-    cloudSessionId: string
-    /** Website base URL for disconnect calls */
-    cloudBaseUrl: string
-    /** Bearer token for website API */
-    cloudToken: string
-    lastActivityAt: number
-    /** Number of currently running execute calls — skip idle timeout while > 0 */
-    activeExecutions: number
-    /** BU VM hard timeout (epoch ms) — used to warn users before expiration */
-    timeoutAt?: number
-  }
-
-  const cloudSessionTracking = new Map<string, CloudSessionTracking>()
-  const CLOUD_IDLE_TIMEOUT_MS = 10 * 60 * 1000 // 10 minutes
-
-  /** Check if any OTHER relay session references the same cloud VM.
-   *  Used to prevent stopping a VM that's still used by another relay session
-   *  (e.g. user attached twice via `session new --browser cloud-1`). */
-  function hasOtherCloudReferences(relaySessionId: string, cloudSessionId: string): boolean {
-    for (const [otherId, tracking] of cloudSessionTracking) {
-      if (otherId !== relaySessionId && tracking.cloudSessionId === cloudSessionId) {
-        return true
-      }
-    }
-    return false
-  }
-
-  /** Disconnect a cloud VM via the website API (best-effort, non-blocking). */
-  function disconnectCloudVm(tracking: CloudSessionTracking): void {
-    fetch(new URL('/api/cloud/disconnect', tracking.cloudBaseUrl).toString(), {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${tracking.cloudToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ cloudSessionId: tracking.cloudSessionId }),
-    }).catch((err) => {
-      logger?.error('[Cloud] Failed to disconnect cloud session:', err)
-    })
-  }
-
-  // ── Cloud session crash recovery ──────────────────────────────────
-  // Persist cloud session IDs to disk so orphaned VMs can be cleaned up
-  // if the relay process crashes. On startup, read the file and disconnect
-  // any leftover VMs (best-effort).
-
-  const CLOUD_SESSIONS_FILE = dataPath('cloud-sessions.json')
-
-  interface PersistedCloudSession {
-    cloudSessionId: string
-    cloudBaseUrl: string
-    cloudToken: string
-  }
-
-  function persistCloudSessions(): void {
-    // Dedupe by cloudSessionId — multiple relay sessions can reference the same VM
-    const seen = new Set<string>()
-    const entries: PersistedCloudSession[] = []
-    for (const t of cloudSessionTracking.values()) {
-      if (seen.has(t.cloudSessionId)) continue
-      seen.add(t.cloudSessionId)
-      entries.push({
-        cloudSessionId: t.cloudSessionId,
-        cloudBaseUrl: t.cloudBaseUrl,
-        cloudToken: t.cloudToken,
-      })
-    }
-    try {
-      const dir = path.dirname(CLOUD_SESSIONS_FILE)
-      fs.mkdirSync(dir, { recursive: true })
-      if (entries.length > 0) {
-        // Atomic write: write to temp file then rename, so a crash mid-write
-        // doesn't leave corrupt JSON that blocks future cleanup.
-        const tmpFile = CLOUD_SESSIONS_FILE + '.tmp'
-        fs.writeFileSync(tmpFile, JSON.stringify(entries), { encoding: 'utf-8', mode: 0o600 })
-        fs.renameSync(tmpFile, CLOUD_SESSIONS_FILE)
-      } else {
-        // No active sessions — remove file to avoid stale data
-        try { fs.unlinkSync(CLOUD_SESSIONS_FILE) } catch { /* already gone */ }
-      }
-    } catch {
-      // Best-effort: don't crash relay if disk write fails
-    }
-  }
-
-  function cleanupOrphanedCloudSessions(): void {
-    const cloudAuth = loadCloudAuth()
-    if (!cloudAuth) return
-
-    let raw: string
-    try {
-      raw = fs.readFileSync(CLOUD_SESSIONS_FILE, 'utf-8')
-    } catch {
-      return // No file — nothing to clean up
-    }
-
-    let entries: PersistedCloudSession[]
-    try {
-      const parsed = JSON.parse(raw)
-      if (!Array.isArray(parsed)) return
-      // Validate shape: each entry must have cloudSessionId and cloudBaseUrl
-      entries = parsed.filter((e): e is PersistedCloudSession => {
-        return e && typeof e.cloudSessionId === 'string' && typeof e.cloudBaseUrl === 'string' && typeof e.cloudToken === 'string'
-      })
-    } catch {
-      // Corrupt JSON (e.g. crash during non-atomic write) — just remove it
-      try { fs.unlinkSync(CLOUD_SESSIONS_FILE) } catch { /* ignore */ }
-      return
-    }
-    if (!entries.length) {
-      try { fs.unlinkSync(CLOUD_SESSIONS_FILE) } catch { /* ignore */ }
-      return
-    }
-
-    logger?.log(pc.yellow(`[Cloud] Found ${entries.length} orphaned cloud session(s) from previous relay. Cleaning up...`))
-    // Remove file after we've read it — disconnect calls are best-effort async.
-    // If they fail, the BU VM will eventually hit its own timeout anyway.
-    try { fs.unlinkSync(CLOUD_SESSIONS_FILE) } catch { /* ignore */ }
-
-    for (const entry of entries) {
-      if (entry.cloudBaseUrl !== cloudAuth.baseUrl) continue
-      disconnectCloudVm({
-        cloudSessionId: entry.cloudSessionId,
-        cloudBaseUrl: entry.cloudBaseUrl,
-        cloudToken: entry.cloudToken,
-        lastActivityAt: 0,
-        activeExecutions: 0,
-      })
-    }
-  }
-
-  const cloudIdleInterval = setInterval(async () => {
-    const now = Date.now()
-    // Collect idle sessions first, then process — avoid mutating map during iteration
-    const idleSessions: Array<[string, CloudSessionTracking]> = []
-    for (const [sessionId, tracking] of cloudSessionTracking) {
-      // VM already past BU hard timeout — schedule for cleanup regardless of activity
-      if (tracking.timeoutAt && tracking.timeoutAt <= now) {
-        idleSessions.push([sessionId, tracking])
-        continue
-      }
-      // Timeout warnings are handled by the executor on each execute() call
-      // (deduped by minute bucket) — no need to enqueue from the relay interval.
-
-      if (tracking.activeExecutions > 0) continue
-      if (now - tracking.lastActivityAt > CLOUD_IDLE_TIMEOUT_MS) {
-        idleSessions.push([sessionId, tracking])
-      }
-    }
-
-    if (idleSessions.length > 0) {
-      for (const [sessionId, tracking] of idleSessions) {
-        const currentTracking = cloudSessionTracking.get(sessionId)
-        const expired = Boolean(currentTracking?.timeoutAt && currentTracking.timeoutAt <= Date.now())
-        if (
-          currentTracking !== tracking ||
-          currentTracking.activeExecutions > 0 ||
-          (!expired && Date.now() - currentTracking.lastActivityAt <= CLOUD_IDLE_TIMEOUT_MS)
-        ) {
-          continue
-        }
-        logger?.log(
-          pc.yellow(`[Cloud] Stopping idle relay session ${sessionId} (idle > 10 min)`),
-        )
-        // Check if other relay sessions reference the same cloud VM.
-        // Only stop the VM when this is the last relay session for it.
-        const shouldStopVm = !hasOtherCloudReferences(sessionId, tracking.cloudSessionId)
-        cloudSessionTracking.delete(sessionId)
-        await executorManager?.deleteExecutor(sessionId)
-        if (shouldStopVm) {
-          disconnectCloudVm(tracking)
-        }
-      }
-      persistCloudSessions()
-    }
-  }, 60_000)
-
   // Headless sessions each hold a context in one shared local Chrome. Agents often never
   // run `session delete`, so delete idle ones; Chrome exits with the last headless session.
   const HEADLESS_IDLE_TIMEOUT_MS = 30 * 60 * 1000
@@ -3922,10 +3672,7 @@ export async function startPlayWriterCDPRelayServer({
         extensions: new Map(),
         playwrightClients: new Map(),
       })
-      clearInterval(cloudIdleInterval)
       clearInterval(headlessIdleInterval)
-      cloudSessionTracking.clear()
-      persistCloudSessions() // Remove the file on graceful shutdown
       server.close()
       emitter.removeAllListeners()
     },
@@ -3956,11 +3703,6 @@ export async function startPlayWriterCDPRelayServer({
     server.once('error', onError)
     server.listen(port, host)
   })
-
-  // Clean up orphaned cloud sessions from a previous relay crash.
-  // Must run AFTER successful listen — if another relay is already running,
-  // we'd fail with EADDRINUSE but only after killing its live VMs.
-  cleanupOrphanedCloudSessions()
 
   const wsHost = `ws://${host}:${port}`
   const cdpEndpoint = `${wsHost}/cdp`

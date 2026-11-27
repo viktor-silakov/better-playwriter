@@ -1,10 +1,36 @@
 ---
-title: Managed cloud browsers
-sidebarTitle: Cloud Browsers
-description: Configure a managed browser provider if you have an authorized service URL.
+title: Connect to a managed browser
+sidebarTitle: Managed Browsers
+description: Provision a browser with your provider, then connect over CDP from the CLI or MCP.
 icon: lucide:cloud
 ---
 
-Better Playwriter uses local Chrome by default. The `cloud` commands need a compatible service explicitly configured with `BETTER_PLAYWRITER_CLOUD_URL`. For device login, `better-playwriter cloud login --base-url <url>` can set the service URL.
+Create a browser in your provider's dashboard or API and get its WebSocket CDP URL. Use that URL with the regular session tools:
 
-Use credentials issued for that endpoint. For a test that only needs a clean browser, see [headless Chrome](./headless.mdx). For a remote Chrome instance you already control, see the [direct CDP options](./cli.mdx).
+```bash
+better-playwriter session new --direct "$CDP_URL"
+```
+
+For MCP, pass the same URL as the `direct` argument to `session_new`. Deleting a Better Playwriter session releases its connection. Stop the browser through the provider when you finish.
+
+## Managed service API
+
+If you operate this repository's website service, manage subscriptions and create an API key in its dashboard. Use that key in the `x-api-key` header. Provisioning and billing are handled by the website service.
+
+```bash
+# Set CLOUD_URL to the service origin and CLOUD_API_KEY to a key it issued.
+response=$(curl --fail-with-body -sS -X POST "$CLOUD_URL/api/cloud/connect" \
+  -H "x-api-key: $CLOUD_API_KEY" -H 'Content-Type: application/json' -d '{}') &&
+CDP_URL=$(printf '%s' "$response" | jq -er '.cdpUrl | strings | select(length > 0)') &&
+better-playwriter session new --direct "$CDP_URL"
+```
+
+Keep the response private because it contains the CDP URL. `GET /api/cloud/status` lists active browsers and their IDs. To stop the browser created above:
+
+```bash
+curl --fail-with-body -sS -X POST "$CLOUD_URL/api/cloud/disconnect" \
+  -H "x-api-key: $CLOUD_API_KEY" -H 'Content-Type: application/json' \
+  -d "$(printf '%s' "$response" | jq -c '{cloudSessionId}')"
+```
+
+If you are upgrading from a version that used `cloud login` and `session new --browser cloud`, stop any sessions managed by the old relay before upgrading. Provision future browsers through your provider and use `--direct`.

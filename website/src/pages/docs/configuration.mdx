@@ -16,7 +16,6 @@ Better Playwriter is configured through **CLI flags** and **environment variable
 | `BETTER_PLAYWRITER_HOST` | Address of a remote relay you control. | Local relay |
 | `BETTER_PLAYWRITER_TOKEN` | Authentication token for remote connections. | Unset |
 | `BETTER_PLAYWRITER_EXEC_TIMEOUT` | Execution timeout in milliseconds. | `10000` |
-| `BETTER_PLAYWRITER_CLOUD_URL` | Compatible managed browser endpoint. | Unset |
 | `BETTER_PLAYWRITER_REMOTE_URL` | Compatible browser-sharing service endpoint. | Unset |
 
 Existing `PLAYWRITER_*` variables have lower precedence than the corresponding fork variables. To reuse the old data directory, stop its relay first and point `BETTER_PLAYWRITER_DATA_DIR` at `~/.playwriter` explicitly. The fork normally keeps its files separate.
@@ -38,12 +37,8 @@ For token-protected connections, use a trusted relay URL and set `BETTER_PLAYWRI
 
 | Flag | Description |
 |---|---|
-| `--browser <key>` | Browser type: extension ID, `headless`, `cloud`, `direct:port` |
+| `--browser <key>` | Browser type: extension ID, `headless`, `direct:port` |
 | `--direct [endpoint]` | Direct CDP: auto-discover or explicit endpoint |
-| `--proxy <region>` | Region supported by the configured cloud provider |
-| `--custom-proxy <url>` | Custom proxy used by the configured cloud provider |
-| `--timeout <minutes>` | Cloud browser timeout (1-240, default 60) |
-| `--disable-proxy-bandwidth-acceleration` | Load images/video with proxy |
 | `--patchright` | Connect with Patchright and human-like input. Switch later with `session update <id> --patchright`. See [sessions](./sessions.mdx#patchright) |
 
 ## Browser start flags

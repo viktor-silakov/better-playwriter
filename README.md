@@ -56,7 +56,7 @@ Load `extension/dist` as an unpacked extension. To put `better-playwriter` on yo
 
 The fork's default relay port is `19989` and its data directory is `~/.better-playwriter`. `better-playwriter logfile` shows the relay and CDP log paths. Logs, screenshots, and recordings can contain data from the browser. Keep them private.
 
-The default setup uses a local relay with usage telemetry disabled. Managed cloud and browser sharing require an explicit service URL. For token-protected access to a relay you run, see [Remote access](./docs/remote-access.md). See [Security](./SECURITY.md) for the scope of browser sharing and how to revoke it.
+The default setup uses a local relay with usage telemetry disabled. For managed browsers, provision one with your provider and connect over [direct CDP](./website/src/pages/docs/cloud-browsers.mdx). Browser sharing requires an explicit service URL. For token-protected access to a relay you run, see [Remote access](./docs/remote-access.md). See [Security](./SECURITY.md) for the scope of browser sharing and how to revoke it.
 
 ## License
 

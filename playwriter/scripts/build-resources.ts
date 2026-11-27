@@ -504,6 +504,8 @@ buildDebuggerApi()
 buildEditorApi()
 buildStylesApi()
 buildPerformanceProfiling()
+const { body: recordingGuide } = parseFrontmatter(readFile('../website/src/pages/docs/recording.mdx'))
+fs.writeFileSync(path.join(distDir, 'recording-guide.md'), recordingGuide.trim() + '\n', 'utf-8')
 buildPromptFromSkill()
 buildWellKnownSkills()
 

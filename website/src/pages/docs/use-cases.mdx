@@ -124,7 +124,7 @@ The user sees Chrome's automation banner so they always know when their browser 
 
 ## Screen recording
 
-Have the agent **record what it's doing** as an MP4 video. The recording pipes CDP screencast frames to `ffmpeg`, needs no permission click, and survives page navigation.
+Have the agent **record what it's doing** as an MP4 video. Chrome's native recorder needs no permission click and keeps recording across page navigations.
 
 ```bash
 # Open a tab and start recording
@@ -138,7 +138,7 @@ better-playwriter -s 1 -e 'await state.page.goBack()'
 better-playwriter -s 1 -e 'await state.video.stop()'
 ```
 
-Useful for creating **demo videos**, recording bug reproductions, or documenting workflows. The agent can also speed up idle sections with `createDemoVideo` to produce polished demos.
+Use the [recording guide](/docs/recording#demo-video-acceleration) to shorten pauses in an existing video.
 
 ## Scraping JS-heavy sites
 

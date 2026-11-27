@@ -20,14 +20,12 @@ import {
   type ExtensionStatus,
 } from './relay-client.js'
 import { discoverChromeInstances, resolveDirectInput, type DiscoveredInstance } from './chrome-discovery.js'
-import { getCloudClient, loadCloudAuth, buildLiveUrl } from './cloud-client.js'
 import { readLocalProfileNames } from './profile-labels.js'
 
 const STATUS_TIMEOUT_MS = 2000
 const SESSION_EXTENSION_WAIT_MS = 20_000
 const EXTENSION_POLL_MS = 250
 const EXECUTE_RESPONSE_GRACE_MS = 30_000
-const MAX_CLOUD_TIMEOUT_MINUTES = 240
 
 // Executes can run for minutes; undici's default headers timeout would cut them off.
 const executeDispatcher = new Agent({ headersTimeout: 0, bodyTimeout: 0 })
@@ -156,7 +154,7 @@ export async function fetchExtensionsStatus(relay: RelayTarget): Promise<Extensi
 /** A browser a session can be created on, listed by `session list` and by the MCP `session_list` tool. */
 export interface BrowserOption {
   key: string
-  type: 'extension' | 'direct' | 'cloud' | 'headless'
+  type: 'extension' | 'direct' | 'headless'
   browser: string
   profile: string
   /** User-supplied local label, if present. */
@@ -166,8 +164,6 @@ export interface BrowserOption {
   /** Direct CDP entries */
   wsUrl?: string
   profiles?: Array<{ name: string; email: string }>
-  /** Cloud entries: the running VM to reattach to. Missing on the "new cloud browser" entry */
-  activeCloudSessionId?: string
 }
 
 function extensionToBrowserOption(extension: ExtensionStatus, names: Record<string, string> = {}): BrowserOption {
@@ -204,30 +200,6 @@ function instanceToBrowserOption(instance: DiscoveredInstance): BrowserOption {
   }
 }
 
-/** Running cloud browsers plus a "cloud" entry for a new one. [] when not logged in. */
-async function discoverCloudBrowsers({ warnings }: { warnings: string[] }): Promise<BrowserOption[]> {
-  const client = getCloudClient()
-  if (!client) {
-    return []
-  }
-  try {
-    const { sessions } = await client.getStatus()
-    const running: BrowserOption[] = sessions.map((s) => {
-      return {
-        key: `cloud-${s.index}`,
-        type: 'cloud',
-        browser: 'Chromium',
-        profile: `(running, expires ${new Date(s.timeoutAt).toLocaleTimeString()})`,
-        activeCloudSessionId: s.cloudSessionId,
-      }
-    })
-    return [...running, { key: 'cloud', type: 'cloud', browser: 'Chromium', profile: '(new cloud browser)' }]
-  } catch (error) {
-    warnings.push(`Cloud browser discovery failed: ${error instanceof Error ? error.message : String(error)}`)
-    return []
-  }
-}
-
 /** Local extensions connected to the relay. Locally it starts the relay and waits up to waitMs for an extension. */
 async function getConnectedExtensions({
   relay,
@@ -258,7 +230,7 @@ async function getHeadlessOption(): Promise<BrowserOption[]> {
 
 /**
  * Every browser a new session can use: extensions, local Chrome instances with
- * debugging enabled (local relay only), headless Chrome and cloud browsers (when logged in).
+ * debugging enabled (local relay only), and headless Chrome.
  */
 export async function discoverBrowserOptions({
   relay,
@@ -271,18 +243,16 @@ export async function discoverBrowserOptions({
   logger?: { log: (...args: any[]) => void }
 }): Promise<{ options: BrowserOption[]; warnings: string[] }> {
   const warnings: string[] = []
-  const [extensions, instances, headless, cloudOptions] = await Promise.all([
+  const [extensions, instances, headless] = await Promise.all([
     getConnectedExtensions({ relay, waitMs: extensionWaitMs, logger }),
     isLocalRelay(relay) ? discoverChromeInstances() : Promise.resolve([]),
     getHeadlessOption(),
-    discoverCloudBrowsers({ warnings }),
   ])
   const names = isLocalRelay(relay) ? readLocalProfileNames() : {}
   const options = [
     ...extensions.map((extension) => extensionToBrowserOption(extension, names)),
     ...instances.map(instanceToBrowserOption),
     ...headless,
-    ...cloudOptions,
   ]
   return { options, warnings }
 }
@@ -301,56 +271,13 @@ export function formatBrowserTable(options: BrowserOption[]): string {
   return [header, '-'.repeat(keyWidth + typeWidth + browserWidth + 20), ...rows].join('\n')
 }
 
-/**
- * Explains why a requested cloud browser key is not available: not logged in,
- * expired auth, or no subscription. null when the key is not a cloud key or
- * cloud options exist (then it is a typo and the browser list explains it).
- */
-async function getCloudUnavailableMessage({
-  browserKey,
-  hasCloudOptions,
-}: {
-  browserKey: string
-  hasCloudOptions: boolean
-}): Promise<string | null> {
-  if (!browserKey.startsWith('cloud') || hasCloudOptions) {
-    return null
-  }
-  if (!loadCloudAuth()) {
-    return dedent`
-      Cloud browsers require authentication.
-
-        Option 1: Run \`better-playwriter cloud login\` (interactive browser flow)
-        Option 2: Set BETTER_PLAYWRITER_API_KEY env var (use your configured cloud service)
-
-        Follow your configured cloud service’s setup instructions, then create a session with browser "cloud".
-    `
-  }
-  const tokenValid = await getCloudClient()
-    ?.getStatus()
-    .then(() => true)
-    .catch(() => false)
-  if (!tokenValid) {
-    return 'Cloud authentication expired. Run `better-playwriter cloud login` or set BETTER_PLAYWRITER_API_KEY env var.'
-  }
-  return dedent`
-    No cloud browser sessions available. You are logged in, but you may need an active subscription.
-    Run \`better-playwriter cloud subscribe\` to manage your plan, then create a session with browser "cloud".
-  `
-}
-
-// ============================================================================
-// Session creation
-// ============================================================================
-
-export type SessionMode = 'extension' | 'headless' | 'direct' | 'remote' | 'cloud'
+export type SessionMode = 'extension' | 'headless' | 'direct' | 'remote'
 
 export type CreatedSession = {
   id: string
   mode: SessionMode
   /** Short description for "Session N created (label)". Empty for plain extension sessions */
   label: string
-  liveUrl?: string | null
   /** Extra lines worth showing the agent, like remote control caveats */
   notes: string[]
 }
@@ -364,7 +291,7 @@ export type NewSessionOptions = {
   relay: RelayTarget
   cwd: string
   client: SessionClient
-  /** Key from discoverBrowserOptions, or "headless" (launch Chrome) or "cloud" (new cloud browser) */
+  /** Key from discoverBrowserOptions, or "headless" (launch Chrome) */
   browser?: string
   /** Direct CDP: '' auto-discovers Chrome with debugging on, else a ws:// URL or host:port */
   direct?: string
@@ -373,14 +300,6 @@ export type NewSessionOptions = {
   tabGroup?: string
   tabGroupColor?: TabGroupColor
   patchright?: boolean
-  /** Cloud residential proxy region, e.g. us, de */
-  proxy?: string
-  /** Cloud custom proxy, host:port or user:pass@host:port */
-  customProxy?: string
-  /** Cloud browser timeout in minutes (1-240) */
-  cloudTimeoutMinutes?: number
-  /** Load images, video and fonts through the cloud proxy (blocked by default to save bandwidth) */
-  disableProxyBandwidthAcceleration?: boolean
   logger?: { log: (...args: any[]) => void }
 }
 
@@ -389,44 +308,6 @@ type RelaySessionResponse = {
   warning?: string | null
   /** Echoed by relays that support tab groups */
   tabGroup?: string | null
-}
-
-/** Parse a custom proxy string (host:port or user:pass@host:port). */
-export function parseCustomProxy(proxyStr: string): { host: string; port: number; username?: string; password?: string } {
-  const atIdx = proxyStr.lastIndexOf('@')
-  const userPass = atIdx === -1 ? '' : proxyStr.slice(0, atIdx)
-  const hostPort = atIdx === -1 ? proxyStr : proxyStr.slice(atIdx + 1)
-  const colonIdx = userPass.indexOf(':')
-  const username = userPass ? (colonIdx === -1 ? userPass : userPass.slice(0, colonIdx)) : undefined
-  const password = userPass && colonIdx !== -1 ? userPass.slice(colonIdx + 1) : undefined
-
-  const lastColon = hostPort.lastIndexOf(':')
-  if (lastColon === -1) {
-    throw new Error(`Invalid proxy format: missing port in "${proxyStr}". Expected host:port or user:pass@host:port`)
-  }
-  const port = parseInt(hostPort.slice(lastColon + 1), 10)
-  if (isNaN(port)) {
-    throw new Error(`Invalid proxy port in "${proxyStr}"`)
-  }
-  return { host: hostPort.slice(0, lastColon), port, username, password }
-}
-
-export function validateCloudTimeout(minutes: number | undefined): number | undefined {
-  if (minutes === undefined) {
-    return undefined
-  }
-  if (!Number.isInteger(minutes) || minutes < 1 || minutes > MAX_CLOUD_TIMEOUT_MINUTES) {
-    throw new Error(`Cloud timeout must be an integer from 1 to ${MAX_CLOUD_TIMEOUT_MINUTES} minutes`)
-  }
-  return minutes
-}
-
-/** Block images/video/fonts when a proxy is on, unless the caller opted out. */
-function computeBlockProxyResources(options: NewSessionOptions): boolean | undefined {
-  if (!options.proxy && !options.customProxy) {
-    return undefined
-  }
-  return !options.disableProxyBandwidthAcceleration
 }
 
 /**
@@ -438,7 +319,7 @@ export async function newSession(options: NewSessionOptions): Promise<NewSession
   const { relay, cwd, client, browser, direct, remote, tabGroup, tabGroupColor, patchright, logger } = options
   const warnings: string[] = []
   const local = isLocalRelay(relay)
-  const cloudAuth = loadCloudAuth() ?? undefined
+
   // Old relays and the CLI path omit client; the relay counts it as cli.
   const clientField = client === 'mcp' ? { client } : {}
 
@@ -463,7 +344,7 @@ export async function newSession(options: NewSessionOptions): Promise<NewSession
     const result = await postRelay<RelaySessionResponse>({
       relay,
       path: '/cli/session/new',
-      body: { cdpEndpoint, cwd, browser: instance?.browser, profiles: instance?.profiles, cloudAuth, ...clientField },
+      body: { cdpEndpoint, cwd, browser: instance?.browser, profiles: instance?.profiles, ...clientField },
     })
     collect(result, { tabGroupRequested: false })
     return created({ id: result.id, mode: 'direct', label })
@@ -473,70 +354,10 @@ export async function newSession(options: NewSessionOptions): Promise<NewSession
     const result = await postRelay<RelaySessionResponse>({
       relay,
       path: '/cli/session/new',
-      body: { extensionId, cwd, cloudAuth, tabGroup, tabGroupColor, patchright: patchright || undefined, ...clientField },
+      body: { extensionId, cwd, tabGroup, tabGroupColor, patchright: patchright || undefined, ...clientField },
     })
     collect(result, { tabGroupRequested: Boolean(tabGroup || tabGroupColor) })
     return created({ id: result.id, mode: 'extension', label: '' })
-  }
-
-  const createCloud = async (activeCloudSessionId?: string) => {
-    warnExtensionOnly('cloud sessions')
-    const cloudClient = getCloudClient()
-    const auth = loadCloudAuth()
-    if (!cloudClient || !auth) {
-      throw new Error('Not logged in to cloud. Run `better-playwriter cloud login` first.')
-    }
-    const blockProxyResources = computeBlockProxyResources(options)
-    const vm = await (async () => {
-      if (activeCloudSessionId) {
-        const session = await cloudClient.getSessionStatus(activeCloudSessionId)
-        if (!session || session.status !== 'active') {
-          throw new Error('Cloud session is no longer active. It may have timed out.')
-        }
-        return { cloudSessionId: activeCloudSessionId, cdpUrl: session.cdpUrl, timeoutAt: session.timeoutAt, isNew: false }
-      }
-      const connected = await cloudClient.connect({
-        proxyRegion: options.proxy,
-        customProxy: options.customProxy ? parseCustomProxy(options.customProxy) : undefined,
-        timeout: validateCloudTimeout(options.cloudTimeoutMinutes),
-      })
-      return { ...connected, isNew: true }
-    })()
-    // A VM this call started must not leak (it is paid) when the relay session fails
-    const stopNewVm = async () => {
-      if (vm.isNew) {
-        await cloudClient.disconnect(vm.cloudSessionId).catch(() => {})
-      }
-    }
-    if (!vm.cdpUrl) {
-      await stopNewVm()
-      throw new Error('Cloud browser returned no CDP URL. The VM may have failed to start.')
-    }
-    try {
-      const cdpEndpoint = await resolveDirectInput(vm.cdpUrl)
-      const result = await postRelay<RelaySessionResponse>({
-        relay,
-        path: '/cli/session/new',
-        body: {
-          cdpEndpoint,
-          cwd,
-          browser: 'Chromium (cloud)',
-          cloud: {
-            cloudSessionId: vm.cloudSessionId,
-            cloudBaseUrl: auth.baseUrl,
-            cloudToken: auth.token,
-            timeoutAt: vm.timeoutAt,
-            blockProxyResources,
-          },
-          ...clientField,
-        },
-      })
-      collect(result, { tabGroupRequested: false })
-      return created({ id: result.id, mode: 'cloud', label: 'cloud', liveUrl: buildLiveUrl(vm.cdpUrl, auth.baseUrl) })
-    } catch (error) {
-      await stopNewVm()
-      throw error
-    }
   }
 
   const createHeadless = async () => {
@@ -545,7 +366,7 @@ export async function newSession(options: NewSessionOptions): Promise<NewSession
     const result = await postRelay<RelaySessionResponse>({
       relay,
       path: '/cli/session/new',
-      body: { headless: true, cwd, cloudAuth, ...clientField },
+      body: { headless: true, cwd, ...clientField },
     }).catch((error: Error) => {
       throw error.message.includes('Could not find a supported browser binary') ? new Error(NO_CHROME_ERROR) : error
     })
@@ -557,9 +378,6 @@ export async function newSession(options: NewSessionOptions): Promise<NewSession
     if (option.type === 'headless') {
       return createHeadless()
     }
-    if (option.type === 'cloud') {
-      return createCloud(option.activeCloudSessionId)
-    }
     if (option.type === 'direct') {
       warnExtensionOnly('direct CDP sessions')
       return createDirect({ cdpEndpoint: option.wsUrl!, label: `direct CDP, ${option.browser} ${option.profile}`, instance: { browser: option.browser, profiles: option.profiles || [] } })
@@ -567,7 +385,7 @@ export async function newSession(options: NewSessionOptions): Promise<NewSession
     return createExtension(option.extensionId ?? null)
   }
 
-  const selectOption = async ({ key, options: browserOptions }: { key: string; options: BrowserOption[] }) => {
+  const selectOption = ({ key, options: browserOptions }: { key: string; options: BrowserOption[] }) => {
     const selected = browserOptions.find((opt) => opt.key === key)
     if (selected) {
       return selected
@@ -575,10 +393,8 @@ export async function newSession(options: NewSessionOptions): Promise<NewSession
     const byProfile = browserOptions.filter((option) => option.type === 'extension' && option.profileLabel === key)
     if (byProfile.length === 1) return byProfile[0]
     if (byProfile.length > 1) throw new Error(`Multiple browsers have profile label "${key}"; use a browser key instead.`)
-    const hasCloudOptions = browserOptions.some((opt) => opt.type === 'cloud')
-    const cloudMessage = await getCloudUnavailableMessage({ browserKey: key, hasCloudOptions })
     const available = browserOptions.map((opt) => opt.key).join(', ') || '(none)'
-    throw new Error(cloudMessage || `Browser not found: ${key}\nAvailable: ${available}`)
+    throw new Error(`Browser not found: ${key}\nAvailable: ${available}`)
   }
 
   if (remote) {
@@ -631,7 +447,7 @@ export async function newSession(options: NewSessionOptions): Promise<NewSession
       `)
     }
     if (browser) {
-      return createFromOption(await selectOption({ key: browser, options: directOptions }))
+      return createFromOption(selectOption({ key: browser, options: directOptions }))
     }
     if (directOptions.length === 1) {
       return createFromOption(directOptions[0])
@@ -648,7 +464,7 @@ export async function newSession(options: NewSessionOptions): Promise<NewSession
     }
   }
 
-  // One extension and no explicit pick: skip the slower direct and cloud discovery
+  // One extension and no explicit pick: skip the slower direct discovery
   if (extensions.length === 1 && !browser) {
     const option = extensionToBrowserOption(extensions[0], local ? readLocalProfileNames() : {})
     if (local && process.platform === 'darwin' && option.key.startsWith('install:Chrome:') && !option.profileLabel) {
@@ -662,12 +478,11 @@ export async function newSession(options: NewSessionOptions): Promise<NewSession
   if (extensions.length > 0 || browser) {
     logger?.log(pc.dim('Discovering additional browsers...'))
   }
-  const cloudOptions = await discoverCloudBrowsers({ warnings })
   // An explicit direct:<port> key from session_list must work without an extension too
   const discoverDirect = local && (extensions.length > 0 || Boolean(browser?.startsWith('direct:')))
   const directOptions = discoverDirect ? (await discoverChromeInstances()).map(instanceToBrowserOption) : []
   const names = local ? readLocalProfileNames() : {}
-  const allOptions = [...extensions.map((extension) => extensionToBrowserOption(extension, names)), ...directOptions, ...cloudOptions]
+  const allOptions = [...extensions.map((extension) => extensionToBrowserOption(extension, names)), ...directOptions]
 
   // Explicit extension keys are used by the identification probe itself and
   // already select the right browser without looking up its profile name.
@@ -680,18 +495,17 @@ export async function newSession(options: NewSessionOptions): Promise<NewSession
     }
   }
 
+  if (browser && /^cloud(?:-\d+)?$/.test(browser) && !allOptions.some((option) => option.profileLabel === browser)) {
+    throw new Error('Managed browsers are provisioned by your provider. Connect with --direct <CDP URL>.')
+  }
+
   if (allOptions.length === 0) {
-    const cloudMessage = browser ? await getCloudUnavailableMessage({ browserKey: browser, hasCloudOptions: false }) : null
-    if (cloudMessage) {
-      throw new Error(cloudMessage)
-    }
     throw new ExtensionNotConnectedError()
   }
   if (browser) {
-    return createFromOption(await selectOption({ key: browser, options: allOptions }))
+    return createFromOption(selectOption({ key: browser, options: allOptions }))
   }
-  const message = extensions.length === 0 ? 'No local browsers detected, but cloud browsers are available:' : 'Multiple browsers detected:'
-  return { kind: 'choose', message, options: allOptions, warnings }
+  return { kind: 'choose', message: 'Multiple browsers detected:', options: allOptions, warnings }
 }
 
 // ============================================================================
@@ -803,7 +617,6 @@ export type ExecuteResponse = {
   images: Array<{ data: string; mimeType: string }>
   screenshots: Array<{ path: string; base64: string; snapshot: string; labelCount: number }>
   isError: boolean
-  isCloud?: boolean
 }
 
 /**

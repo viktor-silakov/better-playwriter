@@ -12,7 +12,7 @@ Page.startScreenRecording ──> AV1 fragments ──> ffmpeg (live) ──> H.
    Chrome encodes                drained every 200ms              stop takes < 1s
 ```
 
-It works in every mode: extension, direct CDP, [headless](/docs/headless), cloud browsers and remote control.
+It works in every mode: extension, direct CDP, [headless](/docs/headless), and remote control.
 
 ## Requirements
 
@@ -171,22 +171,20 @@ For best-looking recordings, use **locator-based interactions** (`locator.click(
 
 ## Demo video acceleration
 
-After a `clock: 'real'` recording, use `createDemoVideo` to **speed up idle sections** (time between execute calls) while keeping interactions at normal speed. Requires `ffmpeg` and `ffprobe` installed. A `clock: 'manual'` recording has no idle sections, so it does not need this.
+Use `createDemoVideo()` to shorten pauses between execute calls in an existing `clock: 'real'` recording. This keeps interactions at normal speed. It requires `ffmpeg` and `ffprobe` on `PATH`. For a planned demo, use the [manual clock](#manual-clock) to omit pauses as you record.
 
-```js
-// First, stop recording and save the result
-state.recordingResult = await state.video.stop()
+First, stop recording and save the result with `state.recordingResult = await state.video.stop()`. Then run a separate execute call in the same session with a timeout of at least 120 seconds.
 
-// Then in a SEPARATE execute call (with --timeout 120000):
-const demoPath = await createDemoVideo({
+```bash
+better-playwriter -s 1 --timeout 120000 -e 'console.log(await createDemoVideo({
   recordingPath: state.recordingResult.path,
   durationMs: state.recordingResult.duration,
   executionTimestamps: state.recordingResult.executionTimestamps,
-  speed: 6,  // default 6x for idle sections
-})
+  speed: 6,
+}))'
 ```
 
-This can take **60-120+ seconds**. Always pass `--timeout 120000` or higher.
+The default speed is 6× for idle sections. The function returns the new file path and adds `-demo` before the extension unless you pass `outputFile`. Long recordings can take more than two minutes to process.
 
 ## Library usage
 
