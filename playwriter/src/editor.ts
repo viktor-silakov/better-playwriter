@@ -1,4 +1,5 @@
 import type { ICDPSession } from './cdp-session.js'
+import { keepDomains } from './cdp-domains.js'
 
 export interface ReadResult {
   content: string
@@ -109,6 +110,8 @@ export class Editor {
         resolve()
       }, 100)
     })
+    // The editor tracks stylesheets for as long as it lives, so a snapshot must not disable these domains
+    keepDomains(this.cdp, ['DOM', 'CSS'])
     await this.cdp.send('Debugger.enable')
     await this.cdp.send('DOM.enable')
     await this.cdp.send('CSS.enable')

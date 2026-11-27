@@ -28,7 +28,21 @@ export async function selectBrowserOption({
 
   const matches: BrowserOption[] = []
   let unavailable = false
+  // Each probe opens a tab and reads Chrome's window, so try the cached names first. A profile cached
+  // under this name is verified, and one with no cached name may also carry it. Profiles cached under
+  // another name are probed only if this pass finds nothing, for example after a rename.
+  const likely = chromeProfiles.filter((option) => !option.profileName || option.profileName === key)
+  const cachedMatch = likely.some((option) => option.profileName === key)
+  for (const option of cachedMatch ? likely : []) {
+    const name = option.key.startsWith('install:Chrome:') ? await identify(option.key).catch(() => null) : null
+    if (!name) unavailable = true
+    if (name === key) matches.push(option)
+  }
+  if (matches.length > 1) throw new Error(`Multiple Chrome profiles are named "${key}". ${useKey}`)
+  if (matches.length === 1 && !unavailable) return matches[0]
+  const probed = new Set(cachedMatch ? likely : [])
   for (const option of chromeProfiles) {
+    if (probed.has(option)) continue
     const name = option.key.startsWith('install:Chrome:') ? await identify(option.key).catch(() => null) : null
     if (!name) unavailable = true
     if (name === key) matches.push(option)

@@ -815,8 +815,19 @@ self.addEventListener('unhandledrejection', (event) => {
 })
 
 let messageCount = 0
+// Same limit as Remote control tunnels. Chrome already got the ACK for the frame, so a relay
+// that reads slower than Chrome produces frames loses frames instead of growing this worker's heap.
+const LOCAL_RELAY_MAX_BUFFERED_BYTES = 2 * 1024 * 1024
+
 function sendToLocalRelay(message: any): void {
   if (connectionManager.ws?.readyState === WebSocket.OPEN) {
+    if (
+      message?.method === 'forwardCDPEvent' &&
+      message.params?.method === 'Page.screencastFrame' &&
+      connectionManager.ws.bufferedAmount >= LOCAL_RELAY_MAX_BUFFERED_BYTES
+    ) {
+      return
+    }
     try {
       connectionManager.ws.send(JSON.stringify(message))
       // Check memory periodically (every ~100 messages)
@@ -1310,6 +1321,28 @@ async function getManagedTabGroupTitles(): Promise<Set<string>> {
   return titles
 }
 
+let tabGroupSyncQueued = false
+
+/**
+ * Queue one tab group sync. A sync reads the store when it starts, so one waiting sync covers every
+ * change made before it runs: attaching N tabs used to queue about 2N full syncs.
+ */
+function queueTabGroupSync(): void {
+  if (tabGroupSyncQueued) {
+    return
+  }
+  tabGroupSyncQueued = true
+  tabGroupQueue = tabGroupQueue
+    .then(() => {
+      tabGroupSyncQueued = false
+      return syncTabGroup()
+    })
+    .catch((e) => {
+      tabGroupSyncQueued = false
+      logger.debug('syncTabGroup error:', e)
+    })
+}
+
 async function syncTabGroup(): Promise<void> {
   try {
     // Include 'connecting' tabs in groups only when the relay is alive, so that
@@ -1345,14 +1378,13 @@ async function syncTabGroup(): Promise<void> {
     // Always query by title - no cached IDs that can go stale. Only groups whose
     // title is managed are ever touched; user-created groups are left alone.
     const allGroups = await chrome.tabGroups.query({})
-    const groups: Array<{ groupId: number; title: string; tabIds: number[] }> = []
-    for (const group of allGroups) {
-      if (!group.title || !managedTitles.has(group.title)) {
-        continue
-      }
-      const tabsInGroup = await chrome.tabs.query({ groupId: group.id })
-      groups.push({ groupId: group.id, title: group.title, tabIds: tabsInGroup.map((t) => t.id).filter(isTruthy) })
-    }
+    const managedGroups = allGroups.filter((group) => group.title && managedTitles.has(group.title))
+    // One query for all groups instead of one per group
+    const allTabs = managedGroups.length > 0 ? await chrome.tabs.query({}) : []
+    const groups: Array<{ groupId: number; title: string; tabIds: number[] }> = managedGroups.map((group) => {
+      const tabIds = allTabs.filter((t) => t.groupId === group.id).map((t) => t.id).filter(isTruthy)
+      return { groupId: group.id, title: group.title!, tabIds }
+    })
 
     const plan = computeTabGroupSyncPlan({ desiredTabs, groups, ownedTabIds: Array.from(ownedTabIds) })
 
@@ -1639,8 +1671,6 @@ async function handleCommand(
     )
   }
 
-  logger.debug('CDP command:', msg.params.method, 'for tab:', targetTabId)
-
   const debuggerSession: chrome.debugger.DebuggerSession = {
     ...debuggee,
     sessionId: msg.params.sessionId !== targetTab.sessionId ? msg.params.sessionId : undefined,
@@ -1690,12 +1720,9 @@ function onDebuggerEvent(source: chrome.debugger.DebuggerSession, method: string
     void chrome.debugger.sendCommand(source, 'Page.screencastFrameAck', { sessionId: params.sessionId }).catch(() => {})
   }
 
-  // Skip debug logs for high-frequency events. Vite HMR and heavy pages emit
-  // thousands of Network/lifecycle events; logging each one over the relay
-  // WS starves screenshot and Target.createTarget (extension CPU spike).
-  if (method !== 'Page.screencastFrame' && method !== 'Page.lifecycleEvent' && !method.startsWith('Network.')) {
-    logger.debug('Forwarding CDP event:', method, 'from tab:', source.tabId)
-  }
+  // No debug log per event: each log is a second WebSocket message, which doubled the traffic and
+  // starved screenshot and Target.createTarget on busy pages. The relay already records every
+  // event and command in cdp.jsonl.
 
   if (!source.sessionId && source.tabId) {
     trackFrameEvent({ tabId: source.tabId, method, params })
@@ -3462,36 +3489,50 @@ function setTabAssignmentChoices(choices: TabAssignmentChoice[]): void {
   }).catch((error) => logger.debug('Could not update tab assignment menu:', error))
 }
 
-function updateMenus(updates: Array<[string, Omit<chrome.contextMenus.CreateProperties, 'id'>]>): void {
-  void menusReady
+function updateMenus(updates: Array<[string, Omit<chrome.contextMenus.CreateProperties, 'id'>]>): Promise<boolean> {
+  return menusReady
     .then(async () => {
       await Promise.all(
         updates.map(([id, properties]) => {
           return chrome.contextMenus.update(id, properties)
         }),
       )
+      return true
     })
     .catch((error: Error) => {
       logger.debug('Could not update menus:', error.message)
+      return false
     })
 }
+
+let lastMenuVisibility = ''
+
 
 function updateContextMenuVisibility(): void {
   const { currentTabId, tabs } = store.getState()
   const activeTab = currentTabId === undefined ? undefined : tabs.get(currentTabId)
   const isConnected = activeTab?.state === 'connected'
-  updateMenus([
+  const updates: Parameters<typeof updateMenus>[0] = [
     [MENU.copyReactSource, { visible: isConnected }],
     [MENU.stopAgent, { visible: currentTabId !== undefined && Boolean(getExecutionBadge(currentTabId)) }],
     [MENU.assignTab, { visible: isConnected && !activeTab?.groupKey && !remoteTunnel &&
       connectionManager.ws?.readyState === WebSocket.OPEN && assignmentChoices.length > 0 }],
     [MENU.releaseTab, { enabled: Boolean(activeTab?.targetId && tabAssignments.has(activeTab.targetId)) }],
-  ])
+  ]
+  // Called on every store change. Skip the four Chrome calls when nothing visible changed.
+  const serialized = JSON.stringify(updates)
+  if (serialized === lastMenuVisibility) {
+    return
+  }
+  lastMenuVisibility = serialized
+  void updateMenus(updates).then((applied) => {
+    if (!applied && lastMenuVisibility === serialized) lastMenuVisibility = ''
+  })
 }
 
 function updateSharingMenus(): void {
   const sharing = remoteTunnel !== null
-  updateMenus([
+  void updateMenus([
     [MENU.separator, { visible: sharing }],
     [MENU.copyRemotePrompt, { visible: sharing }],
     [MENU.copyRemoteId, { visible: sharing }],
@@ -3739,7 +3780,7 @@ function serializeTabs(tabs: Map<number, TabInfo>): string {
 }
 
 store.subscribe((state, prevState) => {
-  logger.log(state)
+  // Runs on every tab switch, so it must stay cheap: no state dump to the relay log
   for (const [tabId, activity] of executionBadges) {
     if (state.tabs.get(tabId)?.targetId !== activity.targetId) executionBadges.delete(tabId)
   }
@@ -3750,11 +3791,9 @@ store.subscribe((state, prevState) => {
       return !state.tabs.has(tabId)
     })
     .forEach(endTabSession)
-  const tabsChanged = serializeTabs(state.tabs) !== serializeTabs(prevState.tabs)
+  const tabsChanged = state.tabs !== prevState.tabs && serializeTabs(state.tabs) !== serializeTabs(prevState.tabs)
   if (tabsChanged) {
-    tabGroupQueue = tabGroupQueue.then(syncTabGroup).catch((e) => {
-      logger.debug('syncTabGroup error:', e)
-    })
+    queueTabGroupSync()
   }
 })
 

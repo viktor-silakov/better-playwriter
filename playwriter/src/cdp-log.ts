@@ -21,6 +21,8 @@ const DEFAULT_MAX_STRING_LENGTH = Number(readEnv('CDP_LOG_MAX_STRING_LENGTH') ||
 const EXCLUDED_METHODS = new Set(['Page.screencastFrame'])
 // Session secrets in headers and cookie results. Header names keep their case, so compare lowercased.
 const REDACTED_KEYS = new Set(['cookie', 'set-cookie', 'authorization', 'proxy-authorization', 'cookies', 'headerstext'])
+// Longer than any redacted secret plus its marker, so a secret cut by the length limit still matches.
+const REDACT_MARGIN = 256
 
 function truncateString(value: string, maxLength: number): string {
   if (value.length <= maxLength) {
@@ -37,7 +39,15 @@ function createTruncatingReplacer({ maxStringLength }: { maxStringLength: number
       return '[redacted]'
     }
     if (typeof value === 'string') {
-      return truncateString(redactRemoteControlSecrets(value), maxStringLength)
+      if (value.length <= maxStringLength + REDACT_MARGIN) {
+        return truncateString(redactRemoteControlSecrets(value), maxStringLength)
+      }
+      // Redaction regexes take over 100 ms on a multi-megabyte string (screenshots, response bodies) and
+      // block the relay. Only the part that survives truncation is scanned. Dropping the margin again keeps
+      // out text whose secret marker may lie past the scanned part.
+      const redacted = redactRemoteControlSecrets(value.slice(0, maxStringLength + REDACT_MARGIN))
+      const head = redacted.slice(0, Math.min(maxStringLength, Math.max(0, redacted.length - REDACT_MARGIN)))
+      return `${head}…[truncated ${value.length - head.length} chars]`
     }
     if (typeof value === 'object' && value !== null) {
       if (seen.has(value)) {

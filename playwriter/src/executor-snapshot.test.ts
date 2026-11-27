@@ -66,6 +66,41 @@ describe('agent snapshot views', () => {
     expect(stale.text).toContain('Take a fresh snapshot.')
   })
 
+  it('snapshots a page that keeps changing and leaves no DOM events behind', async () => {
+    const result = await executor.execute(`
+      state.busyPage = await context.newPage()
+      await state.busyPage.setContent('<main><button>Busy action</button>' + '<span>cell</span>'.repeat(500) + '</main>')
+      await state.busyPage.evaluate(() => {
+        const cells = [...document.querySelectorAll('span')]
+        let turn = 0
+        const tick = () => {
+          for (const cell of cells) { cell.textContent = 'cell ' + turn; cell.setAttribute('data-turn', String(turn)) }
+          turn++
+          requestAnimationFrame(tick)
+        }
+        requestAnimationFrame(tick)
+      })
+      const cdp = await getCDPSession({ page: state.busyPage })
+      let domEvents = 0
+      const count = () => { domEvents++ }
+      cdp.on('DOM.attributeModified', count)
+      cdp.on('DOM.characterDataModified', count)
+      cdp.on('DOM.childNodeInserted', count)
+      const first = await snapshot({ page: state.busyPage, showDiffSinceLastCall: false })
+      const second = await snapshot({ page: state.busyPage, showDiffSinceLastCall: false })
+      await state.busyPage.waitForTimeout(500)
+      const turns = await state.busyPage.evaluate(() => Number(document.querySelector('span').getAttribute('data-turn')))
+      await state.busyPage.close()
+      return { found: first.includes('Busy action') && second.includes('Busy action'), domEvents, pageKeptChanging: turns > 5 }
+    `, { timeout: 30000 })
+    expect(result.isError).toBe(false)
+    expect(result.text).toContain('found: true')
+    expect(result.text).toContain('pageKeptChanging: true')
+    // A few events can slip in while Chrome handles the disable right behind the document request
+    const domEvents = Number(result.text.match(/domEvents: (\d+)/)?.[1])
+    expect(domEvents).toBeLessThan(2000)
+  })
+
   it('emits annotated screenshots only when the viewport changes', async () => {
     const paths: string[] = []
     const screenshot = 'screenshotWithAccessibilityLabels({ page: state.shotPage, ifChanged: true })'

@@ -20,8 +20,8 @@ import dedent from 'string-dedent'
 import { VERSION, parseRelayHost } from './utils.js'
 import { getInstalledPlaywriterPackageDir } from './package-paths.js'
 import { skillReferenceNames } from './skill-references.js'
-import { ensureRelayServer, RELAY_PORT } from './relay-client.js'
-import { boundExecuteOutput } from './executor.js'
+import { ensureRelayServer, waitForConnectedExtensions, RELAY_PORT } from './relay-client.js'
+import { boundExecuteOutput } from './execute-output.js'
 import { installProcessGuard } from './process-guard.js'
 import { TAB_GROUP_ALL_COLORS, normalizeTabGroupColor, type TabGroupColor } from './protocol.js'
 import {
@@ -110,7 +110,10 @@ const mcpLogger = {
 /** Called before every tool, so a crashed or upgraded local relay comes back. */
 async function ensureLocalRelay(): Promise<void> {
   if (isLocalRelay(relay)) {
-    await ensureRelayServer({ logger: mcpLogger })
+    const started = await ensureRelayServer({ logger: mcpLogger })
+    // The extension retries its connection every 3 seconds. Without this wait the first tool call
+    // after a relay start fails with "extension is not connected".
+    if (started) await waitForConnectedExtensions({ timeoutMs: 3500, pollIntervalMs: 100 })
   }
 }
 

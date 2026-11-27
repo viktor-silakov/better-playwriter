@@ -173,6 +173,35 @@ describe('CDP log privacy', () => {
     fs.rmSync(tmpDir, { recursive: true })
   })
 
+  it('redacts and truncates multi-megabyte strings without scanning all of them', async () => {
+    const tmpDir = makeTmpDir()
+    const logFile = path.join(tmpDir, 'cdp.jsonl')
+    const logger = createCdpLogger({ logFilePath: logFile, maxStringLength: 100 })
+    const secret = 'abc123secret'
+    const filler = '+'.repeat(60)
+    // First secret sits before the limit. The second starts before it and its marker lies after it.
+    const data = `${filler}/tunnel/${secret}/x${'+'.repeat(10)}${secret}-tunnel.example.test${'A'.repeat(3_000_000)}`
+
+    const start = performance.now()
+    for (let i = 0; i < 20; i++) {
+      logger.log({ timestamp: new Date().toISOString(), direction: 'to-playwright', message: { id: i, result: { data } } })
+    }
+    const elapsed = performance.now() - start
+    await logger.flush()
+
+    const lines = fs.readFileSync(logFile, 'utf-8').trim().split('\n')
+    expect(lines.length).toBe(20)
+    const logged = JSON.parse(lines[0]).message.result.data as string
+    expect(logged).not.toContain(secret)
+    expect(logged).toContain('/tunnel/[redacted]')
+    expect(logged).toMatch(/…\[truncated \d+ chars\]$/)
+    expect(logged.length).toBeLessThan(200)
+    // Scanning the whole string took over 100 ms per message
+    expect(elapsed).toBeLessThan(500)
+
+    fs.rmSync(tmpDir, { recursive: true })
+  })
+
   it('redacts remote-control secrets from relay logs', async () => {
     const tmpDir = makeTmpDir()
     const logFile = path.join(tmpDir, 'relay.log')

@@ -1,4 +1,5 @@
 import type { ICDPSession } from './cdp-session.js'
+import { holdDomains } from './cdp-domains.js'
 import type { Locator } from '@xmorse/playwright-core'
 
 export interface StyleSource {
@@ -74,9 +75,23 @@ export async function getStylesForLocator({
   includeUserAgentStyles?: boolean
 }): Promise<StylesResult> {
   const cdp = cdpSession
-  await cdp.send('DOM.enable')
-  await cdp.send('CSS.enable')
+  const releaseDomains = await holdDomains(cdp, ['DOM', 'CSS'])
+  try {
+    return await readStyles({ locator, cdp, includeUserAgentStyles })
+  } finally {
+    await releaseDomains()
+  }
+}
 
+async function readStyles({
+  locator,
+  cdp,
+  includeUserAgentStyles,
+}: {
+  locator: Locator
+  cdp: ICDPSession
+  includeUserAgentStyles: boolean
+}): Promise<StylesResult> {
   const elementHandle = await locator.elementHandle()
   if (!elementHandle) {
     throw new Error('Could not get element handle from locator')
@@ -119,25 +134,6 @@ export async function getStylesForLocator({
 
   const matchedStyles = await cdp.send('CSS.getMatchedStylesForNode', { nodeId })
 
-  const stylesheetUrls = new Map<string, string>()
-
-  const processStyleSheetId = async (styleSheetId: string | undefined): Promise<StyleSource | null> => {
-    if (!styleSheetId) {
-      return null
-    }
-
-    if (!stylesheetUrls.has(styleSheetId)) {
-      try {
-        const header = await cdp.send('CSS.getStyleSheetText', { styleSheetId })
-        stylesheetUrls.set(styleSheetId, '')
-      } catch {
-        stylesheetUrls.set(styleSheetId, '')
-      }
-    }
-
-    return null
-  }
-
   const rules: StyleRule[] = []
 
   if (matchedStyles.matchedCSSRules) {
@@ -148,14 +144,8 @@ export async function getStylesForLocator({
 
       let source: StyleSource | null = null
       if (styleSheetId && sourceRange) {
-        const styleSheet = (matchedStyles as any).cssStyleSheetHeaders?.find(
-          (h: CSSStyleSheetHeader) => h.styleSheetId === styleSheetId,
-        )
-        const url =
-          styleSheet?.sourceURL || (rule as any).origin === 'user-agent' ? 'user-agent' : `stylesheet:${styleSheetId}`
-
         source = {
-          url: (rule as any).styleSheetId ? await getStylesheetUrl(cdp, styleSheetId) : 'user-agent',
+          url: getStylesheetUrl(styleSheetId),
           line: sourceRange.startLine + 1,
           column: sourceRange.startColumn,
         }
@@ -197,7 +187,7 @@ export async function getStylesForLocator({
         let source: StyleSource | null = null
         if (styleSheetId && sourceRange) {
           source = {
-            url: await getStylesheetUrl(cdp, styleSheetId),
+            url: getStylesheetUrl(styleSheetId),
             line: sourceRange.startLine + 1,
             column: sourceRange.startColumn,
           }
@@ -270,13 +260,9 @@ function formatElementDescription(node: any): string {
   return desc
 }
 
-async function getStylesheetUrl(cdp: ICDPSession, styleSheetId: string): Promise<string> {
-  try {
-    await cdp.send('CSS.getStyleSheetText', { styleSheetId })
-    return `stylesheet:${styleSheetId}`
-  } catch {
-    return `stylesheet:${styleSheetId}`
-  }
+// The id alone names the source. Fetching the stylesheet text here moved the whole file once per matched rule.
+function getStylesheetUrl(styleSheetId: string): string {
+  return `stylesheet:${styleSheetId}`
 }
 
 export function formatStylesAsText(styles: StylesResult): string {

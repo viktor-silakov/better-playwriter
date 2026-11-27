@@ -447,12 +447,15 @@ async function ensureRelayServerImpl(options: EnsureRelayServerOptions = {}): Pr
   const startTimeoutMs = 5000
   const startTime = Date.now()
 
+  // Short first probes: a warm relay answers in well under 200 ms. Callers that need the extension
+  // wait for it themselves (waitForConnectedExtensions), so there is no fixed sleep after the start.
+  let pollMs = 50
   while (Date.now() - startTime < startTimeoutMs) {
-    await sleep(200)
+    await sleep(pollMs)
+    pollMs = Math.min(pollMs * 2, 200)
     const newVersion = await getRelayServerVersion(RELAY_PORT)
     if (newVersion) {
       logger?.log(pc.green('CDP relay server started successfully'))
-      await sleep(1000)
       return true
     }
   }

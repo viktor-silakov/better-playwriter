@@ -2,7 +2,7 @@ import { readEnv } from './runtime-config.js'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { chromium } from '@xmorse/playwright-core'
+import { createRequire } from 'node:module'
 import { findInstalledChrome } from './browser-install.js'
 // NOTE: browser-config uses chromium synchronously (executablePath) during browser start.
 // Patchright mode only affects connectOverCDP in executor.ts, not browser binary lookup.
@@ -26,7 +26,9 @@ function dedupePaths(pathsToCheck: string[]): string[] {
   return Array.from(new Set(pathsToCheck))
 }
 
+// Loading playwright-core takes about 300 ms, so it is the last place asked and only when nothing else matched.
 function getPlaywrightChromiumCandidate(): string[] {
+  const { chromium }: typeof import('@xmorse/playwright-core') = createRequire(import.meta.url)('@xmorse/playwright-core')
   const executablePath = chromium.executablePath()
   if (!executablePath) {
     return []
@@ -70,7 +72,8 @@ export function getBrowserExecutableCandidates({
   platform = os.platform(),
   env = process.env,
   homeDir = os.homedir(),
-}: Omit<BrowserLookupOptions, 'browserPath' | 'existsSync'> = {}): string[] {
+  includePlaywright = true,
+}: Omit<BrowserLookupOptions, 'browserPath' | 'existsSync'> & { includePlaywright?: boolean } = {}): string[] {
   const platformCandidates = (() => {
     if (platform === 'darwin') {
       return [
@@ -108,7 +111,7 @@ export function getBrowserExecutableCandidates({
 
   const pathCandidates = getPathExecutableCandidates({ platform, env })
   return dedupePaths(
-    [...platformCandidates, ...pathCandidates, ...getPlaywrightChromiumCandidate()].map((filePath) => {
+    [...platformCandidates, ...pathCandidates, ...(includePlaywright ? getPlaywrightChromiumCandidate() : [])].map((filePath) => {
       return expandHomeDirectory({ filePath, homeDir })
     }),
   )
@@ -145,13 +148,17 @@ export function resolveBrowserExecutablePath({
     return installedChrome
   }
 
-  const candidates = getBrowserExecutableCandidates({ platform, env, homeDir })
-  const resolvedPath = candidates.find((candidate) => {
+  const resolvedPath =
+    getBrowserExecutableCandidates({ platform, env, homeDir, includePlaywright: false }).find((candidate) => {
+      return existsSync(candidate)
+    })
+  const candidates = resolvedPath ? [] : getBrowserExecutableCandidates({ platform, env, homeDir })
+  const playwrightPath = candidates.find((candidate) => {
     return existsSync(candidate)
   })
 
-  if (resolvedPath) {
-    return resolvedPath
+  if (resolvedPath || playwrightPath) {
+    return (resolvedPath || playwrightPath)!
   }
 
   const searchedPathsText = candidates.map((candidate) => {

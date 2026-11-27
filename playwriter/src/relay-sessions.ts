@@ -6,7 +6,6 @@ import { readEnv } from './runtime-config.js'
  */
 
 import pc from 'picocolors'
-import { Agent, fetch as undiciFetch } from 'undici'
 import dedent from 'string-dedent'
 import { parseRelayHost } from './utils.js'
 import type { TabGroupColor } from './protocol.js'
@@ -28,7 +27,14 @@ const EXTENSION_POLL_MS = 250
 const EXECUTE_RESPONSE_GRACE_MS = 30_000
 
 // Executes can run for minutes; undici's default headers timeout would cut them off.
-const executeDispatcher = new Agent({ headersTimeout: 0, bodyTimeout: 0 })
+// Loaded on the first execute: importing undici costs every other CLI command over 100 ms.
+let executeClient: Promise<{ fetch: typeof import('undici').fetch; dispatcher: import('undici').Agent }> | undefined
+function getExecuteClient() {
+  executeClient ??= import('undici').then(({ Agent, fetch }) => {
+    return { fetch, dispatcher: new Agent({ headersTimeout: 0, bodyTimeout: 0 }) }
+  })
+  return executeClient
+}
 
 const NO_CHROME_ERROR = dedent`
   No Chrome browser found. Install one first:
@@ -708,6 +714,7 @@ export async function executeInSession({
   requireExecutionId?: boolean
 }): Promise<ExecuteResponse> {
   const endpoint = requireExecutionId ? '/cli/execute/identified' : '/cli/execute'
+  const { fetch: undiciFetch, dispatcher: executeDispatcher } = await getExecuteClient()
   const response = await undiciFetch(`${getServerUrl(relay.host)}${endpoint}`, {
     method: 'POST',
     headers: buildAuthHeaders({ token: relay.token, json: true }),

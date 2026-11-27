@@ -27,6 +27,8 @@ export interface ICDPSession {
 
   detach(): Promise<void>
   getSessionId?(): string | null
+  /** Names the Chrome target behind this session, the same for every relay session using that target. See cdp-domains.ts */
+  domainKey?: string
 }
 
 /**
@@ -36,9 +38,11 @@ export interface ICDPSession {
  */
 export class PlaywrightCDPSessionAdapter implements ICDPSession {
   private _playwrightSession: PlaywrightCDPSession
+  domainKey?: string
 
-  constructor(playwrightSession: PlaywrightCDPSession) {
+  constructor(playwrightSession: PlaywrightCDPSession, domainKey?: string) {
     this._playwrightSession = playwrightSession
+    this.domainKey = domainKey
   }
 
   async send<K extends keyof ProtocolMapping.Commands>(
@@ -78,11 +82,19 @@ export async function getCDPSessionForPage({ page }: { page: Page }): Promise<Pl
     session = page
       .context()
       .getExistingCDPSession(page)
-      .then((playwrightSession) => new PlaywrightCDPSessionAdapter(playwrightSession))
+      .then((playwrightSession) => new PlaywrightCDPSessionAdapter(playwrightSession, targetKey(page)))
     cdpSessions.set(page, session)
     session.catch(() => cdpSessions.delete(page))
   }
   return await session
+}
+
+function targetKey(page: Page, frame?: Frame): string | undefined {
+  try {
+    return frame ? `${page.targetId()}:${frame.frameId()}` : page.targetId()
+  } catch {
+    return undefined
+  }
 }
 
 const cdpSessions = new WeakMap<Page, Promise<PlaywrightCDPSessionAdapter>>()
@@ -103,7 +115,7 @@ export async function getCDPSessionForFrame(frame: Frame): Promise<PlaywrightCDP
     let session = frameSessions.get(owner)
     if (!session) {
       session = page.context().getExistingCDPSession(owner).then(
-        (cdp) => new PlaywrightCDPSessionAdapter(cdp),
+        (cdp) => new PlaywrightCDPSessionAdapter(cdp, targetKey(page, owner)),
         (error) => {
           if (!String(error).includes('does not have a separate CDP session')) {
             frameSessions.delete(owner)

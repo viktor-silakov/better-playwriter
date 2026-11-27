@@ -69,6 +69,23 @@ describe('browser selection', () => {
       .rejects.toThrow(/Browser not found.*install:Chrome:one/)
   })
 
+  it('probes the cached profile first and skips profiles cached under another name', async () => {
+    const work: BrowserOption = { key: 'install:Chrome:work', type: 'extension', browser: 'Chrome', profile: 'Work', profileName: 'Work' }
+    const personal: BrowserOption = { key: 'install:Chrome:personal', type: 'extension', browser: 'Chrome', profile: 'Personal', profileName: 'Personal' }
+    const identify = vi.fn(async (key: string) => key === work.key ? 'Work' : 'Personal')
+    await expect(selectBrowserOption({ key: 'Work', options: [personal, work], identify })).resolves.toBe(work)
+    expect(identify).toHaveBeenCalledOnce()
+    expect(identify).toHaveBeenCalledWith(work.key)
+  })
+
+  it('falls back to every profile when the cached name is stale', async () => {
+    const renamed: BrowserOption = { key: 'install:Chrome:renamed', type: 'extension', browser: 'Chrome', profile: 'Work', profileName: 'Work' }
+    const other: BrowserOption = { key: 'install:Chrome:other', type: 'extension', browser: 'Chrome', profile: 'Personal', profileName: 'Personal' }
+    const identify = vi.fn(async (key: string) => key === renamed.key ? 'Old' : 'Work')
+    await expect(selectBrowserOption({ key: 'Work', options: [renamed, other], identify })).resolves.toBe(other)
+    expect(identify).toHaveBeenCalledTimes(2)
+  })
+
   it('reports a missing profile even if exactly one Chrome profile responds', async () => {
     await expect(selectBrowserOption({ key: 'Work', options: [first], identify: async () => 'Personal' }))
       .rejects.toThrow(/No connected Chrome profile.*Work/)

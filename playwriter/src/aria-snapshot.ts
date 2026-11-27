@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 import type { Protocol } from 'devtools-protocol'
 import { Sema } from 'async-sema'
 import type { ICDPSession } from './cdp-session.js'
+import { holdDomains } from './cdp-domains.js'
 import { getCDPSessionForFrame, getCDPSessionForPage, PLAYWRITER_WORLD_NAME } from './cdp-session.js'
 import { evaluateIsolated } from './playwright-import.js'
 import type { SnapshotReference } from './snapshot-reference.js'
@@ -1013,6 +1014,23 @@ function findSnapshotScope(marker: string) {
   return null
 }
 
+/**
+ * Once Chrome has sent the document, a client with DOM enabled gets an event for every later change of
+ * every node. A page that keeps changing sent hundreds of thousands of them, which timed out the
+ * snapshot and disconnected the extension. So DOM is disabled right behind the request, without waiting
+ * for the answer: Chrome runs both in order and no change is reported in between.
+ */
+async function getFlattenedDocument(session: ICDPSession): Promise<Protocol.DOM.Node[]> {
+  const release = await holdDomains(session, ['DOM'])
+  const document = session.send('DOM.getFlattenedDocument', { depth: -1, pierce: true })
+  const released = release()
+  try {
+    return (await document).nodes
+  } finally {
+    await released
+  }
+}
+
 /** Resolve the marked scope inside its renderer and transfer only its DOM subtree. */
 async function getScopedDom(session: ICDPSession, marker: string, contextId?: number): Promise<Protocol.DOM.Node[] | undefined> {
   if (contextId === undefined) return
@@ -1205,6 +1223,7 @@ export async function getAriaSnapshot({
   const scopeHandle = await locator?.elementHandle()
   const scopeAttr = 'data-pw-scope-' + crypto.randomUUID()
   let scopeApplied = false
+  let releaseDomains: Promise<() => Promise<void>> | undefined
 
   try {
     const scopeFrame = await scopeHandle?.ownerFrame()
@@ -1214,9 +1233,10 @@ export async function getAriaSnapshot({
     }
     const frameId = captureFrame !== page.mainFrame() ? captureFrame.frameId() : undefined
     const session = frameId ? await getCDPSessionForFrame(captureFrame) : cdp || (await getCDPSessionForPage({ page }))
-    const [, , snapshotWorld] = await Promise.all([
-      session.send('DOM.enable'),
-      session.send('Accessibility.enable'),
+    // Held only for the capture: left enabled, Chrome keeps the accessibility tree of the tab up to date for good
+    releaseDomains = holdDomains(session, ['Accessibility'])
+    const [, snapshotWorld] = await Promise.all([
+      releaseDomains,
       // Blink refreshes its AX cache during rendering, after framework navigation changes the DOM.
       frameId && !scopeHandle
         ? evaluateIsolated({ target: captureFrame, fn: waitForRenderedFrame })
@@ -1239,7 +1259,11 @@ export async function getAriaSnapshot({
     const scopedDom = scopeApplied && typeof snapshotWorld === 'number'
       ? await getScopedDom(session, scopeAttr, snapshotWorld)
       : undefined
-    const domNodes = scopedDom ?? (await session.send('DOM.getFlattenedDocument', { depth: -1, pierce: true })).nodes
+    const domNodes = scopedDom ?? (await getFlattenedDocument(session).catch((error) => {
+      // Another relay session on this tab disabled DOM between our enable and the request
+      if (!String(error).includes('DOM agent')) throw error
+      return getFlattenedDocument(session)
+    }))
     const { domById, domByBackendId, childrenByParent } = buildDomIndex(domNodes)
 
     let scopeRootNodeId: Protocol.DOM.NodeId | null = null
@@ -1575,6 +1599,7 @@ export async function getAriaSnapshot({
       getRefStringForLocator: async (loc) => (await getRefsForLocators([loc]))[0]?.ref ?? null,
     }
   } finally {
+    await releaseDomains?.then((release) => release(), () => {})
     if (scopeHandle) {
       if (scopeApplied) await scopeHandle.evaluate((element, attr) => element.removeAttribute(attr), scopeAttr).catch(() => {})
       await scopeHandle.dispose().catch(() => {})

@@ -42,7 +42,7 @@ import { appendSessionToWsUrl } from './chrome-discovery.js'
 import * as relayState from './relay-state.js'
 import { createHumanInput, isPacedInput, shouldHumanizeInput } from './human-input.js'
 import { WebSocket as NodeWebSocket } from 'ws'
-import { getRemoteDialRetryMs, getRemoteExtensionMethodRejection, parseRemoteControlUrl, REMOTE_DIAL_GIVE_UP_MS, type RemoteHelloMessage } from './remote-control.js'
+import { getRemoteDialRetryMs, getRemoteExtensionMethodRejection, parseRemoteControlUrl, REMOTE_DIAL_GIVE_UP_MS, shouldDropRemoteTunnelFrame, type RemoteHelloMessage } from './remote-control.js'
 import { recordExecute, trackEvent, type SessionKind } from './telemetry.js'
 import type { ExecutorManager } from './executor.js'
 import { readSavedSessions, writeSavedSessions, type SavedSession } from './saved-sessions.js'
@@ -411,13 +411,17 @@ export async function startPlayWriterCDPRelayServer({
   }) {
     const messageToSend = source === 'server' && 'method' in message ? { ...message, __serverGenerated: true } : message
 
-    logCdpJson({
-      timestamp: new Date().toISOString(),
-      direction: 'to-playwright',
-      clientId,
-      source,
-      message: messageToSend,
-    })
+    // Noisy events are skipped here too: serializing each one for cdp.jsonl doubles the work per event.
+    const eventMethod = 'method' in message ? message.method : undefined
+    if (!eventMethod || !NOISY_LOG_EVENTS.has(eventMethod)) {
+      logCdpJson({
+        timestamp: new Date().toISOString(),
+        direction: 'to-playwright',
+        clientId,
+        source,
+        message: messageToSend,
+      })
+    }
 
     if ('method' in message) {
       logCdpMessage({
@@ -438,7 +442,14 @@ export async function startPlayWriterCDPRelayServer({
     // 2. We might still have messages in flight or try to send
     // This can cause "Assertion error" in Playwright's crConnection.js if a response
     // arrives after callbacks were cleared. We wrap in try-catch to handle this gracefully.
+    const isScreencastFrame = eventMethod === 'Page.screencastFrame'
     const safeSend = (client: relayState.PlaywrightClient) => {
+      // A client that reads slower than Chrome produces frames would grow relay memory without bound.
+      // The extension already acknowledged the frame, so dropping it only lowers that client's frame rate.
+      const bufferedAmount = (client.ws.raw as { bufferedAmount?: number } | undefined)?.bufferedAmount ?? 0
+      if (shouldDropRemoteTunnelFrame({ bufferedAmount, isScreencastFrame })) {
+        return
+      }
       try {
         client.ws.send(messageStr)
       } catch (e) {
