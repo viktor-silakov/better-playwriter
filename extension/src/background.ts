@@ -904,29 +904,12 @@ async function dispatchRelayMessage(message: any, sink: RelayMessageSink): Promi
       const groupKey = resolveTabGroupKey({ key: initialTabParams?.tabGroupKey, remote: Boolean(sink.remoteRuntime) })
       const groupColor = normalizeTabGroupColor(initialTabParams?.tabGroupColor) || undefined
       logger.debug('Creating initial tab for Playwright client, group:', groupTitle || DEFAULT_TAB_GROUP_TITLE)
-      const tab = await createTabInPreferredWindow({ url: 'about:blank', active: false })
-      if (tab.id) {
-        const tabId = tab.id
-        setTabConnecting(tabId, { groupTitle, groupKey, groupColor })
-        const attach = () => {
-          return attachTab(tabId, { skipAttachedEvent: true })
-        }
-        const { targetInfo, sessionId } = sink.remoteRuntime
-          ? await attachForRemote({ runtime: sink.remoteRuntime, tabId, attach })
-          : await attach()
-        logger.debug('Initial tab created and connected:', tab.id, 'sessionId:', sessionId)
-        sink.send({
-          id: message.id,
-          result: {
-            success: true,
-            tabId: tab.id,
-            sessionId,
-            targetInfo,
-          },
-        })
-      } else {
-        throw new Error('Failed to create tab - no tab ID returned')
-      }
+      const result = await createAttachedTab({
+        url: 'about:blank', groupTitle, groupKey, groupColor,
+        remoteRuntime: sink.remoteRuntime, skipAttachedEvent: true,
+      })
+      logger.debug('Initial tab created and connected:', result.tabId, 'sessionId:', result.sessionId)
+      sink.send({ id: message.id, result: { success: true, ...result } })
     } catch (error: any) {
       logger.debug('Failed to create initial tab:', error)
       sink.send({ id: message.id, error: error.message })
@@ -1199,6 +1182,39 @@ async function createTabInPreferredWindow(options: { url: string; active: boolea
   } catch (error) {
     logger.debug('Could not create tab in preferred window, falling back:', (error as Error).message)
     return await chrome.tabs.create({ url: options.url, active: options.active })
+  }
+}
+
+async function createAttachedTab({
+  url, groupTitle, groupKey, groupColor, remoteRuntime, skipAttachedEvent,
+}: {
+  url: string
+  groupTitle?: string
+  groupKey?: string
+  groupColor?: chrome.tabGroups.ColorEnum
+  remoteRuntime?: RemoteTunnelRuntime
+  skipAttachedEvent?: boolean
+}): Promise<AttachTabResult & { tabId: number }> {
+  const signal = debuggerCancellation.signal
+  const { id: tabId } = await createTabInPreferredWindow({ url, active: false })
+  if (tabId === undefined) throw new Error('Failed to create tab - no tab ID returned')
+
+  try {
+    signal.throwIfAborted()
+    setTabConnecting(tabId, { groupTitle, groupKey, groupColor })
+    if (!skipAttachedEvent) await sleep(100)
+    signal.throwIfAborted()
+    const attach = () => attachTab(tabId, { skipAttachedEvent, signal })
+    const result = remoteRuntime ? await attachForRemote({ runtime: remoteRuntime, tabId, attach }) : await attach()
+    return { ...result, tabId }
+  } catch (error) {
+    if (store.getState().tabs.get(tabId)?.state === 'connecting') detachTab(tabId, false)
+    // The caller never got the tab. Preserve active tabs and tabs that changed URL.
+    const tab = await chrome.tabs.get(tabId).catch(() => undefined)
+    if (tab && !tab.active && (tab.pendingUrl || tab.url) === url) {
+      await chrome.tabs.remove(tabId).catch(() => {})
+    }
+    throw error
   }
 }
 
@@ -1560,18 +1576,7 @@ async function handleCommand(
       const groupKey = resolveTabGroupKey({ key: msg.params.tabGroupKey, remote: Boolean(remoteRuntime) })
       const groupColor = normalizeTabGroupColor(msg.params.tabGroupColor) || undefined
       logger.debug('Creating new tab with URL:', url, 'group:', groupTitle || DEFAULT_TAB_GROUP_TITLE)
-      const tab = await createTabInPreferredWindow({ url, active: false })
-      if (!tab.id) throw new Error('Failed to create tab')
-      const tabId = tab.id
-      setTabConnecting(tabId, { groupTitle, groupKey, groupColor })
-      logger.debug('Created tab:', tabId, 'waiting for it to load...')
-      await sleep(100)
-      const attach = () => {
-        return attachTab(tabId)
-      }
-      const { targetInfo } = remoteRuntime
-        ? await attachForRemote({ runtime: remoteRuntime, tabId, attach })
-        : await attach()
+      const { targetInfo } = await createAttachedTab({ url, groupTitle, groupKey, groupColor, remoteRuntime })
       return { targetId: targetInfo.targetId } satisfies Protocol.Target.CreateTargetResponse
     }
 
@@ -1718,6 +1723,8 @@ function onDebuggerEvent(source: chrome.debugger.DebuggerSession, method: string
   })
 }
 
+let debuggerCancellation = new AbortController()
+
 function onDebuggerDetach(source: chrome.debugger.Debuggee, reason: `${chrome.debugger.DetachReason}`): void {
   const tabId = source.tabId
   if (!tabId) {
@@ -1732,13 +1739,15 @@ function onDebuggerDetach(source: chrome.debugger.Debuggee, reason: `${chrome.de
   logger.warn(`DISCONNECT: onDebuggerDetach tabId=${tabId} reason=${reason}`)
 
   const detachTabFromPlaywright = (detachedTabId: number, tab: TabInfo) => {
-    sendMessage({
-      method: 'forwardCDPEvent',
-      params: {
-        method: 'Target.detachedFromTarget',
-        params: { sessionId: tab.sessionId, targetId: tab.targetId },
-      },
-    })
+    if (tab.sessionId && tab.targetId) {
+      sendMessage({
+        method: 'forwardCDPEvent',
+        params: {
+          method: 'Target.detachedFromTarget',
+          params: { sessionId: tab.sessionId, targetId: tab.targetId },
+        },
+      })
+    }
     emitChildDetachesForTab(detachedTabId)
   }
 
@@ -1746,6 +1755,10 @@ function onDebuggerDetach(source: chrome.debugger.Debuggee, reason: `${chrome.de
     // Chrome's debugger info bar cancellation detaches every debugger session
     // in this extension process. Clear every tracked tab so Playwright does not
     // keep sending commands to tabs Chrome already detached from.
+    debuggerCancellation.abort(new Error(
+      'Chrome canceled debugging. To resume, open a tab in the selected Chrome profile and click the Better Playwriter extension icon.',
+    ))
+    debuggerCancellation = new AbortController()
     stopRemoteControl()
     for (const [detachedTabId, tab] of store.getState().tabs.entries()) {
       detachTabFromPlaywright(detachedTabId, tab)
@@ -1797,6 +1810,7 @@ function onDebuggerDetach(source: chrome.debugger.Debuggee, reason: `${chrome.de
 const tabReattaches = new Map<number, Promise<boolean>>()
 
 async function reattachTab({ tabId, tab }: { tabId: number; tab: TabInfo }): Promise<boolean> {
+  const signal = debuggerCancellation.signal
   const { sessionId, targetId } = tab
   if (!sessionId || !targetId) {
     return false
@@ -1820,7 +1834,8 @@ async function reattachTab({ tabId, tab }: { tabId: number; tab: TabInfo }): Pro
   try {
     await chrome.tabs.get(tabId)
     await removeRestrictedIframes(tabId)
-    const { targetInfo } = await attachTab(tabId, { skipAttachedEvent: true, sessionId })
+    signal.throwIfAborted()
+    const { targetInfo } = await attachTab(tabId, { skipAttachedEvent: true, sessionId, signal })
     if (targetInfo.targetId !== targetId) {
       throw new Error(`targetId changed after reattach: ${targetId} -> ${targetInfo.targetId}`)
     }
@@ -1925,6 +1940,7 @@ const inFlightTabAttaches = new Map<number, Promise<AttachTabResult>>()
 
 type AttachTabOptions = {
   skipAttachedEvent?: boolean
+  signal?: AbortSignal
   // Reuse the Playwright sessionId of a tab Chrome detached unexpectedly (see reattachTab).
   sessionId?: string
 }
@@ -1969,7 +1985,7 @@ function attachTab(tabId: number, options: AttachTabOptions = {}): Promise<Attac
 
 async function attachTabDebugger(
   tabId: number,
-  { skipAttachedEvent = false, sessionId: reusedSessionId }: AttachTabOptions = {},
+  { skipAttachedEvent = false, sessionId: reusedSessionId, signal = debuggerCancellation.signal }: AttachTabOptions = {},
 ): Promise<AttachTabResult> {
   const debuggee = { tabId }
   let debuggerAttached = false
@@ -1983,7 +1999,9 @@ async function attachTabDebugger(
     // cleanup and attach, so we allow up to 3 attempts.
     const maxAttachAttempts = 3
     for (let attempt = 1; attempt <= maxAttachAttempts; attempt++) {
+      signal.throwIfAborted()
       await removeRestrictedIframes(tabId)
+      signal.throwIfAborted()
       try {
         await chrome.debugger.attach(debuggee, '1.3')
         break
@@ -2002,6 +2020,7 @@ async function attachTabDebugger(
     }
 
     debuggerAttached = true
+    signal.throwIfAborted()
     logger.debug('Debugger attached successfully to tab:', tabId)
 
     await chrome.debugger.sendCommand(debuggee, 'Page.enable')
@@ -2020,6 +2039,7 @@ async function attachTabDebugger(
       debuggee,
       'Target.getTargetInfo',
     )) as Protocol.Target.GetTargetInfoResponse
+    signal.throwIfAborted()
 
     const targetInfo = result.targetInfo
 
@@ -2091,8 +2111,9 @@ async function attachTabDebugger(
     // Clean up debugger if we attached but failed later
     if (debuggerAttached) {
       logger.debug('Cleaning up debugger after partial attach failure:', tabId)
-      chrome.debugger.detach(debuggee).catch(() => {})
+      await chrome.debugger.detach(debuggee).catch(() => {})
     }
+    signal.throwIfAborted()
     throw error
   }
 }
@@ -2255,6 +2276,7 @@ async function connectTab(
   tabId: number,
   options?: { groupTitle?: string; groupKey?: string; groupColor?: chrome.tabGroups.ColorEnum },
 ): Promise<void> {
+  const signal = debuggerCancellation.signal
   try {
     logger.debug(`Starting connection to tab ${tabId}`)
 
@@ -2274,7 +2296,8 @@ async function connectTab(
       logger.debug(`Tab ${tabId} was attached by the relay handshake`)
       return
     }
-    await attachTab(tabId)
+    signal.throwIfAborted()
+    await attachTab(tabId, { signal })
 
     logger.debug(`Successfully connected to tab ${tabId}`)
   } catch (error: any) {
@@ -3103,6 +3126,11 @@ async function onActionClicked(tab: chrome.tabs.Tab): Promise<void> {
 // active, debugger events must keep flowing even when the local relay is down.
 chrome.debugger.onEvent.addListener(onDebuggerEvent)
 chrome.debugger.onDetach.addListener(onDebuggerDetach)
+if (import.meta.env.TESTING) {
+  Object.assign(globalThis, {
+    simulateDebuggerCancellation: (tabId: number) => onDebuggerDetach({ tabId }, chrome.debugger.DetachReason.CANCELED_BY_USER),
+  })
+}
 
 // resetDebugger detaches everything, so remote tabs must be restored after it.
 void resetDebugger().then(() => {
