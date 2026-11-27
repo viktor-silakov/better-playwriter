@@ -72,7 +72,7 @@ export function createFileLogger({ logFilePath }: { logFilePath?: string } = {})
         return redactRemoteControlSecrets(value)
       })
       .join(' ')
-    buffer.push(stripAnsi(message))
+    buffer.push(`${new Date().toISOString()} ${stripAnsi(message)}`)
     if (!flushTimer) {
       flushTimer = setInterval(() => {
         queue = queue.then(flushBuffer)

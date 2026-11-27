@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { DEV_EXTENSION_ID } from './brand.js'
+import { DEFAULT_RELAY_PORT, DEV_EXTENSION_ID } from './brand.js'
 import { DEFAULT_DATA_DIR, dataPath, getRelayPort, readEnv } from './runtime-config.js'
 import type { TabGroupColor } from './protocol.js'
 
@@ -86,9 +86,12 @@ export function redactRemoteControlSecrets(value: string): string {
 
 // Use ~/.better-playwriter for logs so each OS user gets their own dir (avoids permission errors on shared machines, see #44)
 const LOG_BASE_DIR = dataPath()
-export const LOG_FILE_PATH = readEnv('LOG_FILE_PATH') || path.join(LOG_BASE_DIR, 'relay-server.log')
+// A relay on another port keeps its own files, so two relays never interleave their lines.
+const LOG_PORT_SUFFIX = getRelayPort() === DEFAULT_RELAY_PORT ? '' : `-${getRelayPort()}`
+export const LOG_FILE_PATH = readEnv('LOG_FILE_PATH') || path.join(LOG_BASE_DIR, `relay-server${LOG_PORT_SUFFIX}.log`)
 export const LOG_CDP_FILE_PATH =
-  readEnv('CDP_LOG_FILE_PATH') || path.join(path.dirname(LOG_FILE_PATH), 'cdp.jsonl')
+  readEnv('CDP_LOG_FILE_PATH') ||
+  path.join(path.dirname(LOG_FILE_PATH), readEnv('LOG_FILE_PATH') ? 'cdp.jsonl' : `cdp${LOG_PORT_SUFFIX}.jsonl`)
 
 /** Logs hold cookies, typed text and page content: only this OS user may read them. */
 export const PRIVATE_FILE_MODE = 0o600

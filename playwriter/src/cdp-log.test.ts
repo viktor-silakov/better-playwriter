@@ -221,3 +221,35 @@ describe('CDP log privacy', () => {
     fs.rmSync(tmpDir, { recursive: true })
   })
 })
+
+describe('CDP log console events', () => {
+  it('keeps console events short and leaves other messages whole', async () => {
+    const tmpDir = makeTmpDir()
+    const logFile = path.join(tmpDir, 'cdp.jsonl')
+    const logger = createCdpLogger({ logFilePath: logFile })
+    const timestamp = new Date().toISOString()
+
+    logger.log({
+      timestamp,
+      direction: 'from-extension',
+      message: { method: 'Log.entryAdded', params: { entry: { text: 'x'.repeat(5000), stackTrace: { callFrames: [{ url: 'https://example.com/app.js' }] } } } },
+    })
+    logger.log({
+      timestamp,
+      direction: 'from-playwright',
+      message: { id: 1, method: 'Runtime.evaluate', params: { expression: 'y'.repeat(1000) } },
+    })
+    await logger.flush()
+
+    const [consoleLine, commandLine] = fs
+      .readFileSync(logFile, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+    expect(consoleLine.message.params.entry.text).toMatch(/^x{300}…\[truncated 4700 chars\]$/)
+    expect(consoleLine.message.params.entry.stackTrace).toBeUndefined()
+    expect(commandLine.message.params.expression).toBe('y'.repeat(1000))
+
+    fs.rmSync(tmpDir, { recursive: true })
+  })
+})

@@ -1156,6 +1156,79 @@ describe('Relay Core Tests', () => {
     }
   }, 30000)
 
+  it('fails a missing element with its own locator error before the execute timeout', async () => {
+    await ensureConnectedTabForExecute()
+    const sessionId = await createCliSession()
+
+    try {
+      const started = Date.now()
+      const result = await executeCli({
+        sessionId,
+        code: `console.log('printed before the click'); await context.pages()[0].click('#missing-button')`,
+      })
+      expect(result.isError).toBe(true)
+      expect(result.text).toContain('printed before the click')
+      expect(result.text).toContain('Timeout 5000ms exceeded')
+      expect(result.text).toContain('#missing-button')
+      expect(Date.now() - started).toBeLessThan(9000)
+    } finally {
+      await deleteCliSession(sessionId)
+    }
+  }, 30000)
+
+  it('answers Runtime.enable for a worker as soon as its context exists', async () => {
+    await ensureConnectedTabForExecute()
+    const sessionId = await createCliSession()
+
+    try {
+      const result = await executeCli({
+        sessionId,
+        code: `
+          const target = context.pages()[0]
+          const created = target.waitForEvent('worker')
+          await target.evaluate(() => {
+            const source = new Blob(['onmessage = () => {}'], { type: 'text/javascript' })
+            window.testWorker = new Worker(URL.createObjectURL(source))
+          })
+          const worker = await created
+          const value = await worker.evaluate(() => 1 + 1)
+          await target.waitForTimeout(1000)
+          await target.evaluate(() => window.testWorker.terminate())
+          return value
+        `,
+      })
+      expect(result).toMatchObject({ isError: false, text: expect.stringContaining('2') })
+
+      const cdpLogger = testCtx!.cdpLogger
+      await cdpLogger.flush()
+      type Entry = { timestamp: string; direction: string; clientId?: string; message: { id?: number; method?: string; sessionId?: string; params?: any } }
+      const entries: Entry[] = fs
+        .readFileSync(cdpLogger.logFilePath, 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line))
+      const workerSessions = new Set(
+        entries
+          .filter((entry) => entry.message.method === 'Target.attachedToTarget' && entry.message.params?.targetInfo?.type === 'worker')
+          .map((entry) => entry.message.params.sessionId as string),
+      )
+      const enables = entries.filter((entry) => {
+        return entry.direction === 'from-playwright' && entry.message.method === 'Runtime.enable' && workerSessions.has(entry.message.sessionId || '')
+      })
+      expect(enables.length).toBeGreaterThan(0)
+      for (const enable of enables) {
+        const response = entries.find((entry) => {
+          return entry.direction === 'to-playwright' && !entry.message.method && entry.message.id === enable.message.id && entry.clientId === enable.clientId
+        })
+        // The relay used to hold this response for 3 s, waiting for a main frame context a worker never has.
+        expect(response, 'Runtime.enable for the worker got no response within a second').toBeDefined()
+        expect(Date.parse(response!.timestamp) - Date.parse(enable.timestamp)).toBeLessThan(1500)
+      }
+    } finally {
+      await deleteCliSession(sessionId)
+    }
+  }, 30000)
+
   it('restores the page UI when a screenshot capture fails', async () => {
     await ensureConnectedTabForExecute()
     const sessionId = await createCliSession()

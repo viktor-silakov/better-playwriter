@@ -19,6 +19,9 @@ export type CdpLogger = {
 
 const DEFAULT_MAX_STRING_LENGTH = Number(readEnv('CDP_LOG_MAX_STRING_LENGTH') || 2000)
 const EXCLUDED_METHODS = new Set(['Page.screencastFrame'])
+// Chatty web apps send thousands of these with long texts and stack traces. Keep the start of each text.
+const CONSOLE_METHODS = new Set(['Log.entryAdded', 'Runtime.consoleAPICalled'])
+const CONSOLE_MAX_STRING_LENGTH = 300
 // Session secrets in headers and cookie results. Header names keep their case, so compare lowercased.
 const REDACTED_KEYS = new Set(['cookie', 'set-cookie', 'authorization', 'proxy-authorization', 'cookies', 'headerstext'])
 // Longer than any redacted secret plus its marker, so a secret cut by the length limit still matches.
@@ -32,9 +35,12 @@ function truncateString(value: string, maxLength: number): string {
   return `${value.slice(0, maxLength)}…[truncated ${truncatedCount} chars]`
 }
 
-function createTruncatingReplacer({ maxStringLength }: { maxStringLength: number }) {
+function createTruncatingReplacer({ maxStringLength, dropStackTrace }: { maxStringLength: number; dropStackTrace?: boolean }) {
   const seen = new WeakSet<object>()
   return (key: string, value: unknown) => {
+    if (dropStackTrace && key === 'stackTrace') {
+      return undefined
+    }
     if (REDACTED_KEYS.has(key.toLowerCase())) {
       return '[redacted]'
     }
@@ -135,7 +141,11 @@ export function createCdpLogger({
     if (typeof method === 'string' && EXCLUDED_METHODS.has(method)) {
       return
     }
-    const replacer = createTruncatingReplacer({ maxStringLength: maxLength })
+    const consoleEvent = typeof method === 'string' && CONSOLE_METHODS.has(method)
+    const replacer = createTruncatingReplacer({
+      maxStringLength: consoleEvent ? Math.min(maxLength, CONSOLE_MAX_STRING_LENGTH) : maxLength,
+      dropStackTrace: consoleEvent,
+    })
     const line = JSON.stringify(entry, replacer)
     buffer.push(line)
     if (!flushTimer) {

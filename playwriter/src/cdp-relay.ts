@@ -1424,7 +1424,9 @@ export async function startPlayWriterCDPRelayServer({
       const handler = ({ event }: { event: CDPEventBase }) => {
         if (event.method === 'Runtime.executionContextCreated' && event.sessionId === sessionId) {
           const params = event.params as Protocol.Runtime.ExecutionContextCreatedEvent | undefined
-          if (params?.context?.auxData?.isDefault === true) {
+          // A worker has one context and no frame, so its context carries no isDefault flag.
+          const auxData = params?.context?.auxData
+          if (auxData?.isDefault === true || (params?.context && !auxData?.frameId)) {
             clearTimeout(timeout)
             emitter.off('cdp:event', handler)
             resolve()

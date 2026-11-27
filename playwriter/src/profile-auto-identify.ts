@@ -10,11 +10,13 @@ type IdentifyProfile = (key: string) => Promise<string | null>
 
 /** Resolve a key directly or verify each connected Chrome profile at selection time. */
 export async function selectBrowserOption({
-  key, options, identify,
+  key, options, identify, verifiedConnections,
 }: {
   key: string
   options: BrowserOption[]
   identify?: IdentifyProfile
+  /** Browser key to the extension connection its cached name was verified on. */
+  verifiedConnections?: Record<string, string>
 }): Promise<BrowserOption> {
   const exact = options.find((option) => option.key === key)
   if (exact) return exact
@@ -24,6 +26,14 @@ export async function selectBrowserOption({
   const chromeProfiles = options.filter((option) => option.type === 'extension' && option.browser === 'Chrome')
   if (!identify || !chromeProfiles.length) {
     throw new Error(`Browser not found: ${key}. ${useKey}`)
+  }
+
+  // A name verified on this same extension connection is trusted: the profile behind a live connection
+  // cannot change. A rename shows up after the extension reconnects. Any other doubt falls back to probes.
+  const named = chromeProfiles.filter((option) => option.profileName === key)
+  const everyNameKnown = chromeProfiles.every((option) => option.profileName)
+  if (named.length === 1 && everyNameKnown && named[0].connectionId && verifiedConnections?.[named[0].key] === named[0].connectionId) {
+    return named[0]
   }
 
   const matches: BrowserOption[] = []

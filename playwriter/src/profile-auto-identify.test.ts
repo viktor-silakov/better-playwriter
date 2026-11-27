@@ -60,6 +60,24 @@ describe('browser selection', () => {
     expect(identify).toHaveBeenCalledWith(second.key)
   })
 
+  it('trusts a name verified on the same extension connection and probes again after a reconnect', async () => {
+    const work: BrowserOption = { ...first, connectionId: 'c1' }
+    const personal: BrowserOption = { ...second, profile: 'Personal', profileName: 'Personal', connectionId: 'c2' }
+    const identify = vi.fn(async (key: string) => key === work.key ? 'Work' : 'Personal')
+    const verifiedConnections = { [work.key]: 'c1' }
+    await expect(selectBrowserOption({ key: 'Work', options: [work, personal], identify, verifiedConnections })).resolves.toBe(work)
+    expect(identify).not.toHaveBeenCalled()
+
+    const reconnected: BrowserOption = { ...work, connectionId: 'c3' }
+    await expect(selectBrowserOption({ key: 'Work', options: [reconnected, personal], identify, verifiedConnections })).resolves.toBe(reconnected)
+    expect(identify).toHaveBeenCalledWith(work.key)
+
+    // A profile with no known name may carry the requested one, so it is still probed.
+    identify.mockClear()
+    await expect(selectBrowserOption({ key: 'Work', options: [work, second], identify, verifiedConnections })).resolves.toBe(work)
+    expect(identify).toHaveBeenCalledWith(second.key)
+  })
+
   it('rejects duplicate and unverifiable names and shows the stable keys', async () => {
     await expect(selectBrowserOption({ key: 'Work', options, identify: async () => 'Work' }))
       .rejects.toThrow(/Multiple Chrome profiles.*install:Chrome:one, install:Chrome:two/)

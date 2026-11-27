@@ -19,7 +19,7 @@ import {
   type ExtensionStatus,
 } from './relay-client.js'
 import { discoverChromeInstances, resolveDirectInput, type DiscoveredInstance } from './chrome-discovery.js'
-import { readLocalProfileNames } from './profile-labels.js'
+import { readLocalProfileNames, readVerifiedConnections, saveVerifiedConnection } from './profile-labels.js'
 
 const STATUS_TIMEOUT_MS = 2000
 const SESSION_EXTENSION_WAIT_MS = 20_000
@@ -168,6 +168,8 @@ export interface BrowserOption {
   profileName?: string
   /** Extension entries. null means the relay's only (legacy) extension */
   extensionId?: string | null
+  /** Extension entries: the relay's id for the current extension connection. Changes on every reconnect. */
+  connectionId?: string
   /** Direct CDP entries */
   wsUrl?: string
   profiles?: Array<{ name: string; email: string }>
@@ -182,6 +184,24 @@ function extensionToBrowserOption(extension: ExtensionStatus, names: Record<stri
     profile: name || '(profile unknown)',
     profileName: name,
     extensionId: extension.extensionId === 'default' ? null : extension.stableKey || extension.extensionId,
+    connectionId: extension.stableKey && extension.extensionId !== 'default' ? extension.extensionId : undefined,
+  }
+}
+
+/** Probe a profile name and remember which extension connection it was verified on. */
+function identifyAndRemember(options: BrowserOption[], relay: RelayTarget): (key: string) => Promise<string | null> {
+  return async (key) => {
+    const { identifyLocalChromeProfile } = await import('./profile-identify.js')
+    const name = await identifyLocalChromeProfile(key, relay)
+    const connectionId = options.find((option) => option.key === key)?.connectionId
+    if (name && connectionId) {
+      try {
+        saveVerifiedConnection(key, connectionId)
+      } catch {
+        // Without the record the next selection by name probes again.
+      }
+    }
+    return name
   }
 }
 
@@ -264,9 +284,8 @@ export async function discoverBrowserOptions({
     ...headless,
   ]
   if (identifyProfiles && isLocalRelay(relay) && process.platform === 'darwin') {
-    const { identifyLocalChromeProfile } = await import('./profile-identify.js')
     const { identifyUnknownProfiles } = await import('./profile-auto-identify.js')
-    await identifyUnknownProfiles(options, (key) => identifyLocalChromeProfile(key, relay))
+    await identifyUnknownProfiles(options, identifyAndRemember(options, relay))
   }
   return { options, warnings }
 }
@@ -471,9 +490,8 @@ export async function newSession(options: NewSessionOptions): Promise<NewSession
   if (extensions.length === 1 && !browser) {
     const option = extensionToBrowserOption(extensions[0], local ? readLocalProfileNames() : {})
     if (local && process.platform === 'darwin' && option.key.startsWith('install:Chrome:') && !option.profileName) {
-      const { identifyLocalChromeProfile } = await import('./profile-identify.js')
       const { identifyUnknownProfiles } = await import('./profile-auto-identify.js')
-      await identifyUnknownProfiles([option], (key) => identifyLocalChromeProfile(key, relay))
+      await identifyUnknownProfiles([option], identifyAndRemember([option], relay))
     }
     return createFromOption(option)
   }
@@ -497,18 +515,16 @@ export async function newSession(options: NewSessionOptions): Promise<NewSession
     }
     const { selectBrowserOption } = await import('./profile-auto-identify.js')
     const identifyProfile = local && process.platform === 'darwin' && !browser.startsWith('direct:')
-      ? (await import('./profile-identify.js')).identifyLocalChromeProfile
-      : undefined
-    const identify = identifyProfile ? (key: string) => identifyProfile(key, relay) : undefined
-    return createFromOption(await selectBrowserOption({ key: browser, options: allOptions, identify }))
+    const identify = identifyProfile ? identifyAndRemember(allOptions, relay) : undefined
+    const verifiedConnections = identifyProfile ? readVerifiedConnections() : undefined
+    return createFromOption(await selectBrowserOption({ key: browser, options: allOptions, identify, verifiedConnections }))
   }
   if (allOptions.length === 0) {
     throw new ExtensionNotConnectedError()
   }
   if (local && process.platform === 'darwin') {
-    const { identifyLocalChromeProfile } = await import('./profile-identify.js')
     const { identifyUnknownProfiles } = await import('./profile-auto-identify.js')
-    await identifyUnknownProfiles(allOptions, (key) => identifyLocalChromeProfile(key, relay))
+    await identifyUnknownProfiles(allOptions, identifyAndRemember(allOptions, relay))
   }
   return { kind: 'choose', message: 'Multiple browsers detected:', options: allOptions, warnings }
 }

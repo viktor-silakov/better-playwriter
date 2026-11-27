@@ -6,7 +6,7 @@ Start with `better-playwriter doctor --browser <key>` to check the relay, profil
 
 ```bash
 better-playwriter logfile  # prints the log file path
-# typically: ~/.better-playwriter/relay-server.log
+# typically: ~/.better-playwriter/relay-server.log (relay-server-<port>.log on a non-default port)
 ```
 
 The relay log contains logs from the extension, MCP and WS server. A separate CDP JSONL log is created alongside it (see `better-playwriter logfile`) with all CDP commands/responses and events, with long strings truncated. Both files are recreated every time the server starts. For debugging internal better-playwriter errors, read these files with grep/rg to find relevant lines.

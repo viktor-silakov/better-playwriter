@@ -450,6 +450,12 @@ export function formatValue(value: unknown): string {
 }
 
 /** Format captured console calls, folding identical consecutive lines into `(xN)`. */
+/**
+ * Below the default execute timeout, so a missing element fails with its own locator error and call log
+ * instead of the generic execute timeout. Slow waits pass an explicit timeout.
+ */
+export const DEFAULT_ACTION_TIMEOUT_MS = 5000
+
 export function formatConsoleLogs({
   logs,
   title = 'Console output',
@@ -1239,7 +1245,7 @@ export class PlaywrightExecutor {
       const contexts = browser.contexts()
       const context = contexts.length > 0 ? contexts[0] : await browser.newContext()
 
-      context.setDefaultTimeout(60000)
+      context.setDefaultTimeout(DEFAULT_ACTION_TIMEOUT_MS)
       context.setDefaultNavigationTimeout(10000)
 
       context.on('page', (page) => {
@@ -1272,7 +1278,7 @@ export class PlaywrightExecutor {
     // Action timeout (click, fill, hover, etc.) is longer to tolerate slower
     // SPA/Turbo navigations and post-click settling on real sites.
     // Navigation timeout (goto, reload) remains separate.
-    context.setDefaultTimeout(60000)
+    context.setDefaultTimeout(DEFAULT_ACTION_TIMEOUT_MS)
     context.setDefaultNavigationTimeout(10000)
 
     context.on('page', (page) => {
@@ -1297,7 +1303,7 @@ export class PlaywrightExecutor {
 
     const context = await browser.newContext()
     try {
-      context.setDefaultTimeout(60000)
+      context.setDefaultTimeout(DEFAULT_ACTION_TIMEOUT_MS)
       context.setDefaultNavigationTimeout(10000)
 
       context.on('page', (page) => {
@@ -2362,11 +2368,16 @@ export class PlaywrightExecutor {
     if (!pages || pages.size === 0) {
       return
     }
+    const probeStartedAt = Date.now()
     const outcomes = await Promise.all(
       [...pages].map((page) => {
         return detectChallenge({ page, deadline, signal }).catch(() => undefined)
       }),
     )
+    const probeMs = Date.now() - probeStartedAt
+    if (probeMs >= 100) {
+      this.logger.log(`[Executor] Bot challenge check took ${probeMs}ms for ${pages.size} page(s)`)
+    }
     for (const outcome of outcomes) {
       if (!outcome) {
         continue
