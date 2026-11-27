@@ -14,12 +14,14 @@ import type { ExtensionState, ConnectionState, TabState, TabInfo } from './types
 import { DEFAULT_RELAY_PORT } from 'better-playwriter/src/brand'
 import { initPlaywriterToolbar } from './toolbar/toolbar'
 import type { CDPEvent, Protocol } from 'better-playwriter/src/cdp-types'
+import { EXECUTION_BADGE_CAPABILITY, type CancelExecutionMessage, type ExecutionBadge, type ExecutionBadgeMessage } from 'better-playwriter/src/execution-protocol'
 import type { CloseTabsForKeyResult, ExtensionCommandMessage, ExtensionResponseMessage } from 'better-playwriter/src/protocol'
 import {
   DEFAULT_TAB_GROUP_TITLE,
   EXTENSION_INVENTORY_FAILED_CLOSE,
   EXTENSION_INVENTORY_TIMEOUT_CLOSE,
   INVENTORY_READY_CAPABILITY,
+  TAB_ASSIGNMENT_CAPABILITY,
   REMOVED_GHOST_BROWSER_RESULT,
   colorForTabGroupTitle,
   normalizeTabGroupColor,
@@ -28,9 +30,17 @@ import {
   shouldDisconnectAfterTabGroupChange,
   shouldUpdateTabGroupForTab,
   type CreateInitialTabParams,
+  type TabAssignmentChoice,
   type UpdateTabGroupResult,
 } from 'better-playwriter/src/protocol'
 import { RemoteTunnel } from './remote-tunnel'
+import {
+  AUTO_ATTACH_STORAGE_KEY,
+  autoAttachMaskForUrl,
+  matchesAutoAttachMask,
+  readAutoAttachSettings,
+  type AutoAttachSettings,
+} from 'better-playwriter/src/auto-attach-rules'
 import {
   canReattach,
   endTabSession,
@@ -429,7 +439,7 @@ class ConnectionManager {
     if (typeof __PLAYWRITER_VERSION__ !== 'undefined') {
       relayUrl.searchParams.set('v', __PLAYWRITER_VERSION__)
     }
-    relayUrl.searchParams.set('capabilities', INVENTORY_READY_CAPABILITY)
+    relayUrl.searchParams.set('capabilities', [INVENTORY_READY_CAPABILITY, EXECUTION_BADGE_CAPABILITY, TAB_ASSIGNMENT_CAPABILITY].join(','))
     logger.debug('Creating WebSocket connection to:', relayUrl)
     const socket = new WebSocket(relayUrl.toString())
 
@@ -481,10 +491,13 @@ class ConnectionManager {
             : new Error(`WebSocket closed: ${event.reason || event.code}`)
         rejectConnection(error)
         if (this.ws === socket && attemptId === this.currentAttemptId) {
+          resetAssignmentRequestsOnSnapshot = true
           // Recordings live in the relay, so they end with it.
-          recorderActive = false
-          skillRecordingId = null
-          setRecorderStateInAllTabs(false)
+          const recordingTargets = [...skillRecordings.keys()]
+          skillRecordings.clear()
+          for (const targetId of recordingTargets) {
+            updateTabRecorderToolbar(targetId)
+          }
           this.handleClose(event.reason, event.code)
         }
       }
@@ -541,6 +554,11 @@ class ConnectionManager {
   }
 
   private handleClose(reason: string, code: number): void {
+    for (const tabId of executionBadges.keys()) {
+      executionBadges.delete(tabId)
+      refreshExecutionBadge(tabId)
+    }
+    updateContextMenuVisibility()
     // Log memory at disconnect time to help diagnose memory-related terminations
     try {
       // @ts-ignore - performance.memory is Chrome-specific
@@ -823,6 +841,7 @@ function sendToLocalRelay(message: any): void {
 }
 
 const localRelaySink: RelayMessageSink = { send: sendToLocalRelay }
+const executionBadges = new Map<number, { targetId: string; badge: ExecutionBadge }>()
 
 function resolveTabGroupKey({ key, remote }: { key: string | undefined; remote: boolean }): string | undefined {
   if (!key) {
@@ -858,6 +877,44 @@ async function dispatchRelayMessage(message: any, sink: RelayMessageSink): Promi
     return
   }
 
+  if (message.method === 'tabAssignmentOptions') {
+    if (sink === localRelaySink) {
+      const { choices, assignments } = message.params as { choices: TabAssignmentChoice[]; assignments: Array<{ targetId: string; sessionId: string }> }
+      tabAssignments = new Map(assignments.map(({ targetId, sessionId }) => [targetId, sessionId]))
+      if (resetAssignmentRequestsOnSnapshot) {
+        pendingTabAssignments.clear()
+        resetAssignmentRequestsOnSnapshot = false
+      }
+      setTabAssignmentChoices(choices)
+    }
+    return
+  }
+
+  if (message.method === 'tabAssignmentResult') {
+    if (sink === localRelaySink) {
+      const { targetId, sessionId, error } = message.params
+      pendingTabAssignments.delete(targetId)
+      const tabId = [...store.getState().tabs].find(([, info]) => info.targetId === targetId)?.[0]
+      if (tabId !== undefined) await toastTab(tabId, error ?? (sessionId ? `Assigned to session ${sessionId}` : 'Tab released'))
+    }
+    return
+  }
+
+  if (message.method === 'executionBadge') {
+    if (sink !== localRelaySink) return
+    const { targetId, badge } = (message as ExecutionBadgeMessage).params
+    const target = getTabByTargetId(targetId)
+    if (!target) return
+    if (badge) {
+      executionBadges.set(target.tabId, { targetId, badge })
+    } else {
+      executionBadges.delete(target.tabId)
+    }
+    refreshExecutionBadge(target.tabId)
+    if (target.tabId === store.getState().currentTabId) updateContextMenuVisibility()
+    return
+  }
+
   if (message.method === 'forwardCDPCommand' && message.params?.method === 'Page.screencastFrameAck') {
     // Frames are ACKed once in onDebuggerEvent; duplicate ACKs make Chromium's in-flight counter negative.
     if (message.id !== undefined) {
@@ -866,13 +923,20 @@ async function dispatchRelayMessage(message: any, sink: RelayMessageSink): Promi
     return
   }
 
-  // Relay notifies us when action recording starts/stops: update the toolbars.
-  if (message.method === 'setRecorderState') {
-    recorderActive = !!(message.params as { recording?: boolean })?.recording
-    if (!recorderActive) {
-      skillRecordingId = null
+  if (message.method === 'setTabRecorderState') {
+    const { targetId, recordingId } = message.params ?? {}
+    if (sink === localRelaySink && typeof targetId === 'string') {
+      if (typeof recordingId === 'string') {
+        skillRecordings.set(targetId, recordingId)
+      } else {
+        skillRecordings.delete(targetId)
+      }
+      updateTabRecorderToolbar(targetId)
     }
-    setRecorderStateInAllTabs(recorderActive)
+    return
+  }
+  // Compatibility with relays or CLI recordings that report a context-wide recording.
+  if (message.method === 'setRecorderState') {
     return
   }
 
@@ -1746,9 +1810,12 @@ function onDebuggerDetach(source: chrome.debugger.Debuggee, reason: `${chrome.de
     debuggerCancellation = new AbortController()
     stopRemoteControl()
     for (const [detachedTabId, tab] of store.getState().tabs.entries()) {
+      pausedAutoAttachTabs.add(detachedTabId)
+      clearAutomaticTab(detachedTabId)
       detachTabFromPlaywright(detachedTabId, tab)
     }
 
+    saveAutoAttachPauses()
     store.setState({ tabs: new Map(), connectionState: 'idle', errorText: undefined })
     return
   }
@@ -1972,6 +2039,8 @@ async function attachTabDebugger(
   tabId: number,
   { skipAttachedEvent = false, sessionId: reusedSessionId, signal = debuggerCancellation.signal }: AttachTabOptions = {},
 ): Promise<AttachTabResult> {
+  const automatic = automaticTabs.get(tabId)
+  if (automatic) signal = AbortSignal.any([signal, automatic.abort.signal])
   const debuggee = { tabId }
   let debuggerAttached = false
 
@@ -2027,6 +2096,12 @@ async function attachTabDebugger(
     signal.throwIfAborted()
 
     const targetInfo = result.targetInfo
+    if (remoteTunnel && tabAssignments.has(targetInfo.targetId)) {
+      throw new Error('Release this tab from its local session before sharing it.')
+    }
+    if (automatic && !matchesAutoAttachMask(targetInfo.url, automatic.masks)) {
+      throw new Error('Tab navigated outside its auto-connect masks')
+    }
 
     // Log error if URL is empty - this causes Playwright to create broken pages
     if (!targetInfo.url || targetInfo.url === '' || targetInfo.url === ':') {
@@ -2089,6 +2164,7 @@ async function attachTabDebugger(
       skipAttachedEvent,
     )
 
+    rememberManuallyAttachedTab(tabId, targetInfo.url)
     injectToolbar(tabId)
 
     return { targetInfo, sessionId }
@@ -2105,6 +2181,7 @@ async function attachTabDebugger(
 
 function detachTab(tabId: number, shouldDetachDebugger: boolean): void {
   userApprovedExtensionPageTabs.delete(tabId)
+  clearAutomaticTab(tabId)
   const tab = store.getState().tabs.get(tabId)
   if (!tab) {
     logger.debug('detachTab: tab not found in map:', tabId)
@@ -2162,13 +2239,9 @@ function detachTab(tabId: number, shouldDetachDebugger: boolean): void {
   }
 }
 
-// Skill recorder state for the icon menu and the in-page toolbar. The relay reports
-// every start/stop (CLI, menu or toolbar) via setRecorderState. skillRecordingId is
-// the recording the menu or toolbar started, passed back on stop so it is never
-// ambiguous with other recordings.
-let recorderActive = false
-let skillRecordingId: string | null = null
-let skillRecordingStartInFlight = false
+// The toolbar controls only the recording it started in this tab.
+const skillRecordings = new Map<string, string>()
+const skillRecordingStarts = new Set<string>()
 
 // Inject the in-page toolbar into the ISOLATED world (best-effort: silently
 // fails on restricted pages like chrome:// or about:blank)
@@ -2190,6 +2263,7 @@ function injectToolbar(tabId: number): void {
 
 // Sync service-worker state into the isolated toolbar after injection.
 function syncToolbarState(tabId: number): void {
+  const targetId = store.getState().tabs.get(tabId)?.targetId
   chrome.scripting
     .executeScript({
       target: { tabId, allFrames: false },
@@ -2198,7 +2272,7 @@ function syncToolbarState(tabId: number): void {
         window.__playwriterToolbarSetRecording?.(recording)
         window.__playwriterToolbarSetRemote?.(remoteActive)
       },
-      args: [recorderActive, remoteTunnel !== null],
+      args: [targetId ? skillRecordings.has(targetId) : false, remoteTunnel !== null],
     })
     .catch(() => {})
 }
@@ -2213,18 +2287,12 @@ function getConnectedTabIds(): number[] {
     })
 }
 
-function setRecorderStateInAllTabs(recording: boolean): void {
-  for (const tabId of getConnectedTabIds()) {
-    chrome.scripting
-      .executeScript({
-        target: { tabId, allFrames: false },
-        world: 'ISOLATED',
-        func: (rec: boolean) => {
-          window.__playwriterToolbarSetRecording?.(rec)
-        },
-        args: [recording],
-      })
-      .catch(() => {})
+function updateTabRecorderToolbar(targetId: string): void {
+  for (const [tabId, tab] of store.getState().tabs) {
+    if (tab.targetId === targetId) {
+      syncToolbarState(tabId)
+      break
+    }
   }
 }
 
@@ -2259,9 +2327,11 @@ function playToolbarSound(tabId: number, name: string): void {
 
 async function connectTab(
   tabId: number,
-  options?: { groupTitle?: string; groupKey?: string; groupColor?: chrome.tabGroups.ColorEnum },
+  options?: { groupTitle?: string; groupKey?: string; groupColor?: chrome.tabGroups.ColorEnum; signal?: AbortSignal },
 ): Promise<void> {
-  const signal = debuggerCancellation.signal
+  const signal = options?.signal
+    ? AbortSignal.any([debuggerCancellation.signal, options.signal])
+    : debuggerCancellation.signal
   try {
     logger.debug(`Starting connection to tab ${tabId}`)
 
@@ -2608,6 +2678,9 @@ async function startRemoteControl(
     setRemoteStateInAllTabs(true)
     return { url: remoteTunnel.tunnel.url, started: false, id: remoteTunnel.tunnelId }
   }
+  if (pendingTabAssignments.size || [...store.getState().tabs.values()].some((tab) => tab.targetId && tabAssignments.has(tab.targetId))) {
+    throw new Error('Release assigned tabs before sharing the browser.')
+  }
 
   const tunnelId = options.tunnelId || generateTunnelId()
   const tunnel = new RemoteTunnel({
@@ -2655,6 +2728,12 @@ async function startRemoteControl(
   // Set before attaching so the maintain loop and relay-close handling keep
   // these tabs 'connected' without a local relay: the tunnel is the consumer.
   remoteTunnel = runtime
+  // Local URL masks never expand a remote share. The user chose the anchor
+  // explicitly, so it is the only automatic tab that can enter the share.
+  for (const tabId of automaticTabs.keys()) {
+    if (tabId === anchorTabId) automaticTabs.delete(tabId)
+    else detachTab(tabId, true)
+  }
   // The tunnel is the consumer, so the anchor attaches even without a local relay.
   if (store.getState().tabs.get(anchorTabId)?.state !== 'connected') {
     try {
@@ -2732,6 +2811,7 @@ function stopRemoteControl(): boolean {
     })
   }
   logger.log('Remote control stopped, anchor tab', runtime.anchorTabId)
+  void refreshAutomaticTabs().catch(() => logger.debug('Could not resume automatic tab connections'))
   return true
 }
 
@@ -2981,8 +3061,27 @@ function updateTabIcon({ tabId, tabUrl }: { tabId: number; tabUrl: string | unde
     return iconConfig.title
   })()
 
-  // No badge of its own: the tab shows the default badge, the connected tab count
-  setActionIcon({ tabId, iconConfig, title, badgeText: iconConfig.badgeText || undefined })
+  const activity = iconConfig === icons.connected ? getExecutionBadge(tabId) : undefined
+  const waiting = activity?.badge.state === 'waiting'
+  setActionIcon({
+    tabId,
+    iconConfig,
+    title: activity ? (waiting ? 'Better Playwriter is waiting for you' : 'Better Playwriter is running') : title,
+    badgeText: activity ? (waiting ? 'WAIT' : 'RUN') : iconConfig.badgeText || undefined,
+  })
+}
+
+function getExecutionBadge(tabId: number) {
+  const activity = executionBadges.get(tabId)
+  const tab = store.getState().tabs.get(tabId)
+  return activity && tab?.targetId === activity.targetId && tab.state === 'connected' ? activity : undefined
+}
+
+function refreshExecutionBadge(tabId: number): void {
+  void chrome.tabs.get(tabId).then(
+    (tab) => updateTabIcon({ tabId, tabUrl: tab.url }),
+    () => {},
+  )
 }
 
 /** Sets the default icon and every tab's icon. Runs at startup and when extension-replaced toggles. */
@@ -3005,7 +3104,7 @@ function updateIconsForStoreChange({ state, prevState }: { state: ExtensionState
   for (const tabId of new Set([...prevState.tabs.keys(), ...state.tabs.keys()])) {
     const prev = prevState.tabs.get(tabId)
     const next = state.tabs.get(tabId)
-    if (prev?.state === next?.state && prev?.errorText === next?.errorText) continue
+    if (prev?.state === next?.state && prev?.errorText === next?.errorText && prev?.targetId === next?.targetId) continue
     // The URL decides the restricted icon. A closed tab rejects and needs no icon
     chrome.tabs.get(tabId).then(
       (tab) => updateTabIcon({ tabId, tabUrl: tab.url }),
@@ -3015,7 +3114,10 @@ function updateIconsForStoreChange({ state, prevState }: { state: ExtensionState
 }
 
 async function onTabRemoved(tabId: number): Promise<void> {
+  executionBadges.delete(tabId)
   popupSourceTabMap.delete(tabId)
+  clearAutomaticTab(tabId)
+  if (pausedAutoAttachTabs.delete(tabId)) saveAutoAttachPauses()
   forgetRemoteTab(tabId)
   const { tabs } = store.getState()
   if (!tabs.has(tabId)) return
@@ -3028,6 +3130,110 @@ async function onTabActivated(activeInfo: chrome.tabs.TabActiveInfo): Promise<vo
 }
 
 const TUTORIAL_PAGE_PATH = 'src/tutorial.html'
+
+const AUTO_ATTACH_PAUSED_TABS_KEY = 'playwriterAutoAttachPausedTabs'
+const pausedAutoAttachTabs = new Set<number>()
+const automaticTabs = new Map<number, { abort: AbortController; masks: string[] }>()
+const pendingAutoAttachMasks = new Map<number, string>()
+const autoAttachPausesReady = withTimeout(chrome.storage.session.get(AUTO_ATTACH_PAUSED_TABS_KEY), 2000, {})
+  .then((stored: Record<string, unknown>) => {
+    const tabIds = stored[AUTO_ATTACH_PAUSED_TABS_KEY]
+    if (Array.isArray(tabIds)) {
+      for (const tabId of tabIds) {
+        if (typeof tabId === 'number') pausedAutoAttachTabs.add(tabId)
+      }
+    }
+  })
+let autoAttachSettingsQueue: Promise<void> = Promise.resolve()
+
+async function loadAutoAttachSettings(): Promise<AutoAttachSettings> {
+  const values = await chrome.storage.local.get(AUTO_ATTACH_STORAGE_KEY)
+  return readAutoAttachSettings(values[AUTO_ATTACH_STORAGE_KEY])
+}
+
+function updateAutoAttachSettings(update: (settings: AutoAttachSettings) => AutoAttachSettings): Promise<void> {
+  const write = autoAttachSettingsQueue.then(async () => {
+    const current = await loadAutoAttachSettings()
+    const next = update(current)
+    if (next !== current) await chrome.storage.local.set({ [AUTO_ATTACH_STORAGE_KEY]: next })
+  })
+  autoAttachSettingsQueue = write.catch(() => {})
+  return write
+}
+
+function saveAutoAttachPauses(): void {
+  void autoAttachPausesReady
+    .then(() => chrome.storage.session.set({ [AUTO_ATTACH_PAUSED_TABS_KEY]: [...pausedAutoAttachTabs] }))
+    .catch(() => {})
+}
+
+function clearAutomaticTab(tabId: number): void {
+  pendingAutoAttachMasks.delete(tabId)
+  automaticTabs.get(tabId)?.abort.abort(new Error('Automatic tab connection ended'))
+  automaticTabs.delete(tabId)
+}
+
+function rememberManuallyAttachedTab(tabId: number, url: string): void {
+  const mask = pendingAutoAttachMasks.get(tabId)
+  pendingAutoAttachMasks.delete(tabId)
+  if (!mask || mask !== autoAttachMaskForUrl(url)) return
+  void updateAutoAttachSettings((settings) => {
+    if (!settings.remember || settings.masks.includes(mask)) return settings
+    return { ...settings, masks: [...settings.masks, mask] }
+  }).catch(() => logger.debug('Could not remember automatic tab connection'))
+}
+
+async function connectManualTab(tabId: number, tab: chrome.tabs.Tab): Promise<void> {
+  await autoAttachPausesReady
+  if (pausedAutoAttachTabs.delete(tabId)) saveAutoAttachPauses()
+  const mask = tab.incognito ? null : autoAttachMaskForUrl(tab.url)
+  if (mask) pendingAutoAttachMasks.set(tabId, mask)
+  await connectTab(tabId)
+}
+
+async function syncAutomaticTab(tabId: number, settings: AutoAttachSettings): Promise<void> {
+  if (remoteTunnel) return
+  const tab = await chrome.tabs.get(tabId).catch(() => undefined)
+  if (!tab || tab.incognito || remoteTunnel) return
+
+  const matches = !isRestrictedUrl(tab.url) && matchesAutoAttachMask(tab.url, settings.masks)
+  if (automaticTabs.has(tabId)) {
+    if (!matches) await disconnectTab(tabId)
+    return
+  }
+  if (!matches || tab.status !== 'complete' || pausedAutoAttachTabs.has(tabId) || store.getState().tabs.has(tabId)) return
+
+  // Tabs opened in an agent's group inherit its session instead of becoming shared.
+  if (tab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) {
+    const group = await chrome.tabGroups.get(tab.groupId).catch(() => undefined)
+    if (group?.title && (await getManagedTabGroupTitles()).has(group.title)) return
+    if (remoteTunnel || pausedAutoAttachTabs.has(tabId) || store.getState().tabs.has(tabId)) return
+  }
+  const automatic = { abort: new AbortController(), masks: settings.masks }
+  automaticTabs.set(tabId, automatic)
+  await connectTab(tabId, { signal: automatic.abort.signal })
+  if (automaticTabs.get(tabId) === automatic) {
+    const state = store.getState().tabs.get(tabId)?.state
+    if (state === 'error') await disconnectTab(tabId)
+    else if (!state) clearAutomaticTab(tabId)
+  }
+}
+
+async function refreshAutomaticTabs(): Promise<void> {
+  if (remoteTunnel) return
+  await autoAttachPausesReady
+  const settings = await loadAutoAttachSettings()
+  if (settings.masks.length === 0 && automaticTabs.size === 0) return
+  const tabs = await chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] })
+  for (const tab of tabs) {
+    if (tab.id !== undefined) await syncAutomaticTab(tab.id, settings)
+  }
+}
+
+function pauseAutomaticTab(tabId: number): void {
+  pausedAutoAttachTabs.add(tabId)
+  saveAutoAttachPauses()
+}
 
 // Icon only attaches a tab. Daemon starts on the first playwriter command.
 function shouldOpenTutorialPage(): boolean {
@@ -3085,25 +3291,32 @@ async function onActionClicked(tab: chrome.tabs.Tab): Promise<void> {
   if (connectionState === 'extension-replaced') {
     logger.debug('Clearing extension-replaced state, attempting to reconnect')
     store.setState({ connectionState: 'idle', errorText: undefined })
-    await connectTab(tab.id)
+    await connectManualTab(tab.id, tab)
     return
   }
 
   if (tabInfo?.state === 'error') {
     logger.debug('Tab has error - disconnecting to clear state')
+    pauseAutomaticTab(tab.id)
     await disconnectTab(tab.id)
     return
   }
 
   if (tabInfo?.state === 'connecting') {
+    if (automaticTabs.has(tab.id)) {
+      pauseAutomaticTab(tab.id)
+      await disconnectTab(tab.id)
+      return
+    }
     logger.debug('Tab is already connecting, ignoring click')
     return
   }
 
   if (tabInfo?.state === 'connected') {
+    pauseAutomaticTab(tab.id)
     await disconnectTab(tab.id)
   } else {
-    await connectTab(tab.id)
+    await connectManualTab(tab.id, tab)
   }
 }
 
@@ -3118,7 +3331,7 @@ if (import.meta.env.TESTING) {
 }
 
 // resetDebugger detaches everything, so remote tabs must be restored after it.
-void resetDebugger().then(() => {
+const debuggerStartup = resetDebugger().then(() => {
   return restoreRemoteTunnelAfterRestart()
 }).finally(() => {
   // Startup sync: clean leftover managed groups from a previous SW/browser
@@ -3128,6 +3341,7 @@ void resetDebugger().then(() => {
     logger.debug('startup syncTabGroup error:', e)
   })
 })
+void debuggerStartup.then(refreshAutomaticTabs).catch(() => logger.debug('Could not initialize automatic tab connections'))
 void connectionManager.maintainLoop()
 
 // ============================================================================
@@ -3159,7 +3373,18 @@ const MENU = {
   copyRemotePrompt: 'playwriter-copy-remote-prompt',
   copyRemoteId: 'playwriter-copy-remote-id',
   stopSharing: 'playwriter-stop-sharing',
+  stopAgent: 'playwriter-stop-agent',
+  assignTab: 'playwriter-assign-tab',
+  releaseTab: 'playwriter-release-tab',
 } as const
+
+const ASSIGN_TAB_ITEM_PREFIX = 'playwriter-assign-tab:'
+let tabAssignments = new Map<string, string>()
+const pendingTabAssignments = new Set<string>()
+let resetAssignmentRequestsOnSnapshot = false
+let assignmentChoices: TabAssignmentChoice[] = []
+let currentAssignmentMenuIds: string[] = []
+let assignmentMenuUpdate = Promise.resolve()
 
 const PAGE_MENU_CONTEXTS: chrome.contextMenus.CreateProperties['contexts'] = [
   'page',
@@ -3214,7 +3439,39 @@ const menusReady: Promise<void> = chrome.contextMenus.removeAll().then(() => {
     contexts: SHARED_MENU_CONTEXTS,
     visible: false,
   })
+  chrome.contextMenus.create({
+    id: MENU.stopAgent,
+    title: 'Stop agent: cancel the current run',
+    contexts: ['action'],
+    visible: false,
+  })
+  chrome.contextMenus.create({
+    id: MENU.assignTab,
+    title: 'Assign tab to session',
+    contexts: ['action'],
+    visible: false,
+  })
+  chrome.contextMenus.create({
+    id: MENU.releaseTab,
+    parentId: MENU.assignTab,
+    title: 'Release to all local sessions',
+    contexts: ['action'],
+  })
 })
+
+function setTabAssignmentChoices(choices: TabAssignmentChoice[]): void {
+  assignmentChoices = choices
+  assignmentMenuUpdate = assignmentMenuUpdate.then(async () => {
+    await menusReady
+    await Promise.all(currentAssignmentMenuIds.map((id) => chrome.contextMenus.remove(id).catch(() => {})))
+    currentAssignmentMenuIds = assignmentChoices.map(({ sessionId, label }) => {
+      const id = ASSIGN_TAB_ITEM_PREFIX + sessionId
+      chrome.contextMenus.create({ id, parentId: MENU.assignTab, title: label, contexts: ['action'] })
+      return id
+    })
+    updateContextMenuVisibility()
+  }).catch((error) => logger.debug('Could not update tab assignment menu:', error))
+}
 
 function updateMenus(updates: Array<[string, Omit<chrome.contextMenus.CreateProperties, 'id'>]>): void {
   void menusReady
@@ -3232,8 +3489,15 @@ function updateMenus(updates: Array<[string, Omit<chrome.contextMenus.CreateProp
 
 function updateContextMenuVisibility(): void {
   const { currentTabId, tabs } = store.getState()
-  const isConnected = currentTabId !== undefined && tabs.get(currentTabId)?.state === 'connected'
-  updateMenus([[MENU.copyReactSource, { visible: isConnected }]])
+  const activeTab = currentTabId === undefined ? undefined : tabs.get(currentTabId)
+  const isConnected = activeTab?.state === 'connected'
+  updateMenus([
+    [MENU.copyReactSource, { visible: isConnected }],
+    [MENU.stopAgent, { visible: currentTabId !== undefined && Boolean(getExecutionBadge(currentTabId)) }],
+    [MENU.assignTab, { visible: isConnected && !activeTab?.groupKey && !remoteTunnel &&
+      connectionManager.ws?.readyState === WebSocket.OPEN && assignmentChoices.length > 0 }],
+    [MENU.releaseTab, { enabled: Boolean(activeTab?.targetId && tabAssignments.has(activeTab.targetId)) }],
+  ])
 }
 
 function updateSharingMenus(): void {
@@ -3244,6 +3508,7 @@ function updateSharingMenus(): void {
     [MENU.copyRemoteId, { visible: sharing }],
     [MENU.stopSharing, { visible: sharing }],
   ])
+  updateContextMenuVisibility()
 }
 updateSharingMenus()
 
@@ -3372,55 +3637,62 @@ async function copyElementLocator(options: { info: chrome.contextMenus.OnClickDa
 
 // Started from the toolbar, which only shows on attached tabs. The toolbar plays its own sound.
 async function startSkillRecording(tabId: number): Promise<void> {
-  if (skillRecordingStartInFlight) {
+  const targetId = store.getState().tabs.get(tabId)?.targetId
+  if (!targetId) {
+    await toastTab(tabId, 'Reconnect this tab first')
     return
   }
-  if (recorderActive) {
-    setRecorderStateInAllTabs(true)
+  if (skillRecordingStarts.has(targetId) || skillRecordings.has(targetId)) {
     return
   }
-  skillRecordingStartInFlight = true
+  skillRecordingStarts.add(targetId)
   try {
-    const response = await fetch(`http://${RELAY_HOST}:${RELAY_PORT}/recorder/start`, {
+    const { installId } = await getExtensionIdentity()
+    const response = await fetch(`http://${RELAY_HOST}:${RELAY_PORT}/recorder/tab/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: '{}',
+      body: JSON.stringify({ installId, targetId }),
     })
     const result = (await response.json().catch(() => {
       return {}
     })) as { error?: string; recordingId?: string }
     if (!response.ok || !result.recordingId) {
       logger.error('Action recorder start failed:', result.error || response.status)
-      await toastTab(tabId, result.error || 'Failed to start recording')
-      return
+      const oldRelay = !result.error && (response.status === 404 || response.status === 403)
+      await toastTab(tabId, result.error || (oldRelay ? 'Update Better Playwriter CLI' : 'Failed to start recording'))
     }
-    skillRecordingId = result.recordingId
-    recorderActive = true
   } catch (error) {
     logger.error('Action recorder start failed:', error)
     await toastTab(tabId, 'Failed to start recording')
   } finally {
-    skillRecordingStartInFlight = false
-    setRecorderStateInAllTabs(recorderActive)
+    skillRecordingStarts.delete(targetId)
   }
 }
 
 async function stopSkillRecording(tabId: number): Promise<void> {
+  const targetId = store.getState().tabs.get(tabId)?.targetId
+  const recordingId = targetId ? skillRecordings.get(targetId) : undefined
+  if (!targetId || !recordingId) {
+    syncToolbarState(tabId)
+    return
+  }
   try {
-    const response = await fetch(`http://${RELAY_HOST}:${RELAY_PORT}/recorder/stop`, {
+    const { installId } = await getExtensionIdentity()
+    const response = await fetch(`http://${RELAY_HOST}:${RELAY_PORT}/recorder/tab/stop`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(skillRecordingId ? { recordingId: skillRecordingId } : {}),
+      body: JSON.stringify({ installId, targetId, recordingId }),
     })
     const result = (await response.json()) as { recordingId?: string; error?: string }
-    if (!result.recordingId) {
+    if (!response.ok || result.recordingId !== recordingId) {
+      if (response.status === 404 && skillRecordings.get(targetId) === recordingId) {
+        skillRecordings.delete(targetId)
+        syncToolbarState(tabId)
+      }
       logger.error('Action recorder stop failed:', result.error || 'unknown')
       await toastTab(tabId, result.error || 'Failed to stop recording')
       return
     }
-    skillRecordingId = null
-    recorderActive = false
-    setRecorderStateInAllTabs(false)
     const prompt = dedent`
       I just recorded a browser workflow (recording ${result.recordingId}).
       Analyze it and create a reusable skill from it.
@@ -3479,6 +3751,9 @@ function serializeTabs(tabs: Map<number, TabInfo>): string {
 
 store.subscribe((state, prevState) => {
   logger.log(state)
+  for (const [tabId, activity] of executionBadges) {
+    if (state.tabs.get(tabId)?.targetId !== activity.targetId) executionBadges.delete(tabId)
+  }
   updateIconsForStoreChange({ state, prevState })
   updateContextMenuVisibility()
   tabSessionIds()
@@ -3555,6 +3830,17 @@ chrome.action.onClicked.addListener(onActionClicked)
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   // A new document clears the tab's icon values and can make it restricted. Title changes skip this
   if (changeInfo.status !== undefined || changeInfo.url !== undefined) updateTabIcon({ tabId, tabUrl: tab.url })
+  const automatic = automaticTabs.has(tabId)
+  const urlChanged = changeInfo.url !== undefined && (automatic || tab.status === 'complete')
+  if (
+    !remoteTunnel && !tab.incognito &&
+    (changeInfo.status === 'complete' || urlChanged) &&
+    (automatic || (!store.getState().tabs.has(tabId) && !isRestrictedUrl(tab.url) && autoAttachMaskForUrl(tab.url)))
+  ) {
+    void Promise.all([debuggerStartup, autoAttachPausesReady])
+      .then(async () => syncAutomaticTab(tabId, await loadAutoAttachSettings()))
+      .catch(() => logger.debug('Could not update automatic tab connection'))
+  }
   // Chrome 155 can create child tabs inside the group without a later groupId change.
   // Recorded events: https://github.com/remorses/playwriter/issues/133#issuecomment-6278536708
   const isUntrackedGroupedTabLoading =
@@ -3661,6 +3947,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
           return
         }
         logger.debug('Tab manually removed from managed groups:', tabId)
+        if (automaticTabs.has(tabId)) pauseAutomaticTab(tabId)
         await disconnectTab(tabId)
       })
       .catch((e) => {
@@ -3831,6 +4118,18 @@ async function runMenuAction(info: chrome.contextMenus.OnClickData, tab: chrome.
   }
   const tabId = tab.id
   try {
+    const item = String(info.menuItemId)
+    if (item === MENU.releaseTab || item.startsWith(ASSIGN_TAB_ITEM_PREFIX)) {
+      const target = store.getState().tabs.get(tabId)
+      if (remoteTunnel || !target?.targetId || target.groupKey || connectionManager.ws?.readyState !== WebSocket.OPEN) {
+        return await toastTab(tabId, 'Connect this tab to your local relay first')
+      }
+      const sessionId = item === MENU.releaseTab ? null : item.slice(ASSIGN_TAB_ITEM_PREFIX.length)
+      if (pendingTabAssignments.has(target.targetId)) return
+      pendingTabAssignments.add(target.targetId)
+      sendToLocalRelay({ method: 'assignLocalTab', params: { targetId: target.targetId, sessionId } })
+      return
+    }
     switch (info.menuItemId) {
       case MENU.pinElement:
         return await copyElementLocator({ info, tab })
@@ -3843,6 +4142,15 @@ async function runMenuAction(info: chrome.contextMenus.OnClickData, tab: chrome.
       case MENU.stopSharing:
         stopRemoteControl()
         return await toastTab(tabId, 'Sharing stopped')
+      case MENU.stopAgent: {
+        const activity = getExecutionBadge(tabId)
+        if (!activity) return
+        sendToLocalRelay({
+          method: 'cancelExecution',
+          params: { targetId: activity.targetId, executionId: activity.badge.executionId },
+        } satisfies CancelExecutionMessage)
+        return await toastTab(tabId, 'Stop requested')
+      }
     }
   } catch (error) {
     logger.error('Menu action failed:', info.menuItemId, error)
@@ -4048,6 +4356,16 @@ function playSound(sound: SoundName): void {
 
 // Handle messages from the in-page toolbar
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === 'saveAutoAttachSettings' && sender.url === chrome.runtime.getURL('src/profile-options.html')) {
+    void updateAutoAttachSettings(() => readAutoAttachSettings(message.settings)).then(
+      () => {
+        sendResponse({ saved: true })
+        void refreshAutomaticTabs().catch(() => logger.debug('Could not apply automatic tab connections'))
+      },
+      () => sendResponse({ saved: false }),
+    )
+    return true
+  }
   // Sent by the toolbar after its in-page confirm dialog.
   if (message.action === 'remoteControlStart') {
     const tabId = getToolbarSenderTabId(sender)

@@ -19,15 +19,15 @@ better-playwriter session new --tab-group docs
 
 **Always use your own session** - pass `-s <id>` to all commands. Using the same session preserves your `state` between calls. Using a different session gives you a fresh `state`.
 
-List all active sessions with their state keys:
+List active sessions with their tab counts and state keys:
 
 ```bash
 better-playwriter session list
-# ID  State Keys
-# --------------
-# 1   myPage, userData
-# 2   -
 ```
+
+Add `--tabs` to list their URLs.
+
+With the user's approval, `better-playwriter session prune --idle 60` ends idle local extension sessions and leaves their tabs open by default. When the relay restarts, restored local sessions keep their IDs and tabs. Reacquire `state.page` because JavaScript state is cleared.
 
 Reset a session if the browser connection is stale or broken:
 
@@ -231,11 +231,13 @@ better-playwriter -s 1 -f script.js
 
 The file is read from disk and executed in the same sandbox as `-e`. All context variables (`state`, `context`, etc.) are available. `-e` and `-f` cannot be used together.
 
+For an action whose result you may need to check after a disconnect, get an ID with `better-playwriter execute id` and pass it as `--execution-id <id>`. Check `better-playwriter execute status <sessionId> <id>` and verify the page before retrying an interrupted action.
+
 ### Recording user actions for skill generation
 
 Before any recorder work, run `better-playwriter skill` once and read the full output (never truncate).
 
-The user can start recording from the Better Playwriter toolbar (**Record Skill** button) or ask you to run `better-playwriter recorder start`. Both write the same event file. The toolbar does not pick a session; the relay attaches to any free extension session (or creates one). Session choice does not matter: extension sessions share the same Chrome tabs. You identify the recording later at **stop** time.
+The toolbar's **Record Skill** button records the selected tab. `better-playwriter recorder start` records the pages visible to its CLI session. Both produce the same event format.
 
 `better-playwriter recorder start` records everything the user does in the browser (clicks, typing, navigations, xhr/fetch, toast and alert text) as events with generated locator strings. It also saves a jpeg of each visual change into a frames folder. User clicks flash a ripple in those frames. To see the screen at an event, open the path printed by `better-playwriter recorder frame <eventId>`. When the user asks you to "start recording", run it and let them perform their workflow. You may run better-playwriter commands on that session if they ask (snapshot, inspect, click something). If they did not ask, ask first. Do not drive the workflow yourself.
 
@@ -258,7 +260,7 @@ If the user started from the toolbar and then says "done", still run `better-pla
 
 ### Debugging better-playwriter issues
 
-If some internal critical error happens you can read the relay server logs to understand the issue. The log file is located in the user home directory:
+Start with `better-playwriter doctor --browser <key>` to check the relay, profile, and attached tabs. Use `better-playwriter logfile` for detailed logs:
 
 ```bash
 better-playwriter logfile  # prints the log file path
@@ -1092,6 +1094,8 @@ await state.page.locator('textarea').fill(content)
 ```
 
 ## network interception
+
+To check recent failures after an action, call `getLatestRequests({ page: state.page, failedOnly: true, sinceLastCall: true })`. It returns recent HTTP errors and failed requests from that tab. Use `search` to narrow by method or URL.
 
 For scraping or reverse-engineering APIs, intercept network requests instead of scrolling DOM. Store in `state` to analyze across calls:
 

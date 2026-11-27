@@ -43,9 +43,16 @@ console.log(state.results.length) // 0
 state.results.push(await state.page.title())
 ```
 
-## Pages are shared, state is not
+Local CLI and MCP sessions in extension-connected profiles keep their IDs and
+tab assignments when the relay restarts. Reacquire `state.page` after a restart
+because JavaScript state is cleared.
 
-`context.pages()` returns all browser tabs with Better Playwriter enabled, **shared across all sessions**. Multiple agents see the same tabs. There is **no default page**. Always **create your own page**:
+## Choosing a tab
+
+`context.pages()` includes tabs the session created, tabs assigned to it and
+shared tabs. To assign a tab you opened, right-click the extension icon and choose
+**Assign tab to session**. The tab stays open and becomes shared again when that
+session ends. For independent work, create a tab:
 
 ```js
 // First call: create a tab and navigate immediately
@@ -298,6 +305,13 @@ const browsers = await listBrowsers()
 Do not POST `/cli/session/new` yourself. Do not call `chromium.connectOverCDP(getCdpUrl(...))` unless you already have a session from the CLI.
 
 ## Session management
+
+`session list` counts the tabs each session owns or was assigned. Use
+`session list --tabs` to include URLs. A dash means the relay could not count
+the tabs. `better-playwriter session prune --idle 60`
+ends local extension sessions idle for at least 60 minutes. Add
+`--release-created-tabs` or `--close-created-tabs` to clean up tabs created by
+those sessions. The equivalent MCP tool is `session_prune`.
 
 ```bash
 # Reset a session (reconnect browser, clear state)

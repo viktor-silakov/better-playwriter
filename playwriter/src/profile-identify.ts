@@ -8,6 +8,17 @@ import { saveLocalProfileName } from './profile-labels.js'
 const run = promisify(execFile)
 const profileScript = fileURLToPath(new URL('../src/chrome-profile-macos.jxa', import.meta.url))
 
+export async function checkMacAccessibility(): Promise<boolean | null> {
+  if (process.platform !== 'darwin') return null
+  try {
+    const { stdout } = await run('/usr/bin/osascript', ['-l', 'JavaScript', profileScript, '--check-access'], { timeout: 3000 })
+    const value: unknown = JSON.parse(stdout)
+    return typeof value === 'boolean' ? value : null
+  } catch {
+    return null
+  }
+}
+
 async function readChromeProfileName(marker: string): Promise<string | null> {
   const { stdout } = await run('/usr/bin/osascript', ['-l', 'JavaScript', profileScript, marker], { timeout: 3000 })
   const name: unknown = JSON.parse(stdout)

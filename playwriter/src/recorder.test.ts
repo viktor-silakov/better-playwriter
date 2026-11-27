@@ -162,6 +162,121 @@ describe('action recording', () => {
     }
   })
 
+  it('records only the requested tab when two attached tabs have the same URL', async () => {
+    const browserContext = testCtx!.browserContext
+    const serviceWorker = await getExtensionServiceWorker(browserContext)
+    const server = await createSimpleServer({
+      routes: { '/': '<button>Placeholder</button>', '/api?tab=selected': 'ok', '/api?tab=other': 'ok' },
+    })
+    const selectedTab = await browserContext.newPage()
+    const otherTab = await browserContext.newPage()
+    let recordingId: string | undefined
+    let sessionId: string | undefined
+    try {
+      for (const tab of [selectedTab, otherTab]) {
+        await tab.goto(server.baseUrl)
+      }
+      for (const tab of [selectedTab, otherTab]) {
+        await tab.bringToFront()
+        await serviceWorker.evaluate(async () => {
+          const [active] = await chrome.tabs.query({ active: true, currentWindow: true })
+          if (active?.id && globalThis.getExtensionState().tabs.get(active.id)?.state !== 'connected') {
+            await globalThis.toggleExtensionForActiveTab()
+          }
+        })
+      }
+      const installId = await serviceWorker.evaluate(async () => {
+        return (await chrome.storage.local.get('playwriterInstallId')).playwriterInstallId as string
+      })
+      const targetId = selectedTab.targetId()
+      const otherTargetId = otherTab.targetId()
+      expect(targetId).toBeTruthy()
+      expect(otherTargetId).not.toBe(targetId)
+      const scopedRequest = { method: 'POST', headers: jsonHeaders }
+      const wrongProfile = await fetch(`${SERVER_URL}/recorder/tab/start`, {
+        ...scopedRequest,
+        body: JSON.stringify({ installId: 'another-profile', targetId }),
+      })
+      expect(wrongProfile.status).toBe(404)
+      await selectedTab.bringToFront()
+      await serviceWorker.evaluate(async () => {
+        const [active] = await chrome.tabs.query({ active: true, currentWindow: true })
+        await chrome.scripting.executeScript({
+          target: { tabId: active.id! },
+          world: 'ISOLATED',
+          func: () => {
+            const toolbar = window as Window & { __playwriterToolbarSetRecording?: (recording: boolean) => void }
+            const update = toolbar.__playwriterToolbarSetRecording
+            toolbar.__playwriterToolbarSetRecording = (recording) => {
+              update?.(recording)
+              document.documentElement.toggleAttribute('data-test-recording', recording)
+            }
+            return chrome.runtime.sendMessage({ action: 'actionRecorderStart' })
+          },
+        })
+      })
+      await selectedTab.locator('html[data-test-recording]').waitFor({ timeout: 25_000 })
+      const response = await fetch(`${SERVER_URL}/recorder/status`)
+      const status = (await response.json()) as { recordings: Array<{ recordingId: string; sessionId: string }> }
+      expect(status.recordings).toHaveLength(1)
+      recordingId = status.recordings[0].recordingId
+      sessionId = status.recordings[0].sessionId
+
+      const wrongTabStop = await fetch(`${SERVER_URL}/recorder/tab/stop`, {
+        ...scopedRequest,
+        body: JSON.stringify({ installId, targetId: otherTargetId, recordingId }),
+      })
+      expect(wrongTabStop.status).toBe(404)
+
+      await otherTab.evaluate(async () => {
+        document.querySelector('button')!.textContent = 'Other tab action'
+        console.error('Other tab error')
+        await fetch('/api?tab=other')
+      })
+      await otherTab.getByRole('button', { name: 'Other tab action' }).click()
+      await selectedTab.evaluate(async () => {
+        document.querySelector('button')!.textContent = 'Selected tab action'
+        console.error('Selected tab error')
+        await fetch('/api?tab=selected')
+      })
+      await selectedTab.getByRole('button', { name: 'Selected tab action' }).click()
+
+      await expect.poll(async () => {
+        const response = await fetch(`${SERVER_URL}/recorder/events/${recordingId}`)
+        return await response.text()
+      }, { timeout: 8000 }).toContain('Selected tab action')
+      const stop = await fetch(`${SERVER_URL}/recorder/tab/stop`, {
+        ...scopedRequest,
+        body: JSON.stringify({ installId, targetId, recordingId }),
+      })
+      expect(stop.status).toBe(200)
+      const stopped = (await stop.json()) as { filePath: string; recordingId: string }
+      expect(stopped.recordingId).toBe(recordingId)
+      recordingId = undefined
+      await selectedTab.locator('html[data-test-recording]').waitFor({ state: 'detached' })
+      const content = fs.readFileSync(stopped.filePath, 'utf-8')
+      expect(content).toContain('Selected tab action')
+      expect(content).toContain('Selected tab error')
+      expect(content).toContain('/api?tab=selected')
+      expect(content).not.toContain('Other tab action')
+      expect(content).not.toContain('Other tab error')
+      expect(content).not.toContain('/api?tab=other')
+      expect(parseRecording(content)[0]?.urls).toEqual([`${server.baseUrl}/`])
+    } finally {
+      if (recordingId) {
+        await fetch(`${SERVER_URL}/recorder/stop`, {
+          method: 'POST', headers: jsonHeaders, body: JSON.stringify({ recordingId }),
+        })
+      }
+      if (sessionId) {
+        await deleteSession(sessionId)
+      }
+      await selectedTab.close()
+      await otherTab.close()
+      await server.close()
+    }
+  }, 60000)
+
   it('records user actions with locator strings and state changes', async () => {
     const browserContext = testCtx!.browserContext
     const serviceWorker = await getExtensionServiceWorker(browserContext)

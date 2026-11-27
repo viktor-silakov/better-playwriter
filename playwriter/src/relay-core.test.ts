@@ -1,4 +1,6 @@
 import { createMCPClient } from './mcp-client.js'
+import { randomUUID } from 'node:crypto'
+import { createExecutionId } from './execution-runs.js'
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { chromium } from '@xmorse/playwright-core'
 import { getCDPSessionForPage } from './cdp-session.js'
@@ -98,6 +100,63 @@ describe('Relay Core Tests', () => {
       body: JSON.stringify({ sessionId }),
     })
   }
+
+  it('tracks a handoff by execution ID and cancels it from Chrome without replay', async () => {
+    const server = await createSimpleServer({ routes: { '/execution': '<!doctype html><title>Execution test</title>' } })
+    const pageUrl = `${server.baseUrl}/execution`
+    const testPage = await getBrowserContext().newPage()
+    await testPage.goto(pageUrl)
+    await testPage.bringToFront()
+    const serviceWorker = await getExtensionServiceWorker(getBrowserContext())
+    await serviceWorker.evaluate(() => globalThis.toggleExtensionForActiveTab())
+    const sessionId = await createCliSession()
+    const { instanceId } = await fetch(`${SERVER_URL}/version`).then((response) => response.json()) as { instanceId: string }
+    const executionId = createExecutionId(instanceId)
+    const execute = (code: string, id = executionId) => fetch(`${SERVER_URL}/cli/execute/identified`, {
+      method: 'POST',
+      headers: JSON_HEADERS,
+      body: JSON.stringify({ sessionId, code, timeout: 15000, executionId: id }),
+    })
+    const getActiveBadge = () => serviceWorker.evaluate(async () => {
+      const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
+      return activeTab?.id ? chrome.action.getBadgeText({ tabId: activeTab.id }) : ''
+    })
+    const statusUrl = `${SERVER_URL}/cli/execute/status/${sessionId}/${executionId}`
+    try {
+      const setup = await executeCli({
+        sessionId,
+        code: `state.tab = context.pages().find((tab) => tab.url() === ${JSON.stringify(pageUrl)}); state.count = 0; console.log(state.tab.url())`,
+      })
+      expect(setup.isError, setup.text).toBe(false)
+
+      const active = execute('state.count++; await handoff({ page: state.tab, message: "Test handoff", manual: true }); await waitForHandoff({ page: state.tab })')
+      try {
+        await expect.poll(getActiveBadge, { timeout: 5000 }).toBe('WAIT')
+        const duplicate = await execute('state.count += 100').then((response) => response.json())
+        expect(duplicate).toMatchObject({ execution: { executionId, state: 'running' } })
+        expect(duplicate).toHaveProperty('text', expect.stringContaining('did not run again'))
+        await serviceWorker.evaluate(() => globalThis.runMenuItemForActiveTab('playwriter-stop-agent'))
+      } finally {
+        const cancelled = await active.then((response) => response.json())
+        expect(cancelled).toMatchObject({ isError: true, execution: { executionId, state: 'cancelled' } })
+      }
+
+      await expect.poll(getActiveBadge, { timeout: 5000 }).not.toMatch(/^(RUN|WAIT)$/)
+      expect(await fetch(statusUrl).then((response) => response.json())).toEqual({ executionId, state: 'cancelled' })
+      const lateDuplicate = await execute('state.count += 100').then((response) => response.json())
+      expect(lateDuplicate).toMatchObject({ execution: { executionId, state: 'cancelled' } })
+      expect((await execute('state.count += 100', createExecutionId(randomUUID()))).status).toBe(409)
+      const check = await executeCli({
+        sessionId,
+        code: 'console.log(state.count, state.tab.isClosed(), await state.tab.locator("#__playwriter_handoff").count())',
+      })
+      expect(check.text).toContain('1 false 0')
+    } finally {
+      await deleteCliSession(sessionId)
+      await testPage.close()
+      await server.close()
+    }
+  })
 
   it('returns a compatibility response for removed Ghost Browser commands', async () => {
     await ensureConnectedTabForExecute()

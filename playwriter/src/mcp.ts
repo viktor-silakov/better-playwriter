@@ -10,6 +10,7 @@ import { readEnv } from './runtime-config.js'
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { createExecutionId, getExecutionRelayId, isExecutionId } from './execution-runs.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 import fs from 'node:fs'
@@ -28,8 +29,11 @@ import {
   discoverBrowserOptions,
   executeInSession,
   formatBrowserTable,
+  getExecutionRelayInstance,
+  getExecutionStatus,
   isLocalRelay,
   listSessions,
+  pruneSessions,
   newSession,
   resetSession,
   updateSession,
@@ -258,19 +262,23 @@ server.tool(
       .default(DEFAULT_EXEC_TIMEOUT)
       .describe('Timeout in milliseconds for code execution (default: 10000ms, or BETTER_PLAYWRITER_EXEC_TIMEOUT)'),
     session: sessionParam,
+    executionId: z.string().refine((id) => Boolean(getExecutionRelayId(id))).optional().describe('ID created by execute_id to check this run after losing its response'),
   },
-  async ({ code, timeout, session }, extra) => {
+  async ({ code, timeout, session, executionId: requestedId }, extra) => {
+    const executionId = requestedId ?? createExecutionId()
+    let sessionId: string | undefined
     try {
       await ensureLocalRelay()
-      const sessionId = await resolveSessionId(session)
-      const result = await executeInSession({ relay, sessionId, code, timeout, cwd: process.cwd(), signal: extra.signal })
+      sessionId = await resolveSessionId(session)
+      const result = await executeInSession({
+        relay, sessionId, code, timeout, cwd: process.cwd(), signal: extra.signal, executionId,
+        requireExecutionId: requestedId !== undefined,
+      })
       if (result.status === HTTP_NOT_FOUND) {
         return sessionLostResult({ sessionId, explicit: Boolean(session) })
       }
       if (result.status === HTTP_SERVICE_UNAVAILABLE) {
-        // The relay drains for an upgrade and its sessions end with it
-        forgetSession(sessionId)
-        return textResult({ text: 'The Better Playwriter relay is restarting to upgrade. Call execute again in a few seconds. Session state is lost; tabs stay open.', isError: true })
+        return textResult({ text: 'The Better Playwriter relay is restarting to upgrade. Call session_list once it is ready. Restored local extension sessions keep their ID and tabs. JavaScript state starts empty.', isError: true })
       }
       if (result.status !== 200) {
         return textResult({ text: result.text, isError: true })
@@ -286,9 +294,53 @@ server.tool(
       for (const image of result.images) {
         content.push({ type: 'image', data: image.data, mimeType: image.mimeType })
       }
-      return result.isError ? { content, isError: true } : { content }
+      const structuredContent = result.execution ? { sessionId, ...result.execution } : undefined
+      return { content, structuredContent, ...(result.isError ? { isError: true } : {}) }
     } catch (error) {
       mcpLogger.error('Error in execute tool:', error instanceof Error ? error.stack : error)
+      if (sessionId) {
+        const message = error instanceof Error ? error.message : String(error)
+        return textResult({
+          text: `${message}\nCheck execute_status with session "${sessionId}" and executionId "${executionId}".`,
+          isError: true,
+        })
+      }
+      return errorResult(error)
+    }
+  },
+)
+
+server.tool('execute_id', 'Create an execution ID before starting a run whose status you may need to check later.', {}, async (_, extra) => {
+  try {
+    const instanceId = await getExecutionRelayInstance({
+      relay, signal: AbortSignal.any([extra.signal, AbortSignal.timeout(5000)]),
+    })
+    const executionId = createExecutionId(instanceId)
+    return { ...textResult({ text: executionId }), structuredContent: { executionId } }
+  } catch (error) {
+    return errorResult(error)
+  }
+})
+
+server.tool(
+  'execute_status',
+  'Check an execution by ID. This does not run code. If the result is unknown, inspect the tab before retrying.',
+  {
+    session: sessionParam,
+    executionId: z.string().refine(isExecutionId),
+  },
+  async ({ session, executionId }, extra) => {
+    const sessionId = session ?? defaultSessionId
+    if (!sessionId) return textResult({ text: 'Pass the original session ID to check this run.', isError: true })
+    try {
+      const status = await getExecutionStatus({
+        relay, sessionId, executionId, signal: AbortSignal.any([extra.signal, AbortSignal.timeout(5000)]),
+      })
+      return {
+        ...textResult({ text: `Execution ${executionId}: ${status.state}` }),
+        structuredContent: { sessionId, ...status },
+      }
+    } catch (error) {
       return errorResult(error)
     }
   },
@@ -322,12 +374,12 @@ server.tool(
     List the active Better Playwriter sessions and the browsers a new session can use.
     Call it when execute says several browsers are connected, or to pick a browser for session_new.
   `,
-  {},
-  async () => {
+  { includeTabs: z.boolean().default(false).describe('Include URLs for tabs owned by each session') },
+  async ({ includeTabs }) => {
     try {
       await ensureLocalRelay()
       const [sessions, browsers] = await Promise.all([
-        listSessions(relay),
+        listSessions(relay, { includeTabs }),
         discoverBrowserOptions({ relay, extensionWaitMs: SESSION_LIST_EXTENSION_WAIT_MS, logger: mcpLogger }),
       ])
       const sessionLines = sessions.map((s) => {
@@ -337,8 +389,10 @@ server.tool(
           s.patchright ? 'patchright' : '',
         ].filter(Boolean)
         const group = s.tabGroup ? ` group=${s.tabGroup}` : ''
+        const tabs = typeof s.tabs === 'number' ? ` tabs=${s.tabs}` : ''
         const state = s.stateKeys.length > 0 ? ` state=${s.stateKeys.join(',')}` : ''
-        return `- ${s.id}${tags.length > 0 ? ` (${tags.join(', ')})` : ''}: ${s.browser || 'Chrome'} ${s.profile?.email || ''}${group}${state}`
+        const urls = s.tabUrls?.map((url) => '\n  - ' + JSON.stringify(url)).join('') ?? ''
+        return `- ${s.id}${tags.length > 0 ? ` (${tags.join(', ')})` : ''}: ${s.browser || 'Chrome'} ${s.profile?.label || s.profile?.email || ''}${group}${tabs}${state}${urls}`
       })
       const warnings = browsers.warnings.map((warning) => `Warning: ${warning}`)
       const browserTable = browsers.options.length > 0 ? formatBrowserTable(browsers.options) : 'No browsers detected. Ask the user to click the Better Playwriter extension icon on a tab.'
@@ -432,6 +486,31 @@ server.tool(
         lines.push(`Warning: ${result.warning}`)
       }
       return textResult({ text: lines.join('\n') || `Session ${sessionId} unchanged.` })
+    } catch (error) {
+      return errorResult(error)
+    }
+  },
+)
+
+server.tool(
+  'session_prune',
+  'End idle local extension sessions when the user asks to clean them up.',
+  {
+    idleMinutes: z.number().positive().describe('Minimum idle time in minutes'),
+    tabs: z.enum(['keep', 'release', 'close']).default('keep').describe('What to do with tabs created by those sessions'),
+  },
+  async ({ idleMinutes, tabs }) => {
+    try {
+      await ensureLocalRelay()
+      const deleted = await pruneSessions({
+        relay,
+        idleMs: Math.round(idleMinutes * 60_000),
+        closeCreatedTabs: tabs === 'close',
+        releaseCreatedTabs: tabs === 'release',
+      })
+      for (const { sessionId } of deleted) forgetSession(sessionId)
+      return textResult({ text: deleted.length ? deleted.map(({ sessionId, warning }) =>
+        `Deleted session ${sessionId}.${warning ? ' ' + warning : ''}`).join('\n') : 'No idle sessions matched.' })
     } catch (error) {
       return errorResult(error)
     }

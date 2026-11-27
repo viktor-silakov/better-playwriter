@@ -43,6 +43,7 @@ export type ExtensionStatus = {
   browser: string | null
   profile: { email: string; id: string; label?: string } | null
   activeTargets: number
+  activeTabs?: number
   playwriterVersion: string | null
 }
 

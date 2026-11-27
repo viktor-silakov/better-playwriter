@@ -47,6 +47,7 @@ function hasMarkedTab(window, marker) {
 
 function run(args) {
   const marker = args[0]
+  if (marker === '--check-access') return JSON.stringify(Boolean($.AXIsProcessTrusted()))
   if (!marker || !$.AXIsProcessTrusted()) return 'null'
 
   const separator = ' - Google Chrome - '

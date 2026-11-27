@@ -22,6 +22,7 @@ import { isRemoteExtensionKey } from './relay-state.js'
 import { REMOTE_EXTENSION_NOT_CONNECTED_ERROR } from './remote-control.js'
 import { EXTENSION_NOT_CONNECTED_ERROR, getExtensionOutdatedWarning } from './relay-client.js'
 import { waitForPageLoad, WaitForPageLoadOptions, WaitForPageLoadResult } from './wait-for-page-load.js'
+import { getLatestRequests, observeRequests, type RecentRequestsOptions } from './network-requests.js'
 import { ICDPSession, getCDPSessionForPage } from './cdp-session.js'
 import type { Protocol } from './cdp-types.js'
 import { Debugger } from './debugger.js'
@@ -135,7 +136,7 @@ export class CodeExecutionTimeoutError extends Error {
 
 export class ExecuteCancelledError extends Error {
   constructor() {
-    super('Code execution was cancelled because the caller disconnected: its running and later Playwright calls fail.')
+    super('Code execution was cancelled. Running and later Playwright calls fail. Check the page before retrying.')
     this.name = 'ExecuteCancelledError'
   }
 }
@@ -858,6 +859,7 @@ export class PlaywrightExecutor {
   }
 
   private setupPageListeners(page: Page) {
+    observeRequests(page)
     if (this.pagesWithListeners.has(page)) {
       return
     }
@@ -1401,22 +1403,39 @@ export class PlaywrightExecutor {
   /** `signal` aborts the script like a timeout does, for example when the HTTP caller disconnects. */
   async execute(
     code: string,
-    { timeout = 10000, signal }: { timeout?: number; signal?: AbortSignal } = {},
+    {
+      timeout = 10000,
+      signal,
+      onStart,
+      onHandoffChange,
+    }: {
+      timeout?: number
+      signal?: AbortSignal
+      onStart?: () => void
+      onHandoffChange?: (targetId: string, waiting: boolean) => void
+    } = {},
   ): Promise<ExecuteResult> {
-    return this.runExclusive({ operation: () => this.executeInternal({ code, timeout, signal }) })
+    return this.runExclusive({
+      operation: () => this.executeInternal({ code, timeout, signal, onStart, onHandoffChange }),
+    })
   }
 
   private async executeInternal({
     code,
     timeout,
     signal,
+    onStart,
+    onHandoffChange,
   }: {
     code: string
     timeout: number
     signal?: AbortSignal
+    onStart?: () => void
+    onHandoffChange?: (targetId: string, waiting: boolean) => void
   }): Promise<ExecuteResult> {
     const consoleLogs: Array<{ method: string; args: any[] }> = []
     const outputScope = this.beginOutputScope()
+    const handoffPages = new Set<Page>()
 
     const abortController = new AbortController()
     let scriptStartedAt = 0
@@ -1430,7 +1449,11 @@ export class PlaywrightExecutor {
       if (signal?.aborted) {
         throw new ExecuteCancelledError()
       }
+      onStart?.()
       const { context } = await this.ensureConnection()
+      if (signal?.aborted) {
+        throw new ExecuteCancelledError()
+      }
 
       this.logger.log('Executing code:', code)
 
@@ -1893,6 +1916,10 @@ export class PlaywrightExecutor {
         },
         getLocatorStringForElement,
         getLatestLogs,
+        getLatestRequests: (options: RecentRequestsOptions) => {
+          resolveSandboxPage({ helper: 'getLatestRequests', page: options?.page })
+          return getLatestRequests(options)
+        },
         clearAllLogs,
         waitForPageLoad: (options: WaitForPageLoadOptions) => {
           resolveSandboxPage({ helper: 'waitForPageLoad', page: options?.page })
@@ -1915,12 +1942,20 @@ export class PlaywrightExecutor {
           hide: hideGhostCursor,
         },
         handoff: (options: HandoffOptions) => {
-          resolveSandboxPage({ helper: 'handoff', page: options?.page })
+          const page = resolveSandboxPage({ helper: 'handoff', page: options?.page })
+          handoffPages.add(page)
           return handoff(options)
         },
-        waitForHandoff: (options: WaitForHandoffOptions) => {
-          resolveSandboxPage({ helper: 'waitForHandoff', page: options?.page })
-          return waitForHandoff(options)
+        waitForHandoff: async (options: WaitForHandoffOptions) => {
+          const page = resolveSandboxPage({ helper: 'waitForHandoff', page: options?.page })
+          handoffPages.add(page)
+          const targetId = page.targetId()
+          if (targetId) onHandoffChange?.(targetId, true)
+          try {
+            return await waitForHandoff(options)
+          } finally {
+            if (targetId) onHandoffChange?.(targetId, false)
+          }
         },
         clearHandoff: (options: { page: Page }) => {
           resolveSandboxPage({ helper: 'clearHandoff', page: options?.page })
@@ -2025,6 +2060,9 @@ export class PlaywrightExecutor {
         let onCallerAbort: (() => void) | undefined
         try {
           const chromium = await getChromium({ patchright: this.patchright })
+          if (signal?.aborted) {
+            throw new ExecuteCancelledError()
+          }
           // Runs in this executor's async context, so a forgotten await becomes a warning in this session.
           const runScript = () =>
             runAsFaultOwner({ owner: this, run: () => script.runInContext(vmContext, { timeout, displayErrors: true }) })
@@ -2110,6 +2148,13 @@ export class PlaywrightExecutor {
         error?.name === 'AbortError'
 
       this.logger.error('Error in execute:', errorStack)
+
+      if (error instanceof ExecuteCancelledError && handoffPages.size > 0) {
+        const chromium = await getChromium({ patchright: this.patchright })
+        await chromium.runWithAbortSignal(AbortSignal.timeout(1000), () => {
+          return Promise.all([...handoffPages].map((page) => clearHandoff({ page })))
+        }).catch(() => {})
+      }
 
       // A failed action often means a challenge appeared, also without a navigation, so check state pages too.
       if (this.navigatedPages && !(error instanceof ExecuteCancelledError)) {
@@ -2230,6 +2275,10 @@ export class PlaywrightExecutor {
       tabGroupColor: this.cdpConfig.tabGroupColor || null,
       patchright: this.patchright,
     }
+  }
+
+  getConnectedPages(): Page[] | undefined {
+    return this.browser?.contexts()[0]?.pages()
   }
 
   getTabGroup(): string | null {

@@ -455,10 +455,12 @@ interface PageHandlers {
   pageerror: (error: Error) => void
 }
 
-export type RecordingStopReason = 'user' | 'max-duration' | 'max-size' | 'context-closed' | 'start-failed' | 'replaced'
+export type RecordingStopReason = 'user' | 'max-duration' | 'max-size' | 'context-closed' | 'page-closed' | 'start-failed' | 'replaced'
 
 export interface ActionRecorderOptions {
   context: BrowserContext
+  /** The only page visible on a tab-scoped recorder's dedicated connection. */
+  page?: Page
   sessionId: string
   recordingId: string
   logger: RecorderLogger
@@ -480,6 +482,7 @@ export class ActionRecorder {
   onDidStop: (() => void) | null = null
 
   private context: RecordingBrowserContext
+  readonly page?: Page
   private logger: RecorderLogger
   private state: 'starting' | 'recording' | 'stopping' | 'stopped' = 'starting'
   private maxDurationMs: number
@@ -513,6 +516,7 @@ export class ActionRecorder {
   constructor(options: ActionRecorderOptions) {
     // Playwright's recording methods are internal, not in the public BrowserContext type
     this.context = options.context as RecordingBrowserContext
+    this.page = options.page
     this.sessionId = options.sessionId
     this.recordingId = options.recordingId
     this.logger = options.logger
@@ -530,10 +534,14 @@ export class ActionRecorder {
 
   pageUrls(): string[] {
     try {
-      return this.context.pages().map(safePageUrl).filter(Boolean)
+      return this.recordedPages().map(safePageUrl).filter(Boolean)
     } catch {
       return []
     }
+  }
+
+  private recordedPages(): Page[] {
+    return this.page ? (this.page.isClosed() ? [] : [this.page]) : this.context.pages()
   }
 
   lastPageUrl(): string {
@@ -688,14 +696,16 @@ export class ActionRecorder {
       throw new RecordingError('Recording was stopped before it finished starting', 409)
     }
 
-    this.onPageHandler = (page: Page) => {
-      if (this.state !== 'recording') {
-        return
+    if (!this.page) {
+      this.onPageHandler = (page: Page) => {
+        if (this.state !== 'recording') {
+          return
+        }
+        this.writeEvent({ type: 'page-opened', url: safePageUrl(page) })
+        this.attachPageListeners(page)
       }
-      this.writeEvent({ type: 'page-opened', url: safePageUrl(page) })
-      this.attachPageListeners(page)
+      this.context.on('page', this.onPageHandler)
     }
-    this.context.on('page', this.onPageHandler)
 
     // Auto-stop when the context closes (extension toggled off, session reset,
     // browser gone). Without this the manager would report a dead recording as
@@ -717,10 +727,11 @@ export class ActionRecorder {
     this.onRequestFailedHandler = (request: Request) => {
       this.recordNetworkRequest(request, request.failure()?.errorText || 'failed')
     }
-    this.context.on('requestfinished', this.onRequestFinishedHandler)
-    this.context.on('requestfailed', this.onRequestFailedHandler)
+    const requestSource = this.page ?? this.context
+    requestSource.on('requestfinished', this.onRequestFinishedHandler)
+    requestSource.on('requestfailed', this.onRequestFailedHandler)
 
-    for (const page of this.context.pages()) {
+    for (const page of this.recordedPages()) {
       this.attachPageListeners(page)
     }
     this.framesDir = path.join(getRecordingsDir(), this.recordingId, 'frames')
@@ -731,14 +742,18 @@ export class ActionRecorder {
       sessionId: this.sessionId,
       recordingId: this.recordingId,
       framesDir: this.framesDir,
-      urls: this.context.pages().map((p) => safePageUrl(p)),
+      urls: this.pageUrls(),
     })
-    await Promise.all(this.context.pages().map((page) => this.startPageScreencast(page)))
+    await Promise.all(this.recordedPages().map((page) => this.startPageScreencast(page)))
     if (this.holdAfterEnable) {
       await this.holdAfterEnable()
     }
     if (this.state !== 'starting') {
       throw new RecordingError('Recording was stopped before it finished starting', 409)
+    }
+    if (this.page?.isClosed()) {
+      await this.stop({ reason: 'page-closed' })
+      throw new RecordingError('The selected tab was closed before the recording could start.', 404)
     }
     this.state = 'recording'
     this.scheduleMaxDurationStop()
@@ -792,7 +807,7 @@ export class ActionRecorder {
           this.onRecorderAction({ page, action, frame, code, isUpdate: true })
         },
         signalAdded: (page, signal, _code, frame) => {
-          if (this.state !== 'recording') {
+          if (this.state !== 'recording' || (this.page && this.page !== page)) {
             return
           }
           const signalUrl = signal.url ? sanitizeRecordedUrl(signal.url) : null
@@ -923,12 +938,13 @@ export class ActionRecorder {
       this.context.off('close', this.onContextCloseHandler)
       this.onContextCloseHandler = null
     }
+    const requestSource = this.page ?? this.context
     if (this.onRequestFinishedHandler) {
-      this.context.off('requestfinished', this.onRequestFinishedHandler)
+      requestSource.off('requestfinished', this.onRequestFinishedHandler)
       this.onRequestFinishedHandler = null
     }
     if (this.onRequestFailedHandler) {
-      this.context.off('requestfailed', this.onRequestFailedHandler)
+      requestSource.off('requestfailed', this.onRequestFailedHandler)
       this.onRequestFailedHandler = null
     }
     for (const [page, handlers] of this.pageHandlers) {
@@ -961,6 +977,12 @@ export class ActionRecorder {
           return
         }
         this.writeEvent({ type: 'page-closed', url: safePageUrl(page) })
+        if (this.page === page) {
+          void this.stop({ reason: 'page-closed' }).catch((error) => {
+            this.logger.error('[record] auto-stop on tab close failed:', error)
+          })
+          return
+        }
         this.pageHandlers.delete(page)
         void this.stopPageScreencast(page)
         void this.stopToastTap(page)
@@ -1023,7 +1045,7 @@ export class ActionRecorder {
     code: string
     isUpdate: boolean
   }) {
-    if (this.state !== 'recording') {
+    if (this.state !== 'recording' || (this.page && this.page !== page)) {
       return
     }
     const rawCodeText = sanitizeLocatorText(code.trim())
@@ -1508,10 +1530,12 @@ export class ActionRecordingManager {
   }
 
   private removeRecording(recordingId: string) {
-    if (!this.recordings.delete(recordingId)) {
+    const recorder = this.recordings.get(recordingId)
+    if (!recorder) {
       return
     }
-    if (this.recordings.size === 0) {
+    this.recordings.delete(recordingId)
+    if (!recorder.page && ![...this.recordings.values()].some((recording) => !recording.page)) {
       this.onActiveChanged?.(false)
     }
   }
@@ -1538,20 +1562,24 @@ export class ActionRecordingManager {
 
   async start({
     context,
+    page,
     sessionId,
     maxDurationMs,
     maxBytes,
     enableTimeoutMs,
     disableTimeoutMs,
     holdAfterEnable,
+    onDidStop,
   }: {
     context: BrowserContext
+    page?: Page
     sessionId: string
     maxDurationMs?: number
     maxBytes?: number
     enableTimeoutMs?: number
     disableTimeoutMs?: number
     holdAfterEnable?: () => Promise<void>
+    onDidStop?: () => void
   }): Promise<ActionRecorder> {
     const existing = this.activeRecordingForSession(sessionId)
     if (existing) {
@@ -1583,6 +1611,7 @@ export class ActionRecordingManager {
     for (let attempt = 0; attempt < 20; attempt++) {
       const recorder = new ActionRecorder({
         context,
+        page,
         sessionId,
         recordingId: this.nextRecordingId(),
         logger: this.logger,
@@ -1597,6 +1626,7 @@ export class ActionRecordingManager {
       this.addRecording(recorder)
       recorder.onDidStop = () => {
         this.removeRecording(recorder.recordingId)
+        onDidStop?.()
       }
       try {
         if (evicted && attempt === 0) {
@@ -1605,7 +1635,9 @@ export class ActionRecordingManager {
           })
         }
         await recorder.start()
-        this.markActive()
+        if (!page && this.recordings.has(recorder.recordingId)) {
+          this.markActive()
+        }
         return recorder
       } catch (error) {
         this.removeRecording(recorder.recordingId)

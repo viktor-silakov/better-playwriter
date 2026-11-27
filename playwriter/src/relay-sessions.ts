@@ -515,6 +515,8 @@ export async function newSession(options: NewSessionOptions): Promise<NewSession
 export type RelaySessionInfo = {
   id: string
   idleMs?: number
+  tabs?: number | null
+  tabUrls?: string[]
   stateKeys: string[]
   browser: string | null
   profile: { email: string; id: string; label?: string } | null
@@ -525,8 +527,8 @@ export type RelaySessionInfo = {
   patchright?: boolean
 }
 
-export async function listSessions(relay: RelayTarget): Promise<RelaySessionInfo[]> {
-  const response = await fetch(`${getServerUrl(relay.host)}/cli/sessions`, {
+export async function listSessions(relay: RelayTarget, { includeTabs = false } = {}): Promise<RelaySessionInfo[]> {
+  const response = await fetch(`${getServerUrl(relay.host)}/cli/sessions${includeTabs ? '?tabs=1' : ''}`, {
     headers: buildAuthHeaders({ token: relay.token }),
     signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
   })
@@ -535,6 +537,25 @@ export async function listSessions(relay: RelayTarget): Promise<RelaySessionInfo
   }
   const result = (await response.json()) as { sessions: RelaySessionInfo[] }
   return result.sessions
+}
+
+export async function pruneSessions({
+  relay, idleMs, closeCreatedTabs, releaseCreatedTabs,
+}: {
+  relay: RelayTarget
+  idleMs: number
+  closeCreatedTabs?: boolean
+  releaseCreatedTabs?: boolean
+}): Promise<Array<{ sessionId: string; warning?: string }>> {
+  const response = await fetch(`${getServerUrl(relay.host)}/cli/session/prune`, {
+    method: 'POST',
+    headers: buildAuthHeaders({ token: relay.token, json: true }),
+    body: JSON.stringify({ idleMs, closeCreatedTabs, releaseCreatedTabs }),
+  })
+  if (response.status === 404) throw new Error('Update the relay to use session prune.')
+  if (!response.ok) throw new Error(await readRelayError(response))
+  const result = (await response.json()) as { deleted: Array<{ sessionId: string; warning?: string }> }
+  return result.deleted
 }
 
 export type UpdateSessionResult = {
@@ -610,6 +631,8 @@ export async function resetSession({ relay, sessionId, cwd }: { relay: RelayTarg
   return postRelay<{ pagesCount: number }>({ relay, path: '/cli/reset', body: { sessionId, cwd } })
 }
 
+export type ReportedExecutionStatus = import('./execution-runs.js').ExecutionStatus | { executionId: string; state: 'unknown' }
+
 export type ExecuteResponse = {
   /** HTTP status. 404: the session does not exist (it ended or the relay restarted) */
   status: number
@@ -617,6 +640,44 @@ export type ExecuteResponse = {
   images: Array<{ data: string; mimeType: string }>
   screenshots: Array<{ path: string; base64: string; snapshot: string; labelCount: number }>
   isError: boolean
+  execution?: import('./execution-runs.js').ExecutionStatus
+}
+
+export async function getExecutionStatus({
+  relay,
+  sessionId,
+  executionId,
+  signal,
+}: {
+  relay: RelayTarget
+  sessionId: string
+  executionId: string
+  signal?: AbortSignal
+}): Promise<ReportedExecutionStatus> {
+  const response = await fetch(
+    `${getServerUrl(relay.host)}/cli/execute/status/${encodeURIComponent(sessionId)}/${encodeURIComponent(executionId)}`,
+    { headers: buildAuthHeaders({ token: relay.token }), signal },
+  )
+  if (response.status === 404) throw new Error('This relay does not support execution status. Update the relay.')
+  if (!response.ok) throw new Error(await readRelayError(response))
+  return await response.json() as ReportedExecutionStatus
+}
+
+export async function getExecutionRelayInstance({
+  relay,
+  signal,
+}: {
+  relay: RelayTarget
+  signal?: AbortSignal
+}): Promise<string> {
+  const response = await fetch(`${getServerUrl(relay.host)}/version`, {
+    headers: buildAuthHeaders({ token: relay.token }),
+    signal,
+  })
+  if (!response.ok) throw new Error(await readRelayError(response))
+  const { instanceId } = await response.json() as { instanceId?: string }
+  if (!instanceId) throw new Error('This relay cannot create identified executions. Update the relay.')
+  return instanceId
 }
 
 /**
@@ -630,6 +691,8 @@ export async function executeInSession({
   timeout,
   cwd,
   signal,
+  executionId,
+  requireExecutionId = false,
 }: {
   relay: RelayTarget
   sessionId: string
@@ -637,17 +700,27 @@ export async function executeInSession({
   timeout: number
   cwd: string
   signal: AbortSignal
+  executionId?: string
+  requireExecutionId?: boolean
 }): Promise<ExecuteResponse> {
-  const response = await undiciFetch(`${getServerUrl(relay.host)}/cli/execute`, {
+  const endpoint = requireExecutionId ? '/cli/execute/identified' : '/cli/execute'
+  const response = await undiciFetch(`${getServerUrl(relay.host)}${endpoint}`, {
     method: 'POST',
     headers: buildAuthHeaders({ token: relay.token, json: true }),
-    body: JSON.stringify({ sessionId, code, timeout, cwd }),
+    body: JSON.stringify({ sessionId, code, timeout, cwd, executionId }),
     dispatcher: executeDispatcher,
     signal: AbortSignal.any([signal, AbortSignal.timeout(timeout + EXECUTE_RESPONSE_GRACE_MS)]),
   })
   if (!response.ok) {
     // 503 while the relay drains for an upgrade and 404 for a lost session carry a readable text
-    return { status: response.status, text: await readRelayError(response), images: [], screenshots: [], isError: true }
+    const unsupported = requireExecutionId && response.status === 404 && !response.headers.get('content-type')?.startsWith('application/json')
+    return {
+      status: unsupported ? 501 : response.status,
+      text: unsupported ? 'This relay does not support identified executions. Update the relay.' : await readRelayError(response),
+      images: [],
+      screenshots: [],
+      isError: true,
+    }
   }
   const result = (await response.json()) as Omit<ExecuteResponse, 'status'>
   return { ...result, status: response.status }

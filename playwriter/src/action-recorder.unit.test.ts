@@ -1,9 +1,10 @@
 // Unit tests for ActionRecordingManager start timeout, zombie cleanup, and max duration.
 import { describe, expect, test } from 'vitest'
+import { EventEmitter } from 'node:events'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import type { BrowserContext } from '@xmorse/playwright-core'
+import type { BrowserContext, Page } from '@xmorse/playwright-core'
 import {
   ActionRecordingManager,
   closestFrameFile,
@@ -15,6 +16,7 @@ import {
   parseRecording,
   pickRecorderStartSession,
   projectThinEvent,
+  type RecordingBrowserContext,
 } from './action-recorder.js'
 
 function createFakeContext(options: {
@@ -64,6 +66,40 @@ describe('isTelemetryUrl', () => {
 })
 
 describe('ActionRecordingManager start lifecycle', () => {
+  test('a tab recording listens to one page and stops when it closes', async () => {
+    await withTempRecordings(async () => {
+      const createPage = () => Object.assign(new EventEmitter(), {
+        isClosed: () => false,
+        url: () => 'https://example.test/',
+        evaluate: async () => {},
+      })
+      const selectedTab = createPage()
+      const otherTab = createPage()
+      const selectedPage = selectedTab as unknown as Page
+      const otherPage = otherTab as unknown as Page
+      let sink: Parameters<RecordingBrowserContext['_startRecording']>[1] = {}
+      const context = Object.assign(new EventEmitter(), {
+        pages: () => [selectedPage, otherPage],
+        _startRecording: async (_options: unknown, recorderSink: typeof sink) => {
+          sink = recorderSink
+        },
+        _stopRecording: async () => {},
+      }) as unknown as BrowserContext
+      const manager = new ActionRecordingManager({ logger: { log: () => {}, error: () => {} } })
+      const recorder = await manager.start({ context, page: selectedPage, sessionId: '1' })
+      expect(recorder.pageUrls()).toEqual(['https://example.test/'])
+      expect(selectedTab.listenerCount('requestfinished')).toBe(1)
+      expect(otherTab.listenerCount('requestfinished')).toBe(0)
+      sink.actionAdded?.(otherPage, { name: 'click' }, 'otherTabAction()')
+      sink.actionAdded?.(selectedPage, { name: 'click' }, 'selectedTabAction()')
+      selectedTab.emit('close')
+      await expect.poll(() => manager.list()).toEqual([])
+      const events = parseRecording(fs.readFileSync(recorder.filePath, 'utf-8'))
+      expect(events.filter((event) => event.type === 'action').map((event) => event.code)).toEqual(['selectedTabAction()'])
+      expect(events.at(-1)?.reason).toBe('page-closed')
+    })
+  })
+
   test('start times out a hung _startRecording and leaves no active recording', async () => {
     await withTempRecordings(async () => {
       const manager = new ActionRecordingManager({

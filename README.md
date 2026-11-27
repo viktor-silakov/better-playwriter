@@ -32,7 +32,11 @@ better-playwriter -s 1 -e 'console.log(await snapshot({ page: state.page }))'
 
 Replace `1` with the session ID returned by `session new`. Each session has its own `state` and sees the tabs it creates plus tabs the user has made available. On macOS, `better-playwriter browser list` identifies unnamed Chrome profiles through the built-in Accessibility API and caches their labels. Grant Accessibility access to the app running the CLI, then run `better-playwriter browser identify` to try again. You can also enter a label in the extension options. Select a profile with `better-playwriter session new --browser <label>`. Use the browser key if two profiles have the same label.
 
-`better-playwriter session list` shows session groups and idle times. End a session with `better-playwriter session delete <id> --release-created-tabs` to keep its tabs open and ungrouped, or with `--close-created-tabs` to close them. Both remove its empty group when Chrome exposes it. They leave tabs owned by other sessions alone. Use short single-word group names such as `docs` or `test`.
+`better-playwriter session list` shows groups, tab counts and idle times. `better-playwriter session prune --idle 60` ends local extension sessions idle for at least 60 minutes. Use `--release-created-tabs` to keep their tabs open and ungrouped, or `--close-created-tabs` to close tabs the sessions created. The relay restores local CLI and MCP sessions after it restarts, keeping IDs and tab assignments while clearing JavaScript state.
+
+Right-click the extension icon on an attached tab you opened and choose **Assign tab to session** to give it to one local session. Ending the session returns the tab to the shared pool and keeps it open. The icon shows **RUN** or **WAIT** while an agent is working in that tab or waiting for you. Use **Stop agent** from the same menu to interrupt a run.
+
+Manually enabling the extension on an HTTP(S) tab remembers its site in that Chrome profile. Manage masks such as `http://localhost:3000*` in the extension options. A mask is scoped to the same scheme, host and port.
 
 ## Use with an agent or SDK
 
@@ -55,6 +59,8 @@ Load `extension/dist` as an unpacked extension. To put `better-playwriter` on yo
 ## Local data and remote connections
 
 The fork's default relay port is `19989` and its data directory is `~/.better-playwriter`. `better-playwriter logfile` shows the relay and CDP log paths. Logs, screenshots, and recordings can contain data from the browser. Keep them private.
+
+Run `better-playwriter doctor` to check the relay, attached profiles and tabs, and optional local tools. Use `--browser <key>` for a specific profile or `--json` for machine-readable output.
 
 The default setup uses a local relay with usage telemetry disabled. For managed browsers, provision one with your provider and connect over [direct CDP](./website/src/pages/docs/cloud-browsers.mdx). Browser sharing requires an explicit service URL. For token-protected access to a relay you run, see [Remote access](./docs/remote-access.md). See [Security](./SECURITY.md) for the scope of browser sharing and how to revoke it.
 

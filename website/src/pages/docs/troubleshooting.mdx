@@ -6,6 +6,16 @@ icon: lucide:bug
 
 ## Relay server logs
 
+Run `better-playwriter doctor` first. It checks the local relay, connected
+profiles, attached tabs, macOS Accessibility, and optional tools. Use
+`--browser <key>` to check one profile or `--json` for scripts.
+
+If a CLI connection dropped during an action, run
+`better-playwriter execute status <sessionId> <id>` with the ID shown by the
+CLI. Compare the page with the expected result before retrying an interrupted
+action. To generate a reference before sending an action, run
+`better-playwriter execute id` and pass the ID with `--execution-id <id>`.
+
 The relay server logs everything: extension connections, CDP events, MCP messages, and errors. Two log files are created each time the server starts:
 
 ```bash

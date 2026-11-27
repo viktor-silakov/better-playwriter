@@ -300,6 +300,16 @@ export type ExtensionReadyMessage = {
   method: 'ready'
 }
 
+export const TAB_ASSIGNMENT_CAPABILITY = 'tab-assignment-1'
+
+export type TabAssignmentChoice = { sessionId: string; label: string }
+
+export type ExtensionTabAssignmentMessage = {
+  id?: undefined
+  method: 'assignLocalTab'
+  params: { targetId: string; sessionId: string | null }
+}
+
 export type ExtensionMessage =
   | ExtensionResponseMessage
   | ExtensionEventMessage
@@ -307,6 +317,7 @@ export type ExtensionMessage =
   | ExtensionPongMessage
   | ExtensionHelloMessage
   | ExtensionReadyMessage
+  | ExtensionTabAssignmentMessage
 
 // Tab group command messages (relay -> extension)
 

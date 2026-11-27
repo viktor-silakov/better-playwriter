@@ -97,66 +97,16 @@ better-playwriter recorder events 7   # full request postData + responseBody of 
 
 ## How it works
 
-The **goal** is not a Playwright test file. You show a workflow once in your real
-Chrome. The agent turns that recording into a **skill**: markdown steps plus
-example `better-playwriter` commands an agent can replay later with your logins.
+Recording runs in the relay daemon. Closing the terminal leaves it running.
 
-Recording is a **relay daemon** job. The CLI or toolbar only toggles it. Closing
-the terminal does not stop it.
-
-```diagram
-You (Chrome)                                   Agent (CLI)
-     │                                              │
-     │  toolbar Record Skill                        │  better-playwriter recorder start
-     ▼                                              ▼
-POST /recorder/start                         POST /recorder/start
-(no sessionId)                               (-s optional)
-     │                                              │
-     └─────────────────────┬────────────────────────┘
-                           ▼
-                    Relay picks a session
-                    (free extension session,
-                     or creates one)
-                           │
-                           ▼
-                 Playwright API recorder
-                 ~/.better-playwriter/recordings/<id>/
-                           │
-     Stop                  │           better-playwriter recorder stop
-     (its recording id)    │                    │
-                           ▼                    ▼
-                    1 recording  ►  stop it
-                    2+ recordings ►  error with page URLs
-                                     then: recorder stop <id>
-```
-
-### Why session pick barely matters
-
-A better-playwriter **session** is an isolated sandbox (`state`). Browser **tabs** are
-shared across extension sessions. The recorder attaches to one session's
-Playwright context so it can listen for clicks. Any extension session sees the
-same tabs.
-
-The agent does not need that session id to consume the recording. It uses
-`better-playwriter recorder stop` and `better-playwriter recorder events`. If two recordings
-are active, **stop** lists each one with its current or last page URL so the
-agent can pick or ask you.
-
-The only session the toolbar must avoid is a session without the extension,
-which has no user tabs. The relay skips those and creates an extension session
-instead.
-
-### Toolbar vs CLI
-
-| Start from | What happens |
+| Start from | What gets recorded |
 | --- | --- |
-| Toolbar **Record Skill** | `POST /recorder/start` with no session id. Never fails just because many sessions exist. |
-| `better-playwriter recorder start` | Reuses the only session, or creates one. Pass `-s <id>` when several sessions exist. |
-| `better-playwriter recorder start -s 1` | Attaches to session 1. Fails with 409 if that session is already recording. |
+| Toolbar **Record Skill** | The selected tab, including its frames. Other tabs and popups are excluded. |
+| `better-playwriter recorder start` | Tabs visible to the selected CLI session. Pass `-s <id>` when several sessions can record. |
 
-Toolbar **Stop recording…** sends the recording id it started, so it is never
-ambiguous. `better-playwriter recorder stop` without an id stops the only active
-recording, or errors with URLs if there are several.
+Stop a toolbar recording with **Stop recording** in the same tab. You can also use
+`better-playwriter recorder stop <id>` from the CLI. When several recordings are active,
+`better-playwriter recorder status` lists their IDs.
 
 ## Commands
 
@@ -365,15 +315,8 @@ working parts untouched.
 
 ### Record Skill does nothing, or shows an error toast
 
-The toolbar button calls `http://127.0.0.1:19989/recorder/start` from the extension. Check:
-
-1. The page is a normal website (not `chrome://` or the Web Store)
-2. The relay is running (`better-playwriter session list` should respond)
-3. `better-playwriter logfile` for `Record start endpoint error`
-
-It no longer fails just because many better-playwriter sessions are open. It still
-fails if the extension is disconnected, or if every extension session is
-already recording and a new session cannot be created.
+Check that the tab is attached to your local relay, then run `better-playwriter doctor`.
+If the toolbar asks you to update the CLI, install a version that supports single-tab recording.
 
 ### `better-playwriter recorder start` asks for `-s`
 

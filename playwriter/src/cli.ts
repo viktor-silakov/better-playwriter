@@ -7,6 +7,7 @@ import path from 'node:path'
 import util from 'node:util'
 import { fileURLToPath } from 'node:url'
 import { goke, isAgent } from 'goke'
+import { createExecutionId, getExecutionRelayId, isExecutionId } from './execution-runs.js'
 import { z } from 'zod'
 import pc from 'picocolors'
 
@@ -34,8 +35,11 @@ import {
   executeInSession,
   ExtensionNotConnectedError,
   formatBrowserTable,
+  getExecutionRelayInstance,
+  getExecutionStatus,
   getServerUrl,
   listSessions,
+  pruneSessions,
   newSession,
   resetSession,
   updateSession,
@@ -45,6 +49,34 @@ import { printTelemetryNoticeOnce } from './telemetry.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 const cli = goke(COMMAND_NAME)
+
+cli
+  .command('doctor', 'Check the local relay, browser profiles, tabs, and optional tools')
+  .option('--browser <key>', 'Check a specific profile by key or label')
+  .option('--json', 'Print machine-readable diagnostics')
+  .option('--token <token>', 'Authentication token (or use BETTER_PLAYWRITER_TOKEN env var)')
+  .action(async (options) => {
+    const { diagnoseLocalRelay } = await import('./doctor.js')
+    const report = await diagnoseLocalRelay({ browser: options.browser, token: options.token })
+    if (options.json) {
+      console.log(JSON.stringify(report))
+    } else {
+      console.log(`Better Playwriter ${report.cliVersion}`)
+      console.log(`Relay on port ${report.relay.port}: ${report.relay.version ?? 'not responding'}`)
+      for (const profile of report.profiles) {
+        console.log(`${profile.label || profile.browser || 'Browser'} (${profile.key}): ${profile.tabs} attached tab(s), extension ${profile.version || 'unknown'}`)
+        if (profile.warning) console.log(profile.warning)
+      }
+      if (process.platform === 'darwin') {
+        console.log(`macOS Accessibility: ${report.accessibility === null ? 'unavailable' : report.accessibility ? 'granted' : 'not granted'}`)
+      }
+      console.log(`Managed Chrome: ${report.managedChrome ?? 'not installed'}`)
+      console.log(`ffmpeg (optional): ${report.ffmpeg ? 'available' : 'not found'}`)
+      console.log(`Relay log: ${report.logs.relay}\nCDP log: ${report.logs.cdp}`)
+      for (const message of report.messages) console.log(message)
+    }
+    if (!report.ready) process.exitCode = 1
+  })
 
 cli
   .command('browser start [binaryPath]', 'Start Chromium or Chrome for Testing with the bundled Better Playwriter extension')
@@ -135,6 +167,7 @@ cli
   .option('-s, --session <name>', 'Session ID (required for -e, get one with `better-playwriter session new`)')
   .option('-e, --eval <code>', 'Execute JavaScript code and exit, run `better-playwriter skill` for usage')
   .option('-f, --file <path>', 'Execute JavaScript from a file and exit')
+  .option('--execution-id <id>', 'Use an ID from execute id so you can check execution status later')
   .option('--timeout [ms]', z.number().default(DEFAULT_EXEC_TIMEOUT).describe('Execution timeout in milliseconds'))
   .action(async (options) => {
     if (options.eval && options.file) {
@@ -165,6 +198,7 @@ cli
         sessionId: options.session,
         host: options.host,
         token: options.token,
+        executionId: options.executionId,
       })
       return
     }
@@ -183,8 +217,10 @@ async function executeCode(options: {
   sessionId?: string
   host?: string
   token?: string
+  executionId?: string
 }): Promise<void> {
   const { code, timeout, host, token } = options
+  const executionId = options.executionId ?? createExecutionId()
   const cwd = process.cwd()
   const sessionId = options.sessionId ? String(options.sessionId) : readEnv('SESSION')
 
@@ -193,6 +229,11 @@ async function executeCode(options: {
     console.error('Error: -s/--session is required.')
     console.error('Always run `better-playwriter session new` first to get a session ID to use.')
     process.exit(1)
+  }
+  if (!isExecutionId(executionId) || (options.executionId !== undefined && !getExecutionRelayId(executionId))) {
+    console.error('Invalid execution ID. Run better-playwriter execute id to create one.')
+    process.exitCode = 1
+    return
   }
 
   // Ensure relay server is running (only for local)
@@ -225,6 +266,8 @@ async function executeCode(options: {
       timeout,
       cwd,
       signal: new AbortController().signal,
+      executionId,
+      requireExecutionId: options.executionId !== undefined,
     })
 
     if (result.status !== 200) {
@@ -284,10 +327,51 @@ async function executeCode(options: {
       console.error(`  ${LOG_FILE_PATH}`)
     } else {
       console.error(`Error: ${error.message}`)
+      console.error(`Check the run with: better-playwriter execute status ${sessionId} ${executionId}`)
     }
     process.exitCode = 1
   }
 }
+
+cli
+  .command('execute id', 'Create an ID for a later execution')
+  .option('--host <host>', 'Remote relay server host')
+  .option('--token <token>', 'Authentication token')
+  .action(async (options) => {
+    try {
+      const instanceId = await getExecutionRelayInstance({
+        relay: { host: options.host, token: options.token },
+        signal: AbortSignal.timeout(5000),
+      })
+      console.log(createExecutionId(instanceId))
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error))
+      process.exitCode = 1
+    }
+  })
+
+cli
+  .command('execute status <sessionId> <executionId>', 'Check an execution without running it again')
+  .option('--host <host>', 'Remote relay server host')
+  .option('--token <token>', 'Authentication token')
+  .option('--json', 'Print the execution status as JSON')
+  .action(async (sessionId, executionId, options) => {
+    try {
+      const status = await getExecutionStatus({
+        relay: { host: options.host, token: options.token },
+        sessionId: String(sessionId),
+        executionId,
+        signal: AbortSignal.timeout(5000),
+      })
+      console.log(options.json ? JSON.stringify(status) : `Execution ${status.executionId}: ${status.state}`)
+      if (status.state === 'unknown' && !options.json) {
+        console.log('The result is unavailable. Inspect the tab before deciding whether to run the command again.')
+      }
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error))
+      process.exitCode = 1
+    }
+  })
 
 // Session management commands
 cli
@@ -356,6 +440,7 @@ cli
 
 cli
   .command('session list', 'List all active sessions')
+  .option('--tabs', 'Include URLs for tabs owned by each session')
   .option('--host <host>', 'Remote relay server host')
   .option('--token <token>', 'Authentication token (or use BETTER_PLAYWRITER_TOKEN env var)')
   .action(async (options) => {
@@ -363,7 +448,7 @@ cli
       await ensureRelayServer({ logger: console })
     }
 
-    const sessions = await listSessions({ host: options.host, token: options.token }).catch((error: Error) => {
+    const sessions = await listSessions({ host: options.host, token: options.token }, { includeTabs: options.tabs }).catch((error: Error) => {
       console.error(`Error: ${error.message}`)
       process.exit(1)
     })
@@ -394,10 +479,10 @@ cli
         '  ' +
         'CWD'.padEnd(cwdWidth) +
         '  ' +
-        'IDLE'.padEnd(9) + '  ' + 'STATE KEYS',
+        'IDLE'.padEnd(9) + '  ' + 'TABS' + '  ' + 'STATE KEYS',
     )
     console.log(
-      '-'.repeat(idWidth + browserWidth + profileWidth + extensionWidth + groupWidth + cwdWidth + stateWidth + 23),
+      '-'.repeat(idWidth + browserWidth + profileWidth + extensionWidth + groupWidth + cwdWidth + stateWidth + 29),
     )
 
     for (const session of sessions) {
@@ -417,9 +502,31 @@ cli
           '  ' +
           cwdLabel.padEnd(cwdWidth) +
           '  ' +
-          (session.idleMs === undefined ? '-' : `${Math.floor(session.idleMs / 60000)}m`).padEnd(9) + '  ' + stateStr,
+        (session.idleMs === undefined ? '-' : `${Math.floor(session.idleMs / 60000)}m`).padEnd(9) +
+          '  ' + String(session.tabs ?? '-').padEnd(4) + '  ' + stateStr,
       )
+      for (const url of session.tabUrls ?? []) console.log('  ' + JSON.stringify(url))
     }
+  })
+
+cli
+  .command('session prune', 'End idle local extension sessions')
+  .option('--idle <minutes>', z.number().positive().describe('Minimum idle time in minutes'))
+  .option('--close-created-tabs', 'Close tabs created by the deleted sessions')
+  .option('--release-created-tabs', 'Ungroup and detach created tabs, keeping them open')
+  .option('--host <host>', 'Remote relay server host')
+  .option('--token <token>', 'Authentication token (or use BETTER_PLAYWRITER_TOKEN env var)')
+  .action(async (options) => {
+    if (typeof options.idle !== 'number') throw new Error('Pass --idle <minutes>.')
+    if (!options.host && !readEnv('HOST')) await ensureRelayServer({ logger: console })
+    const deleted = await pruneSessions({
+      relay: { host: options.host, token: options.token },
+      idleMs: Math.round(options.idle * 60_000),
+      closeCreatedTabs: options.closeCreatedTabs,
+      releaseCreatedTabs: options.releaseCreatedTabs,
+    })
+    console.log(deleted.length ? `Deleted sessions: ${deleted.map(({ sessionId }) => sessionId).join(', ')}` : 'No idle sessions matched.')
+    for (const result of deleted) if (result.warning) console.warn(`Session ${result.sessionId}: ${result.warning}`)
   })
 
 cli
