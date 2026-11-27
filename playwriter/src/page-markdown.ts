@@ -91,14 +91,15 @@ export async function getPageMarkdown(options: GetPageMarkdownOptions): Promise<
       }
 
       // A web app has no article. Its main landmark holds the open item (a message, a record), and the
-      // rest of the body is toolbars and menus. Short or missing landmarks fall back to the whole body.
+      // rest of the body is toolbars and menus. A landmark with a line or two ("Nothing is selected") or none at
+      // all falls back to the whole body.
       const appContent = () => {
         const squeeze = (text: string) => text.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
         const main = Array.from(document.querySelectorAll('main, [role="main"]'))
           .map((element: any) => squeeze(element.innerText || ''))
           .filter(Boolean)
           .join('\n\n')
-        const content = main.length >= 200 ? main : squeeze(document.body?.innerText || '')
+        const content = main.length >= 80 ? main : squeeze(document.body?.innerText || '')
         return {
           content,
           title: document.title || null,
