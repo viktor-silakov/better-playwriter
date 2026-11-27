@@ -182,6 +182,10 @@ const NOISY_LOG_EVENTS = new Set([
   'Network.loadingFinished',
 ])
 
+// Console output of the page. The text log prints one line per event without its text, in both
+// directions, and a chat app sends thousands. The texts stay in cdp.jsonl.
+const TEXT_LOG_SKIPPED_EVENTS = new Set(['Log.entryAdded', 'Runtime.consoleAPICalled'])
+
 export type RelayServer = {
   close(): void
   on<K extends keyof RelayServerEvents>(event: K, listener: RelayServerEvents[K]): void
@@ -355,7 +359,7 @@ export async function startPlayWriterCDPRelayServer({
     id?: number
     source?: 'extension' | 'server'
   }) {
-    if (NOISY_LOG_EVENTS.has(method)) {
+    if (NOISY_LOG_EVENTS.has(method) || TEXT_LOG_SKIPPED_EVENTS.has(method)) {
       return
     }
 
@@ -1420,6 +1424,7 @@ export async function startPlayWriterCDPRelayServer({
     source?: CDPCommand['source']
   }): Promise<unknown> {
     // Wait for the main frame context, so the page is usable when the enable returns
+    let cancelWait = () => {}
     const contextCreatedPromise = new Promise<void>((resolve) => {
       const handler = ({ event }: { event: CDPEventBase }) => {
         if (event.method === 'Runtime.executionContextCreated' && event.sessionId === sessionId) {
@@ -1443,12 +1448,22 @@ export async function startPlayWriterCDPRelayServer({
         resolve()
       }, 3000)
       emitter.on('cdp:event', handler)
+      cancelWait = () => {
+        clearTimeout(timeout)
+        emitter.off('cdp:event', handler)
+        resolve()
+      }
     })
 
+    // A target that is gone before the enable arrives (a short-lived worker) answers with an error.
+    // Stop waiting for its context, or the log reports a timeout three seconds later.
     const result = await sendToExtension({
       extensionId,
       method: 'forwardCDPCommand',
       params: { sessionId, method, params, source },
+    }).catch((error: unknown) => {
+      cancelWait()
+      throw error
     })
 
     await contextCreatedPromise

@@ -189,13 +189,19 @@ export async function waitForConnectedExtensions(
   const { port = RELAY_PORT, timeoutMs = 5000, pollIntervalMs = 200, logger } = options
   const startTime = Date.now()
 
-  logger?.log(pc.dim('Waiting for extension to connect...'))
-
+  // Say nothing when the extension is already there: two lines on every command are noise for an agent.
+  let announced = false
   while (Date.now() - startTime < timeoutMs) {
     const extensions = getLocalExtensionStatuses(await getExtensionsStatus(port))
     if (extensions.length > 0) {
-      logger?.log(pc.green('Extension connected'))
+      if (announced) {
+        logger?.log(pc.green('Extension connected'))
+      }
       return extensions
+    }
+    if (!announced) {
+      logger?.log(pc.dim('Waiting for extension to connect...'))
+      announced = true
     }
     await sleep(pollIntervalMs)
   }
