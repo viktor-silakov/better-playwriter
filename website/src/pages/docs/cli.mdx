@@ -4,7 +4,7 @@ description: Better Playwriter CLI commands, flags, and usage patterns for contr
 icon: lucide:terminal
 ---
 
-The Better Playwriter CLI sends Playwright code to your browser through a local WebSocket relay. Every command connects to the relay on `localhost:19989`, which the extension also connects to. No servers, no accounts.
+Better Playwriter sends Playwright code to your browser through a local WebSocket relay on `localhost:19989`. The extension connects to the same relay.
 
 ## Execute code
 
@@ -105,6 +105,14 @@ better-playwriter browser list               # list all available browsers
 
 `browser start` launches Chrome with the bundled extension pre-loaded.
 
+On macOS, open a tab in the requested profile of a running Chrome window:
+
+```bash
+better-playwriter browser open https://example.com --profile Work
+```
+
+Omit the URL to open a blank tab. The command verifies the profile and reports an error if it cannot find a unique match.
+
 ## Remote connection
 
 Connect to a relay running on another machine:
@@ -180,7 +188,8 @@ Code executed with `-e` or `-f` has access to:
 | `context` | Browser context, access all pages via `context.pages()` |
 | `state` | Object persisted between calls within your session |
 | `require` | Load Node.js modules (e.g. `require('node:fs')`) |
-| `snapshot` | Get accessibility snapshot of a page |
+| `snapshot` | Get a short interactive accessibility snapshot |
+| `elementForRef` | Resolve a snapshot ref to its DOM element |
 | `getCDPSession` | Send raw CDP commands |
 | `createDebugger` | Set breakpoints, step through code |
 | `createEditor` | Live-edit page scripts and CSS |
@@ -194,4 +203,4 @@ Code executed with `-e` or `-f` has access to:
 
 There is no default `page` global. Reading `page` throws. Create a tab with `context.newPage()` and store it in `state.page`.
 
-See [Agent Reference](./skill.mdx) for the full API documentation.
+See [Agent Reference](./skill.mdx) for the core workflow and topic references.

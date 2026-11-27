@@ -6,12 +6,13 @@
  * - website/public/ - for the documentation site
  *
  * Source of truth:
- * - playwriter/src/skill.md - manually edited, contains full docs including CLI usage
+ * - playwriter/src/skill.md - core instructions including CLI usage
+ * - playwriter/src/skill-references/ - detailed topic references
  * - skills/better-playwriter/SKILL.md - stub with frontmatter for agent discovery
  *
  * Generated files:
  * - playwriter/dist/prompt.md - MCP prompt (skill.md minus CLI sections)
- * - website/public/SKILL.md - full copy for the documentation site
+ * - website/public/SKILL.md - core instructions for the documentation site
  * - website/public/.well-known/skills/index.json - Agent Skills Discovery endpoint
  * - website/public/.well-known/skills/better-playwriter/SKILL.md - skill file with frontmatter
  */
@@ -21,6 +22,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import dedent from 'string-dedent'
 import { Lexer, type Token, type Tokens } from 'marked'
+import { skillReferenceNames } from '../src/skill-references.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const playwriterDir = path.join(__dirname, '..')
@@ -422,11 +424,14 @@ function buildPromptFromSkill() {
   fs.writeFileSync(distPromptPath, promptContent, 'utf-8')
   console.log('Generated playwriter/dist/prompt.md (from skill.md)')
 
-  // Copy full skill.md to website/public/ for serving from the documentation site
+  // Copy the core skill and its references to the documentation site.
   const websitePublicRoot = path.join(playwriterDir, '..', 'website', 'public')
   ensureDir(websitePublicRoot)
   fs.writeFileSync(path.join(websitePublicRoot, 'SKILL.md'), skillContent, 'utf-8')
   console.log('Generated website/public/SKILL.md')
+  for (const name of skillReferenceNames) {
+    writeToDestinations(`skill-${name}.md`, readFile(`src/skill-references/${name}.md`))
+  }
 }
 
 /**

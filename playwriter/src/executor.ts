@@ -34,9 +34,12 @@ import { SANDBOX_FILENAME, describeThrown, runAsFaultOwner } from './process-gua
 import {
   screenshotWithAccessibilityLabels,
   getAriaSnapshot,
+  resolveSnapshotReference,
   resizeImageForAgent,
   type ScreenshotResult,
   type SnapshotFormat,
+  type SnapshotMode,
+  type SnapshotReference,
 } from './aria-snapshot.js'
 export type { SnapshotFormat }
 import { getCleanHTML, type GetCleanHTMLOptions } from './clean-html.js'
@@ -333,6 +336,11 @@ interface OutputScope {
   cursor: number
 }
 
+interface PageSnapshotReferences {
+  byRef: Map<string, SnapshotReference>
+  byFrame: Map<Frame, { documentId: string; ids: Map<number, string> }>
+}
+
 export interface ExecutorLogger {
   log(...args: any[]): void
   error(...args: any[]): void
@@ -517,6 +525,68 @@ export function boundExecuteOutput({
 
 const SNAPSHOT_SEARCH_MAX_MATCHES = 10
 const SNAPSHOT_SEARCH_CONTEXT_LINES = 5
+const DEFAULT_SNAPSHOT_MAX_CHARS = 4000
+const MIN_SNAPSHOT_MAX_CHARS = 100
+
+/**
+ * Bound the rendered tree on whole lines, keeping ancestor paths and giving
+ * dialogs and status messages priority over other parts of a large page.
+ */
+export function limitSnapshotOutput({ snapshot, maxChars }: { snapshot: string; maxChars: number }): string {
+  if (snapshot.length <= maxChars) {
+    return snapshot
+  }
+
+  const lines = snapshot.split('\n')
+  const notice = (omitted: number) => `[${omitted} snapshot lines omitted. Use locator or search to narrow the snapshot.]`
+  let remaining = maxChars - notice(lines.length).length
+  const parents: number[] = []
+  const ancestors: Array<{ index: number; indent: number }> = []
+  const priority: number[] = []
+  let priorityIndent: number | undefined
+
+  for (const [index, line] of lines.entries()) {
+    const body = line.trimStart()
+    const indent = line.length - body.length
+    while (ancestors.length && ancestors.at(-1)!.indent >= indent) {
+      ancestors.pop()
+    }
+    parents[index] = ancestors.at(-1)?.index ?? -1
+    ancestors.push({ index, indent })
+
+    if (priorityIndent !== undefined && indent <= priorityIndent) {
+      priorityIndent = undefined
+    }
+    if (/^- (?:alert|alertdialog|dialog|status|log)\b/i.test(body)) {
+      priorityIndent ??= indent
+    }
+    if (priorityIndent !== undefined) {
+      priority.push(index)
+    }
+  }
+
+  const included = new Set<number>()
+  const include = (index: number) => {
+    const pending: number[] = []
+    let needed = 0
+    for (let ancestor = index; ancestor >= 0 && !included.has(ancestor); ancestor = parents[ancestor]!) {
+      pending.push(ancestor)
+      needed += lines[ancestor]!.length + 1
+    }
+    if (needed <= remaining) {
+      remaining -= needed
+      for (const index of pending) {
+        included.add(index)
+      }
+    }
+  }
+  priority.forEach(include)
+  for (const index of lines.keys()) {
+    include(index)
+  }
+
+  return [...lines.filter((_, i) => included.has(i)), notice(lines.length - included.size)].join('\n')
+}
 
 /** Matching snapshot lines with context. Strings match case-insensitively. */
 export function searchSnapshot({ snapshot, search }: { snapshot: string; search: string | RegExp }): string {
@@ -576,6 +646,9 @@ export class PlaywrightExecutor {
   private pageLogCursor: Map<Page, number> = new Map()
   private lastSnapshots: WeakMap<Page, Map<string, string>> = new WeakMap()
   private lastRefToLocator: WeakMap<Page, Map<string, string>> = new WeakMap()
+  private snapshotReferences = new WeakMap<Page, PageSnapshotReferences>()
+  private nextSnapshotReference = 1
+  private lastScreenshotHashes = new WeakMap<Page, Map<string, string>>()
   private pageDocumentGenerations: WeakMap<Page, number> = new WeakMap()
   private outputEvents: OutputEvent[] = []
   private nextOutputEventId = 0
@@ -737,6 +810,8 @@ export class PlaywrightExecutor {
     this.pageLogCursor = new Map()
     this.lastSnapshots = new WeakMap()
     this.lastRefToLocator = new WeakMap()
+    this.snapshotReferences = new WeakMap()
+    this.lastScreenshotHashes = new WeakMap()
     this.pageDocumentGenerations = new WeakMap()
     this.outputEvents = []
     this.nextOutputEventId = 0
@@ -886,8 +961,15 @@ export class PlaywrightExecutor {
         this.navigatedPages?.add(page)
       }
     })
+    page.on('framedetached', (frame) => {
+      const references = this.snapshotReferences.get(page)
+      if (references) {
+        this.forgetFrameReferences(references, frame)
+      }
+    })
     page.on('close', () => {
       this.invalidateSnapshotState(page)
+      this.snapshotReferences.delete(page)
       this.ghostCursorController.detachFromPage({ page })
     })
   }
@@ -895,7 +977,42 @@ export class PlaywrightExecutor {
   private invalidateSnapshotState(page: Page) {
     this.lastSnapshots.delete(page)
     this.lastRefToLocator.delete(page)
+    this.lastScreenshotHashes.delete(page)
     this.pageDocumentGenerations.set(page, (this.pageDocumentGenerations.get(page) || 0) + 1)
+  }
+
+  private forgetFrameReferences(references: PageSnapshotReferences, frame: Frame) {
+    const frameReferences = references.byFrame.get(frame)
+    if (frameReferences) {
+      for (const id of frameReferences.ids.values()) {
+        references.byRef.delete(id)
+      }
+      references.byFrame.delete(frame)
+    }
+  }
+
+  private rememberSnapshotReference(page: Page, reference: SnapshotReference): string {
+    let references = this.snapshotReferences.get(page)
+    if (!references) {
+      references = { byRef: new Map(), byFrame: new Map() }
+      this.snapshotReferences.set(page, references)
+    }
+
+    const { frame, documentId, backendNodeId } = reference
+    let frameReferences = references.byFrame.get(frame)
+    if (frameReferences?.documentId !== documentId) {
+      this.forgetFrameReferences(references, frame)
+      frameReferences = { documentId, ids: new Map() }
+      references.byFrame.set(frame, frameReferences)
+    }
+
+    let id = frameReferences.ids.get(backendNodeId)
+    if (!id) {
+      id = `e${this.nextSnapshotReference++}`
+      frameReferences.ids.set(backendNodeId, id)
+      references.byRef.set(id, reference)
+    }
+    return id
   }
 
   private setupPageCloseDetection(page: Page) {
@@ -1483,24 +1600,45 @@ export class PlaywrightExecutor {
         locator?: Locator
         search?: string | RegExp
         showDiffSinceLastCall?: boolean
+        mode?: SnapshotMode
+        maxDepth?: number
+        maxChars?: number
         /** Snapshot format (currently raw only) */
         format?: SnapshotFormat
-        /** Only include interactive elements (default: true) */
+        /** Select a legacy locator-based view. */
         interactiveOnly?: boolean
       } = {}) => {
+        const usesLegacyView = Boolean(options.search) || options.interactiveOnly !== undefined || options.format === 'raw'
         const {
           page: targetPage,
           frame,
           locator,
           search,
           showDiffSinceLastCall = !search,
-          interactiveOnly = false,
+          mode = usesLegacyView ? undefined : 'interactive',
+          interactiveOnly,
+          maxDepth,
+          maxChars = mode && mode !== 'full' ? DEFAULT_SNAPSHOT_MAX_CHARS : undefined,
         } = options
+        if (mode !== undefined && !['interactive', 'compact', 'full'].includes(mode)) {
+          throw new Error("snapshot mode must be 'interactive', 'compact', or 'full'")
+        }
+        if (maxChars !== undefined && (!Number.isSafeInteger(maxChars) || maxChars < MIN_SNAPSHOT_MAX_CHARS)) {
+          throw new Error(`snapshot maxChars must be an integer of at least ${MIN_SNAPSHOT_MAX_CHARS}`)
+        }
         const resolvedPage = resolveSandboxPage({ helper: 'snapshot', page: targetPage, locator, frame })
-        const withPageUrl = (body: string) => `URL: ${resolvedPage.url()}\n${body}`
+        const withPageUrl = (body: string) => {
+          const url = resolvedPage.url()
+          const boundedUrl = maxChars !== undefined && url.length > 512 ? `${url.slice(0, 512)}…` : url
+          return `URL: ${boundedUrl}\n${maxChars === undefined ? body : limitSnapshotOutput({ snapshot: body, maxChars })}`
+        }
         const documentGeneration = this.pageDocumentGenerations.get(resolvedPage) || 0
+        const checkDocument = () => {
+          if ((this.pageDocumentGenerations.get(resolvedPage) || 0) !== documentGeneration) {
+            throw new Error('Page navigated while the accessibility snapshot was being captured. Try again.')
+          }
+        }
 
-        // Use new in-page implementation via getAriaSnapshot
         const {
           snapshot: rawSnapshot,
           refs,
@@ -1510,11 +1648,17 @@ export class PlaywrightExecutor {
           frame,
           locator,
           interactiveOnly,
+          mode,
+          maxDepth,
+          reference: mode && mode !== 'full'
+            ? (reference) => {
+                checkDocument()
+                return this.rememberSnapshotReference(resolvedPage, reference)
+              }
+            : undefined,
         })
         const snapshotStr = rawSnapshot.toWellFormed?.() ?? rawSnapshot
-        if ((this.pageDocumentGenerations.get(resolvedPage) || 0) !== documentGeneration) {
-          throw new Error('Page navigated while the accessibility snapshot was being captured. Try again.')
-        }
+        checkDocument()
 
         const refToLocator = new Map<string, string>()
         for (const entry of refs) {
@@ -1528,8 +1672,8 @@ export class PlaywrightExecutor {
         const shouldCacheSnapshot = !frame
         // Cache keyed by locator selector so full-page and locator-scoped snapshots
         // don't pollute each other's diff baselines
-        const detail = interactiveOnly ? 'interactive' : 'all'
-        const snapshotKey = locator ? `locator:${locator.selector()}:${detail}` : `page:${detail}`
+        const detail = mode ?? (interactiveOnly ? 'legacy-interactive' : 'legacy-full')
+        const snapshotKey = JSON.stringify([locator?.selector(), detail, maxDepth])
         let pageSnapshots = this.lastSnapshots.get(resolvedPage)
         if (!pageSnapshots) {
           pageSnapshots = new Map()
@@ -1552,13 +1696,17 @@ export class PlaywrightExecutor {
               'No changes since last snapshot. Use showDiffSinceLastCall: false to see full content.',
             )
           }
-          return withPageUrl(diffResult.content)
+          return withPageUrl(search ? searchSnapshot({ snapshot: diffResult.content, search }) : diffResult.content)
         }
 
         if (!search) {
-          return withPageUrl(
-            `${snapshotStr}\n\nuse refToLocator({ ref: 'e3', page: state.page }) to get locators for ref strings.`,
-          )
+          if (mode === 'interactive' && !snapshotStr.trim()) {
+            return withPageUrl("No interactive elements found. Use mode: 'compact' to read visible text.")
+          }
+          const body = mode
+            ? snapshotStr
+            : `${snapshotStr}\n\nuse refToLocator({ ref: 'e3', page: state.page }) to get locators for ref strings.`
+          return withPageUrl(body)
         }
 
         return withPageUrl(searchSnapshot({ snapshot: snapshotStr, search }))
@@ -1571,6 +1719,18 @@ export class PlaywrightExecutor {
           return null
         }
         return map.get(options.ref) ?? null
+      }
+
+      const elementForRef = async (options: { ref: string; page?: Page }): Promise<ElementHandle> => {
+        const targetPage = resolveSandboxPage({ helper: 'elementForRef', page: options.page })
+        if (!/^@?e[1-9]\d*$/.test(options.ref)) {
+          throw new Error('elementForRef requires a reference such as @e3 from a recent snapshot.')
+        }
+        const reference = this.snapshotReferences.get(targetPage)?.byRef.get(options.ref.replace(/^@/, ''))
+        if (!reference) {
+          throw new Error(`Snapshot reference ${options.ref} is unavailable on this page. Take a fresh snapshot.`)
+        }
+        return await resolveSnapshotReference({ page: targetPage, reference })
       }
 
       const getLocatorStringForElement = async (element: Locator | ElementHandle) => {
@@ -1757,11 +1917,27 @@ export class PlaywrightExecutor {
         return result
       }
 
-      const screenshotWithAccessibilityLabelsFn = async (options: { page: Page; interactiveOnly?: boolean }): Promise<void> => {
+      const screenshotWithAccessibilityLabelsFn = async (options: {
+        page: Page
+        locator?: Locator
+        interactiveOnly?: boolean
+        ifChanged?: boolean
+      }): Promise<void> => {
         const targetPage = resolveSandboxPage({ helper: 'screenshotWithAccessibilityLabels', page: options?.page })
+        const { locator, interactiveOnly, ifChanged } = options
+        const scope = JSON.stringify([locator?.selector(), interactiveOnly ?? true])
+        const documentGeneration = this.pageDocumentGenerations.get(targetPage) || 0
+        const capture: ScreenshotResult[] = []
+        let fingerprint: string | undefined
         const { refToLocator } = await screenshotWithAccessibilityLabels({
-          ...options,
-          collector: screenshotCollector,
+          page: targetPage,
+          locator,
+          interactiveOnly,
+          collector: capture,
+          shouldEmit: (buffer) => {
+            fingerprint = crypto.createHash('sha256').update(buffer).digest('hex')
+            return !ifChanged || fingerprint !== this.lastScreenshotHashes.get(targetPage)?.get(scope)
+          },
           logger: {
             info: (...args) => {
               this.logger.error('[playwriter]', ...args)
@@ -1772,7 +1948,26 @@ export class PlaywrightExecutor {
           },
         })
         // Labels show these refs, so refToLocator must resolve them, not an older snapshot's
-        this.lastRefToLocator.set(targetPage, refToLocator)
+        if ((this.pageDocumentGenerations.get(targetPage) || 0) === documentGeneration) {
+          this.lastRefToLocator.set(targetPage, refToLocator)
+          if (capture.length && fingerprint) {
+            let hashes = this.lastScreenshotHashes.get(targetPage)
+            if (!hashes) {
+              hashes = new Map()
+              this.lastScreenshotHashes.set(targetPage, hashes)
+            }
+            hashes.set(scope, fingerprint)
+          }
+        }
+        for (const shot of capture) {
+          screenshotCollector.push({
+            ...shot,
+            snapshot: limitSnapshotOutput({ snapshot: shot.snapshot, maxChars: DEFAULT_SNAPSHOT_MAX_CHARS }),
+          })
+        }
+        if (capture.length === 0) {
+          customConsole.log('Screenshot unchanged.')
+        }
       }
 
       const self = this
@@ -1901,9 +2096,10 @@ export class PlaywrightExecutor {
         signal: abortController.signal,
         console: customConsole,
         snapshot,
-        accessibilitySnapshot: snapshot, // backward compat alias
+        accessibilitySnapshot: (options?: Parameters<typeof snapshot>[0]) => snapshot({ format: 'raw', ...options }),
         inspect,
         refToLocator,
+        elementForRef,
         getCleanHTML: (options: GetCleanHTMLOptions) => {
           if (!options?.locator) {
             throw new Error("getCleanHTML requires { locator }, e.g. getCleanHTML({ locator: state.page }) or getCleanHTML({ locator: state.page.locator('main') }).")

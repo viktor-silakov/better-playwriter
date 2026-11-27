@@ -5,8 +5,33 @@ import {
   isPlaywrightChannelOwner,
   formatConsoleLogs,
   boundExecuteOutput,
+  limitSnapshotOutput,
   searchSnapshot,
 } from './executor.js'
+
+describe('limitSnapshotOutput', () => {
+  it('omits whole lines and keeps late dialogs and status messages with their parents', () => {
+    const controls = Array.from({ length: 40 }, (_, i) => `  - button "Item ${i}" @e${i + 1}`)
+    const snapshot = [
+      '- main "Dashboard":',
+      ...controls,
+      '  - dialog "Confirm":',
+      '    - button "Dismiss" @e41',
+      '- status:',
+      '  - text: "Connection lost"',
+    ].join('\n')
+    const out = limitSnapshotOutput({ snapshot, maxChars: 200 })
+    expect(out.length).toBeLessThanOrEqual(200)
+    expect(out).toContain('- main "Dashboard":')
+    expect(out).toContain('  - dialog "Confirm":\n    - button "Dismiss" @e41')
+    expect(out).toContain('- status:\n  - text: "Connection lost"')
+    const [notice] = out.split('\n').slice(-1)
+    expect(notice).toContain(`${snapshot.split('\n').length - out.split('\n').length + 1} snapshot lines omitted`)
+    for (const line of out.split('\n').slice(0, -1)) {
+      expect(snapshot.split('\n')).toContain(line)
+    }
+  })
+})
 
 describe('searchSnapshot', () => {
   const snapshot = Array.from({ length: 40 }, (_, i) => `- button "Item ${i}"`).join('\n')

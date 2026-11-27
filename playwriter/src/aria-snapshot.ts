@@ -9,8 +9,10 @@ import { fileURLToPath } from 'node:url'
 import type { Protocol } from 'devtools-protocol'
 import { Sema } from 'async-sema'
 import type { ICDPSession } from './cdp-session.js'
-import { evaluateInPlaywriterWorld, getCDPSessionForPage } from './cdp-session.js'
+import { getCDPSessionForFrame, getCDPSessionForPage, PLAYWRITER_WORLD_NAME } from './cdp-session.js'
 import { evaluateIsolated } from './playwright-import.js'
+import type { SnapshotReference } from './snapshot-reference.js'
+export { resolveSnapshotReference, type SnapshotReference } from './snapshot-reference.js'
 
 // Import sharp at module level - resolves to null if not available
 const sharpPromise = import('sharp')
@@ -26,6 +28,7 @@ const sharpPromise = import('sharp')
 // ============================================================================
 
 export type SnapshotFormat = 'raw'
+export type SnapshotMode = 'interactive' | 'compact' | 'full'
 
 export const DEFAULT_SNAPSHOT_FORMAT: SnapshotFormat = 'raw'
 
@@ -254,6 +257,8 @@ const INTERACTIVE_ROLES = new Set([
 ])
 
 const LABEL_ROLES = new Set(['labeltext'])
+const SIGNAL_ROLES = new Set(['alert', 'alertdialog', 'dialog', 'log', 'progressbar', 'status'])
+const CONTROL_CONTEXT_ROLES = new Set(['article', 'form', 'group', 'listitem', 'region', 'row', 'section'])
 
 const MAX_LABEL_POSITION_CONCURRENCY = 24
 const BOX_MODEL_TIMEOUT_MS = 5000
@@ -407,6 +412,7 @@ export function getAxState(node: Protocol.Accessibility.AXNode): string | undefi
 
 export type SnapshotLine = {
   text: string
+  ref?: string
   baseLocator?: string
   hasChildren?: boolean
   role?: string
@@ -425,6 +431,7 @@ export type SnapshotNode = {
   backendNodeId?: Protocol.DOM.BackendNodeId
   indentOffset?: number
   ignored?: boolean
+  live?: boolean
   children: SnapshotNode[]
 }
 
@@ -475,7 +482,17 @@ export function buildSnapshotLines(nodes: SnapshotNode[], indent = 0): SnapshotL
             indent: nodeIndent,
             hasChildren: node.children.length > 0,
           })
+    line.ref = node.ref
     return [line, ...buildSnapshotLines(node.children, nodeIndent + 1)]
+  })
+}
+
+function limitSnapshotTree(nodes: SnapshotNode[], compact: boolean, depth: number): SnapshotNode[] {
+  return nodes.flatMap((node) => {
+    if (compact && !node.name && !node.baseLocator && !CONTEXT_ROLES.has(node.role) && !SIGNAL_ROLES.has(node.role)) {
+      return limitSnapshotTree(node.children, compact, depth)
+    }
+    return { ...node, children: depth === 0 ? [] : limitSnapshotTree(node.children, compact, depth - 1) }
   })
 }
 
@@ -497,6 +514,7 @@ export function buildRawSnapshotTree(options: {
 
   const role = getAxRole(node)
   const name = getAxValueString(node.name).trim()
+  const live = node.properties?.some(({ name, value }) => name === 'live' && (value.value === 'polite' || value.value === 'assertive'))
   const children = (node.childIds ?? [])
     .map((childId) => {
       return buildRawSnapshotTree({
@@ -518,6 +536,7 @@ export function buildRawSnapshotTree(options: {
     state: getAxState(node),
     backendNodeId: node.backendDOMNodeId,
     ignored: node.ignored,
+    ...(live && { live }),
     children,
   }
 }
@@ -526,6 +545,8 @@ export function filterInteractiveSnapshotTree(options: {
   node: SnapshotNode
   ancestorNames: string[]
   labelContext: boolean
+  includeSignals?: boolean
+  signalContext?: boolean
   refFilter?: (entry: { role: string; name: string }) => boolean
   domByBackendId: Map<Protocol.DOM.BackendNodeId, DomNodeInfo>
   promotedContentEditableIds?: Set<Protocol.DOM.BackendNodeId>
@@ -541,13 +562,17 @@ export function filterInteractiveSnapshotTree(options: {
   const nextAncestors = hasName ? [...options.ancestorNames, name] : options.ancestorNames
 
   const isLabel = LABEL_ROLES.has(role)
-  const nextLabelContext = options.labelContext || isLabel
+  const isSignal = options.includeSignals && (SIGNAL_ROLES.has(role) || options.node.live)
+  const signalContext = options.signalContext || !!isSignal
+  const nextLabelContext = options.labelContext || isLabel || signalContext
 
   const childResults = options.node.children.map((child) => {
     return filterInteractiveSnapshotTree({
       node: child,
       ancestorNames: nextAncestors,
       labelContext: nextLabelContext,
+      includeSignals: options.includeSignals,
+      signalContext,
       refFilter: options.refFilter,
       domByBackendId: options.domByBackendId,
       promotedContentEditableIds: options.promotedContentEditableIds,
@@ -565,7 +590,7 @@ export function filterInteractiveSnapshotTree(options: {
   }, new Set<string>())
 
   if (options.node.ignored) {
-    return { nodes: shiftIndent(childNodes, 1), names: childNames }
+    return { nodes: options.includeSignals ? childNodes : shiftIndent(childNodes, 1), names: childNames }
   }
 
   if (isTextRole(role)) {
@@ -575,9 +600,9 @@ export function filterInteractiveSnapshotTree(options: {
     if (!options.labelContext) {
       return { nodes: childNodes, names: childNames }
     }
-    const isRedundantText = options.ancestorNames.some((ancestor) => {
-      return ancestor.includes(name) || name.includes(ancestor)
-    })
+    const isRedundantText = options.ancestorNames.some((ancestor) =>
+      signalContext ? ancestor === name : ancestor.includes(name) || name.includes(ancestor),
+    )
     if (isRedundantText) {
       return { nodes: childNodes, names: childNames }
     }
@@ -588,26 +613,26 @@ export function filterInteractiveSnapshotTree(options: {
   }
 
   const hasChildren = childNodes.length > 0
-  const nameToUse = hasName && (childNames.has(name) || isSubstringOfAny(name, childNames)) ? '' : name
+  const nameToUse = !options.includeSignals && hasName && (childNames.has(name) || isSubstringOfAny(name, childNames)) ? '' : name
   const hasNameToUse = nameToUse.length > 0
   const isWrapper = SKIP_WRAPPER_ROLES.has(role)
   const isInteractive = INTERACTIVE_ROLES.has(role)
-  const isContext = CONTEXT_ROLES.has(role)
+  const isContext = CONTEXT_ROLES.has(role) && (!options.includeSignals || hasNameToUse || hasChildren)
   const passesRefFilter = !options.refFilter || options.refFilter({ role, name })
   const includeInteractive = isInteractive && passesRefFilter
-  const shouldInclude = includeInteractive || isLabel || isContext || hasChildren
+  const shouldInclude = includeInteractive || isLabel || isSignal || isContext || hasChildren
   if (!shouldInclude) {
     return { nodes: childNodes, names: childNames }
   }
 
-  if (!includeInteractive && !isLabel && !isContext) {
+  if (!includeInteractive && !isLabel && !isSignal && !isContext) {
     if (!hasChildren) {
       return { nodes: [], names: childNames }
     }
     return { nodes: childNodes, names: childNames }
   }
 
-  if (isWrapper && !hasNameToUse) {
+  if (isWrapper && !hasNameToUse && !isSignal) {
     if (!hasChildren) {
       return { nodes: [], names: childNames }
     }
@@ -627,7 +652,7 @@ export function filterInteractiveSnapshotTree(options: {
   }
 
   const nodeEntry: SnapshotNode = {
-    role,
+    role: isSignal && !includeInteractive && !SIGNAL_ROLES.has(role) ? 'status' : role,
     name: nameToUse,
     state: options.node.state,
     baseLocator,
@@ -645,6 +670,8 @@ export function filterInteractiveSnapshotTree(options: {
 export function filterFullSnapshotTree(options: {
   node: SnapshotNode
   ancestorNames: string[]
+  preserveSignals?: boolean
+  signalContext?: boolean
   refFilter?: (entry: { role: string; name: string }) => boolean
   domByBackendId: Map<Protocol.DOM.BackendNodeId, DomNodeInfo>
   promotedContentEditableIds?: Set<Protocol.DOM.BackendNodeId>
@@ -658,11 +685,15 @@ export function filterFullSnapshotTree(options: {
   const name = options.node.name
   const hasName = name.length > 0
   const nextAncestors = hasName ? [...options.ancestorNames, name] : options.ancestorNames
+  const isSignal = options.preserveSignals && (SIGNAL_ROLES.has(role) || options.node.live)
+  const signalContext = options.signalContext || isSignal
 
   const childResults = options.node.children.map((child) => {
     return filterFullSnapshotTree({
       node: child,
       ancestorNames: nextAncestors,
+      preserveSignals: options.preserveSignals,
+      signalContext,
       refFilter: options.refFilter,
       domByBackendId: options.domByBackendId,
       promotedContentEditableIds: options.promotedContentEditableIds,
@@ -687,9 +718,9 @@ export function filterFullSnapshotTree(options: {
     if (!hasName) {
       return { nodes: childNodes, names: childNames }
     }
-    const isRedundantText = options.ancestorNames.some((ancestor) => {
-      return ancestor.includes(name) || name.includes(ancestor)
-    })
+    const isRedundantText = options.ancestorNames.some((ancestor) =>
+      signalContext ? ancestor === name : ancestor.includes(name) || name.includes(ancestor),
+    )
     if (isRedundantText) {
       return { nodes: childNodes, names: childNames }
     }
@@ -700,18 +731,18 @@ export function filterFullSnapshotTree(options: {
   }
 
   const hasChildren = childNodes.length > 0
-  const nameToUse = hasName && (childNames.has(name) || isSubstringOfAny(name, childNames)) ? '' : name
+  const nameToUse = !options.preserveSignals && hasName && (childNames.has(name) || isSubstringOfAny(name, childNames)) ? '' : name
   const hasNameToUse = nameToUse.length > 0
   const isWrapper = SKIP_WRAPPER_ROLES.has(role)
   const isInteractive = INTERACTIVE_ROLES.has(role)
   const passesRefFilter = !options.refFilter || options.refFilter({ role, name })
   const includeInteractive = isInteractive && passesRefFilter
-  const shouldInclude = includeInteractive || hasNameToUse || hasChildren
+  const shouldInclude = includeInteractive || isSignal || hasNameToUse || hasChildren
   if (!shouldInclude) {
     return { nodes: childNodes, names: childNames }
   }
 
-  if (isWrapper && !hasNameToUse) {
+  if (isWrapper && !hasNameToUse && !isSignal) {
     if (!hasChildren) {
       return { nodes: [], names: childNames }
     }
@@ -731,7 +762,7 @@ export function filterFullSnapshotTree(options: {
   }
 
   const nodeEntry: SnapshotNode = {
-    role,
+    role: options.preserveSignals && options.node.live && !includeInteractive && !SIGNAL_ROLES.has(role) ? 'status' : role,
     name: nameToUse,
     state: options.node.state,
     baseLocator,
@@ -775,10 +806,64 @@ function locatorIdentity(locator: string): string {
   return locator.startsWith('role=') ? locator.toUpperCase() : locator
 }
 
+function controlHints({
+  refs,
+  axById,
+  axByBackendId,
+  domByBackendId,
+}: {
+  refs: AriaRefDraft[]
+  axById: Map<string, Protocol.Accessibility.AXNode>
+  axByBackendId: Map<number, Protocol.Accessibility.AXNode>
+  domByBackendId: Map<number, DomNodeInfo>
+}): Map<string, string> {
+  const names = new Map<string, number>()
+  const identity = (ref: AriaRefDraft) => JSON.stringify([ref.role, ref.name])
+  for (const ref of refs) {
+    const key = identity(ref)
+    names.set(key, (names.get(key) ?? 0) + 1)
+  }
+  function content(node: Protocol.Accessibility.AXNode, actionName: string, depth: number): string | undefined {
+    if (depth === 0 || INTERACTIVE_ROLES.has(getAxRole(node))) return
+    const name = getAxValueString(node.name).trim()
+    if (name && name !== actionName) return name
+    for (const childId of node.childIds ?? []) {
+      const child = axById.get(childId)
+      const childName = child && content(child, actionName, depth - 1)
+      if (childName) return childName
+    }
+  }
+  const hints = new Map<string, string>()
+  for (const ref of refs) {
+    if (ref.backendNodeId === undefined || (ref.name && names.get(identity(ref)) === 1)) continue
+    let ancestorId = axByBackendId.get(ref.backendNodeId)?.parentId
+    let hint: string | undefined
+    while (ancestorId) {
+      const ancestor = axById.get(ancestorId)
+      if (!ancestor) break
+      const tag = ancestor.backendDOMNodeId && domByBackendId.get(ancestor.backendDOMNodeId)?.nodeName
+      if (CONTROL_CONTEXT_ROLES.has(getAxRole(ancestor)) || tag === 'ARTICLE' || tag === 'SECTION') {
+        hint = content(ancestor, ref.name, 4)
+        if (hint) break
+      }
+      ancestorId = ancestor.parentId
+    }
+    if (!hint) {
+      const attributes = domByBackendId.get(ref.backendNodeId)?.attributes
+      hint = attributes?.get('title') || attributes?.get('data-icon') ||
+        attributes?.get('name') || (attributes && getStableRefFromAttributes(attributes)?.value)
+    }
+    if (hint) hints.set(ref.ref, hint.replace(/\s+/g, ' ').slice(0, 72))
+  }
+  return hints
+}
+
 export function finalizeSnapshotOutput(
   lines: SnapshotLine[],
   nodes: SnapshotNode[],
   shortRefMap: Map<string, string>,
+  references = new Map<string, string>(),
+  hints = new Map<string, string>(),
 ): { snapshot: string; tree: AriaSnapshotNode[] } {
   const locatorCounts = lines.reduce<Map<string, number>>((acc, line) => {
     if (!line.baseLocator) {
@@ -810,7 +895,17 @@ export function finalizeSnapshotOutput(
       if (line.baseLocator) {
         const locator = locatorSequence[lineLocatorIndex]
         lineLocatorIndex += 1
-        text = buildLocatorLineText({ line, locator })
+        const ref = line.ref ? references.get(line.ref) : undefined
+        const hint = line.ref ? hints.get(line.ref) : undefined
+        if (ref) {
+          const role = line.role ?? ''
+          const name = line.name ? ` ${JSON.stringify(line.name.replace(/\s+/g, ' '))}` : ''
+          const state = line.state ? ` ${line.state}` : ''
+          text = `${'  '.repeat(line.indent ?? 0)}- ${role}${name}${state} @${ref}`
+        } else {
+          text = buildLocatorLineText({ line, locator })
+        }
+        if (hint) text += ` (in ${JSON.stringify(hint)})`
       }
       if (line.hasChildren) {
         text += ':'
@@ -887,6 +982,56 @@ function findScopeRootNodeId(
     }
   }
   return null
+}
+
+/** DOM.describeNode returns a nested subtree whose internal CDP node IDs are not always populated. */
+function flattenDomSubtree(root: Protocol.DOM.Node): Protocol.DOM.Node[] {
+  const nodes: Protocol.DOM.Node[] = []
+  function visit(node: Protocol.DOM.Node, parentId?: number) {
+    const nodeId = nodes.length + 1
+    nodes.push({ ...node, nodeId, parentId })
+    for (const child of node.children ?? []) visit(child, nodeId)
+    for (const child of node.shadowRoots ?? []) visit(child, nodeId)
+    for (const child of node.pseudoElements ?? []) visit(child, nodeId)
+    if (node.contentDocument) visit(node.contentDocument, nodeId)
+    if (node.templateContent) visit(node.templateContent, nodeId)
+  }
+  visit(root)
+  return nodes
+}
+
+function findSnapshotScope(marker: string) {
+  const pending = [document]
+  while (pending.length) {
+    const root = pending.pop()!
+    const scoped = root.querySelector('[' + marker + ']')
+    if (scoped) return scoped
+    for (const element of root.querySelectorAll('*')) {
+      if (element.shadowRoot) pending.push(element.shadowRoot)
+    }
+  }
+  return null
+}
+
+/** Resolve the marked scope inside its renderer and transfer only its DOM subtree. */
+async function getScopedDom(session: ICDPSession, marker: string, contextId?: number): Promise<Protocol.DOM.Node[] | undefined> {
+  if (contextId === undefined) return
+  try {
+    const { result } = await session.send('Runtime.evaluate', {
+      expression: `(${findSnapshotScope.toString()})(${JSON.stringify(marker)})`,
+      contextId,
+      objectGroup: marker,
+      silent: true,
+    })
+    if (!result.objectId) return
+    const { node } = await session.send('DOM.describeNode', { objectId: result.objectId, depth: -1, pierce: true })
+    if (toAttributeMap(node.attributes).has(marker)) return flattenDomSubtree(node)
+  } catch {
+    // Fall back to locating the marker in the full DOM when a target cannot describe the subtree.
+    return undefined
+  } finally {
+    await session.send('Runtime.releaseObjectGroup', { objectGroup: marker }).catch(() => {})
+  }
 }
 
 function buildBackendIdSet(
@@ -968,7 +1113,7 @@ async function resolveFrame({ frame, page }: { frame?: Frame | FrameLocator; pag
   if (!handle) {
     throw new Error('Could not resolve FrameLocator to a Frame: iframe element not found')
   }
-  const resolved = await handle.contentFrame()
+  const resolved = await handle.contentFrame().finally(() => handle.dispose())
   if (!resolved) {
     throw new Error('Could not resolve FrameLocator to a Frame: contentFrame() returned null')
   }
@@ -1000,6 +1145,22 @@ function waitForRenderedFrame(): Promise<void> {
   })
 }
 
+async function waitForSnapshotWorld(session: ICDPSession, frame: Frame): Promise<number> {
+  const { executionContextId } = await session.send('Page.createIsolatedWorld', {
+    frameId: frame.frameId(),
+    worldName: PLAYWRITER_WORLD_NAME,
+  })
+  const { exceptionDetails } = await session.send('Runtime.evaluate', {
+    expression: `(${waitForRenderedFrame.toString()})()`,
+    contextId: executionContextId,
+    awaitPromise: true,
+    returnByValue: true,
+    silent: true,
+  })
+  if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text)
+  return executionContextId
+}
+
 /**
  * Get an accessibility snapshot with utilities to look up refs for elements.
  * Uses the browser accessibility tree (CDP) and maps nodes to DOM attributes.
@@ -1025,6 +1186,9 @@ export async function getAriaSnapshot({
   locator,
   refFilter,
   interactiveOnly = false,
+  mode,
+  maxDepth,
+  reference,
   cdp,
 }: {
   page: Page
@@ -1032,82 +1196,63 @@ export async function getAriaSnapshot({
   locator?: Locator
   refFilter?: (info: { role: string; name: string }) => boolean
   interactiveOnly?: boolean
+  mode?: SnapshotMode
+  maxDepth?: number
+  reference?: (node: SnapshotReference) => string
   cdp?: ICDPSession
 }): Promise<AriaSnapshotResult> {
-  const session = cdp || (await getCDPSessionForPage({ page }))
-
-  // Resolve FrameLocator to an actual Frame. FrameLocator (from locator.contentFrame())
-  // is a scoping helper without CDP access. We need the real Frame from page.frames()
-  // which has frameId() for OOPIF session attachment.
   const resolvedFrame = await resolveFrame({ frame, page })
-
-  // For cross-origin iframes (OOPIFs), we need to attach to the iframe's target
-  // to get a separate CDP session. Same-origin iframes can use frameId directly.
-  let oopifSessionId: string | null = null
-  const frameId = resolvedFrame?.frameId() ?? null
-
-  if (frameId) {
-    const { targetInfos } = await session.send('Target.getTargets')
-    const frameUrl = resolvedFrame!.url()
-    const iframeTarget = targetInfos.find((t) => {
-      return t.type === 'iframe' && t.url === frameUrl
-    })
-    if (iframeTarget) {
-      const { sessionId } = await session.send('Target.attachToTarget', {
-        targetId: iframeTarget.targetId,
-        flatten: true,
-      })
-      oopifSessionId = sessionId
-      await session.send('Runtime.runIfWaitingForDebugger', undefined, oopifSessionId)
-    }
-  }
-
-  await Promise.all([
-    session.send('DOM.enable', undefined, oopifSessionId),
-    session.send('Accessibility.enable', undefined, oopifSessionId),
-    // Blink updates its AX cache during rendering, after framework navigation changes the DOM.
-    // Isolated world on the main frame, so page scripts do not see the call.
-    resolvedFrame
-      ? evaluateIsolated({ target: resolvedFrame, fn: waitForRenderedFrame })
-      : evaluateInPlaywriterWorld({ page, expression: `(${waitForRenderedFrame.toString()})()`, awaitPromise: true }),
-  ])
-  const scopeAttr = 'data-pw-scope'
-  const scopeValue = crypto.randomUUID()
+  const scopeHandle = await locator?.elementHandle()
+  const scopeAttr = 'data-pw-scope-' + crypto.randomUUID()
   let scopeApplied = false
-  const scopeLocator = locator
 
   try {
-    if (scopeLocator) {
-      await evaluateIsolated({
-        target: scopeLocator,
-        fn: (element, data) => {
-          element.setAttribute(data.attr, data.value)
-        },
-        arg: { attr: scopeAttr, value: scopeValue },
-      })
-      scopeApplied = true
+    const scopeFrame = await scopeHandle?.ownerFrame()
+    const captureFrame = resolvedFrame ?? scopeFrame ?? page.mainFrame()
+    if ((scopeHandle && scopeFrame !== captureFrame) || captureFrame.page() !== page) {
+      throw new Error('The snapshot locator and frame must belong to the same frame.')
+    }
+    const frameId = captureFrame !== page.mainFrame() ? captureFrame.frameId() : undefined
+    const session = frameId ? await getCDPSessionForFrame(captureFrame) : cdp || (await getCDPSessionForPage({ page }))
+    const [, , snapshotWorld] = await Promise.all([
+      session.send('DOM.enable'),
+      session.send('Accessibility.enable'),
+      // Blink refreshes its AX cache during rendering, after framework navigation changes the DOM.
+      frameId && !scopeHandle
+        ? evaluateIsolated({ target: captureFrame, fn: waitForRenderedFrame })
+        : waitForSnapshotWorld(session, captureFrame),
+    ])
+    if (scopeHandle) {
+      scopeApplied = await scopeHandle.evaluate((element, attribute) => {
+        for (let current: typeof element | null = element; current; ) {
+          if (current.matches('[data-playwriter-toolbar], [data-playwriter-overlay], #__playwriter_ghost_cursor__')) return false
+          current = current.parentElement ?? (current.getRootNode() as { host?: typeof element }).host ?? null
+        }
+        element.setAttribute(attribute, '')
+        return true
+      }, scopeAttr)
+      if (!scopeApplied) throw new Error('Better Playwriter UI is excluded from snapshots.')
     }
 
     // AX tree first: every node in it is also in the later DOM, so injected Playwriter UI is always found below
-    const axParams = !oopifSessionId && frameId ? { frameId } : undefined
-    const { nodes: axNodes } = await session.send('Accessibility.getFullAXTree', axParams, oopifSessionId)
-    const { nodes: domNodes } = await session.send(
-      'DOM.getFlattenedDocument',
-      { depth: -1, pierce: true },
-      oopifSessionId,
-    )
+    const { nodes: axNodes } = await session.send('Accessibility.getFullAXTree', frameId ? { frameId } : undefined)
+    const scopedDom = scopeApplied && typeof snapshotWorld === 'number'
+      ? await getScopedDom(session, scopeAttr, snapshotWorld)
+      : undefined
+    const domNodes = scopedDom ?? (await session.send('DOM.getFlattenedDocument', { depth: -1, pierce: true })).nodes
     const { domById, domByBackendId, childrenByParent } = buildDomIndex(domNodes)
 
     let scopeRootNodeId: Protocol.DOM.NodeId | null = null
     let scopeRootBackendId: Protocol.DOM.BackendNodeId | null = null
-    if (scopeLocator) {
-      scopeRootNodeId = findScopeRootNodeId(domNodes, scopeAttr, scopeValue)
+    if (scopeApplied) {
+      scopeRootNodeId = findScopeRootNodeId(domNodes, scopeAttr, '')
       if (scopeRootNodeId) {
         const scopeNode = domById.get(scopeRootNodeId)
         if (scopeNode) {
           scopeRootBackendId = scopeNode.backendNodeId
         }
       }
+      if (!scopeRootBackendId) throw new Error('The snapshot scope changed while it was being captured. Try again.')
     }
 
     const allowedBackendIds = scopeRootNodeId ? buildBackendIdSet(scopeRootNodeId, childrenByParent, domById) : null
@@ -1261,11 +1406,12 @@ export async function getAriaSnapshot({
           : [buildRawSnapshotTree({ nodeId: rootAxNodeId, axById, isNodeInScope })].filter(isTruthy)
 
       const filtered = rawRoots.flatMap((rawNode) => {
-        if (interactiveOnly) {
+        if (mode === 'interactive' || (mode === undefined && interactiveOnly)) {
           return filterInteractiveSnapshotTree({
             node: rawNode,
             ancestorNames: [],
             labelContext: false,
+            includeSignals: mode === 'interactive',
             refFilter,
             domByBackendId,
             promotedContentEditableIds,
@@ -1275,6 +1421,7 @@ export async function getAriaSnapshot({
         return filterFullSnapshotTree({
           node: rawNode,
           ancestorNames: [],
+          preserveSignals: mode === 'compact',
           refFilter,
           domByBackendId,
           promotedContentEditableIds,
@@ -1284,11 +1431,27 @@ export async function getAriaSnapshot({
       snapshotNodes = filtered
     }
 
+    if (mode === 'compact' || maxDepth !== undefined) {
+      snapshotNodes = limitSnapshotTree(snapshotNodes, mode === 'compact', maxDepth ?? Infinity)
+    }
     const snapshotLines = buildSnapshotLines(snapshotNodes)
-
-    const shortRefMap = buildShortRefMap({ refs })
-    const finalized = finalizeSnapshotOutput(snapshotLines, snapshotNodes, shortRefMap)
-    const refsWithShortRef: Array<AriaRef & { selector?: string }> = refs.map((entry) => {
+    const visibleRefs = new Set(snapshotLines.map((line) => line.ref))
+    const renderedRefs = refs.filter((entry) => visibleRefs.has(entry.ref))
+    const shortRefMap = buildShortRefMap({ refs: renderedRefs })
+    const references = new Map<string, string>()
+    const documentId = axNodes.find((node) => getAxRole(node) === 'rootwebarea')?.backendDOMNodeId?.toString()
+    if (reference && documentId && mode !== 'full') {
+      for (const entry of renderedRefs) {
+        if (entry.backendNodeId !== undefined) {
+          const shortRef = reference({ frame: captureFrame, documentId, backendNodeId: entry.backendNodeId })
+          references.set(entry.ref, shortRef)
+          shortRefMap.set(entry.ref, shortRef)
+        }
+      }
+    }
+    const hints = references.size ? controlHints({ refs: renderedRefs, axById, axByBackendId, domByBackendId }) : undefined
+    const finalized = finalizeSnapshotOutput(snapshotLines, snapshotNodes, shortRefMap, references, hints)
+    const refsWithShortRef: Array<AriaRef & { selector?: string }> = renderedRefs.map((entry) => {
       return {
         ...entry,
         shortRef: shortRefMap.get(entry.ref) ?? entry.ref,
@@ -1412,22 +1575,9 @@ export async function getAriaSnapshot({
       getRefStringForLocator: async (loc) => (await getRefsForLocators([loc]))[0]?.ref ?? null,
     }
   } finally {
-    if (scopeApplied && scopeLocator) {
-      await evaluateIsolated({
-        target: scopeLocator,
-        fn: (element, attr) => {
-          element.removeAttribute(attr)
-        },
-        arg: scopeAttr,
-      })
-    }
-    if (oopifSessionId) {
-      await session.send('Target.detachFromTarget', { sessionId: oopifSessionId }).catch((e) => {
-        console.error('[aria-snapshot] Failed to detach OOPIF session:', oopifSessionId, e)
-      })
-    }
-    if (!cdp) {
-      await session.detach()
+    if (scopeHandle) {
+      if (scopeApplied) await scopeHandle.evaluate((element, attr) => element.removeAttribute(attr), scopeAttr).catch(() => {})
+      await scopeHandle.dispose().catch(() => {})
     }
   }
 }
@@ -1696,12 +1846,14 @@ export async function screenshotWithAccessibilityLabels({
   interactiveOnly = true,
   collector,
   logger,
+  shouldEmit,
 }: {
   page: Page
   locator?: Locator
   interactiveOnly?: boolean
   collector: ScreenshotResult[]
   logger?: { info?: (...args: unknown[]) => void; error?: (...args: unknown[]) => void }
+  shouldEmit?: (buffer: Buffer) => boolean
 }): Promise<{ refToLocator: Map<string, string> }> {
   const log = logger?.info ?? logger?.error
   const showLabelsStart = Date.now()
@@ -1709,18 +1861,6 @@ export async function screenshotWithAccessibilityLabels({
   if (log) {
     log(`showAriaRefLabels: ${Date.now() - showLabelsStart}ms`)
   }
-
-  // Generate unique filename with timestamp
-  const timestamp = Date.now()
-  const random = Math.random().toString(36).slice(2, 6)
-  const filename = `playwriter-screenshot-${timestamp}-${random}.png`
-
-  // Use ./tmp folder (gitignored) instead of system temp
-  const tmpDir = path.join(process.cwd(), 'tmp')
-  if (!fs.existsSync(tmpDir)) {
-    fs.mkdirSync(tmpDir, { recursive: true })
-  }
-  const screenshotPath = path.join(tmpDir, filename)
 
   // Get viewport size to clip screenshot to visible area
   const viewport = await evaluateIsolated({
@@ -1770,7 +1910,11 @@ export async function screenshotWithAccessibilityLabels({
     log(`screenshot resize: ${Date.now() - resizeStart}ms`)
   }
 
-  // Save to file
+  if (shouldEmit && !shouldEmit(buffer)) return { refToLocator }
+  const filename = `playwriter-screenshot-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.png`
+  const tmpDir = path.join(process.cwd(), 'tmp')
+  fs.mkdirSync(tmpDir, { recursive: true })
+  const screenshotPath = path.join(tmpDir, filename)
   fs.writeFileSync(screenshotPath, buffer)
 
   // Convert to base64

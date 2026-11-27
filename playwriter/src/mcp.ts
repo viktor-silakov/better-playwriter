@@ -17,9 +17,9 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import dedent from 'string-dedent'
-import { LOG_FILE_PATH, VERSION, parseRelayHost } from './utils.js'
-import { PRODUCT_NAME } from './brand.js'
+import { VERSION, parseRelayHost } from './utils.js'
 import { getInstalledPlaywriterPackageDir } from './package-paths.js'
+import { skillReferenceNames } from './skill-references.js'
 import { ensureRelayServer, RELAY_PORT } from './relay-client.js'
 import { boundExecuteOutput } from './executor.js'
 import { installProcessGuard } from './process-guard.js'
@@ -214,7 +214,8 @@ const server = new McpServer({
   version: VERSION,
 })
 
-for (const name of ['debugger-api', 'editor-api', 'styles-api', 'recording-guide']) {
+const resources = ['debugger-api', 'editor-api', 'styles-api', 'recording-guide', ...skillReferenceNames.map((name) => `skill-${name}`)]
+for (const name of resources) {
   const uri = `better-playwriter://resources/${name}.md`
   server.resource(name, uri, { mimeType: 'text/plain' }, async () => {
     const packageDir = getInstalledPlaywriterPackageDir()
@@ -223,9 +224,7 @@ for (const name of ['debugger-api', 'editor-api', 'styles-api', 'recording-guide
   })
 }
 
-const promptContent =
-  fs.readFileSync(path.join(__dirname, '..', 'dist', 'prompt.md'), 'utf-8') +
-  `\n\nFor ${PRODUCT_NAME} diagnostics, check the relay logs at ${LOG_FILE_PATH}`
+const promptContent = fs.readFileSync(path.join(__dirname, '..', 'dist', 'prompt.md'), 'utf-8')
 
 const sessionParam = z
   .string()
@@ -255,7 +254,7 @@ server.tool(
     code: z
       .string()
       .describe(
-        'js playwright code, has {state, context} in scope. There is no `page` global: use `state.page = await context.newPage()` or pick an existing tab from `context.pages()`. Should be one line, using ; to execute multiple statements. you MUST call execute multiple times instead of writing complex scripts in a single tool call.',
+        'Playwright JavaScript with state and context in scope. Assign state.page first. For a known action, perform it and verify the result in one call. Use separate calls when the next action depends on what you discover.',
       ),
     timeout: z
       .number()

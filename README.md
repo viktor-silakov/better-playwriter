@@ -24,6 +24,8 @@ If you want a separate browser, `better-playwriter browser start` launches Chrom
 
 ## First session
 
+To open a tab in an existing macOS Chrome profile, use `better-playwriter browser open https://example.com --profile Work` with the exact profile name shown in Chrome. Omit the URL for a blank tab.
+
 ```bash
 better-playwriter session new --tab-group docs
 better-playwriter -s 1 -e 'state.page = await context.newPage(); await state.page.goto("https://example.com")'

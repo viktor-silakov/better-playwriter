@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import type { Page, CDPSession as PlaywrightCDPSession } from '@xmorse/playwright-core'
+import type { Frame, Page, CDPSession as PlaywrightCDPSession } from '@xmorse/playwright-core'
 import type { ProtocolMapping } from 'devtools-protocol/types/protocol-mapping.js'
 
 /**
@@ -86,6 +86,39 @@ export async function getCDPSessionForPage({ page }: { page: Page }): Promise<Pl
 }
 
 const cdpSessions = new WeakMap<Page, Promise<PlaywrightCDPSessionAdapter>>()
+const frameSessions = new WeakMap<Frame, Promise<PlaywrightCDPSessionAdapter | null>>()
+const observedPages = new WeakSet<Page>()
+
+/** Use the renderer that owns this frame, including frames nested inside an OOPIF. */
+export async function getCDPSessionForFrame(frame: Frame): Promise<PlaywrightCDPSessionAdapter> {
+  const page = frame.page()
+  if (frame === page.mainFrame()) return getCDPSessionForPage({ page })
+  if (!observedPages.has(page)) {
+    observedPages.add(page)
+    page.on('framenavigated', (child) => frameSessions.delete(child))
+    page.on('framedetached', (child) => frameSessions.delete(child))
+  }
+  for (let child: Frame | null = frame; child?.parentFrame(); child = child.parentFrame()) {
+    const owner = child
+    let session = frameSessions.get(owner)
+    if (!session) {
+      session = page.context().getExistingCDPSession(owner).then(
+        (cdp) => new PlaywrightCDPSessionAdapter(cdp),
+        (error) => {
+          if (!String(error).includes('does not have a separate CDP session')) {
+            frameSessions.delete(owner)
+            throw error
+          }
+          return null
+        },
+      )
+      frameSessions.set(owner, session)
+    }
+    const resolved = await session
+    if (resolved) return resolved
+  }
+  return getCDPSessionForPage({ page })
+}
 
 /** Isolated world for playwriter's own page scripts. Pages cannot see its globals or calls. */
 export const PLAYWRITER_WORLD_NAME = `playwriter_${crypto.randomUUID().replaceAll('-', '')}`

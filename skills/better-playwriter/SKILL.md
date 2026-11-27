@@ -1,11 +1,11 @@
 ---
 name: better-playwriter
-description: Use Better Playwriter to inspect, test, or operate Chrome through a local CLI session with Playwright. Use when the user asks for Better Playwriter or an existing Better Playwriter browser session. It also supports headless Chrome for local testing.
+description: Use Better Playwriter to open a tab in a named Chrome profile, or inspect, test, or operate Chrome through a Playwright session.
 ---
 
-Run `better-playwriter skill` for session instructions, selectors, and API reference. If the CLI is unavailable in a built source checkout, run `node ./playwriter/bin.js skill` from its root.
+Run `better-playwriter skill` for the core workflow and load details with `better-playwriter skill --ref <topic>`. In a built source checkout, you can run `node ./playwriter/bin.js skill` from its root.
 
-Use the Chrome profile and tabs the user authorizes. Prefer a headless session for local tests. Keep snapshots, recordings, account details, and secrets local unless the user authorizes sharing. Follow the user's instructions for actions that affect other people or systems.
+An explicitly named profile must be verified before opening or inspecting a tab. For an open-only request on macOS, use `better-playwriter browser open [url] --profile <name>`. Prefer a headless session for local tests. Keep snapshots, recordings, account details, and secrets local unless the user authorizes sharing.
 
 ```bash
 better-playwriter session new --tab-group docs

@@ -2,7 +2,7 @@
   "skills": [
     {
       "name": "better-playwriter",
-      "description": "Use Better Playwriter to inspect, test, or operate Chrome through a local CLI session with Playwright. Use when the user asks for Better Playwriter or an existing Better Playwriter browser session. It also supports headless Chrome for local testing.",
+      "description": "Use Better Playwriter to open a tab in a named Chrome profile, or inspect, test, or operate Chrome through a Playwright session.",
       "files": [
         "SKILL.md"
       ]

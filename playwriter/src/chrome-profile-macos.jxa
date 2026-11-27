@@ -1,5 +1,5 @@
-// Run with macOS's JavaScript for Automation. The Objective-C bridge reads
-// native Accessibility attributes and leaves Chrome windows and tabs alone.
+// Run with macOS's JavaScript for Automation. Profile discovery only reads
+// native Accessibility attributes. Opening uses Chrome's Apple Events API.
 ObjC.import('AppKit')
 ObjC.import('ApplicationServices')
 
@@ -45,25 +45,84 @@ function hasMarkedTab(window, marker) {
   return false
 }
 
+const chromeBundle = 'com.google.Chrome'
+const profileTitleSeparator = ' - Google Chrome - '
+
+function parseWindowTitle(title) {
+  if (typeof title !== 'string') return null
+  const separator = title.lastIndexOf(profileTitleSeparator)
+  if (separator < 0) return null
+  const profile = title.slice(separator + profileTitleSeparator.length).trim()
+  if (!profile || profile.length > 100) return null
+  return { page: title.slice(0, separator), profile }
+}
+
+function openInProfile(instances, profile, url) {
+  const instanceCount = Number(instances.count)
+  if (instanceCount === 0) return { status: 'chrome-closed' }
+  if (instanceCount !== 1) return { status: 'ambiguous-window' }
+
+  const application = $.AXUIElementCreateApplication(instances.objectAtIndex(0).processIdentifier)
+  $.AXUIElementSetMessagingTimeout(application, 0.5)
+  const nativeWindows = []
+  forEachItem(attribute(application, 'AXWindows'), window => {
+    const title = textAttribute(window, 'AXTitle')
+    nativeWindows.push({ title, parsed: parseWindowTitle(title) })
+  })
+  if (!nativeWindows.length) return { status: 'no-windows' }
+
+  const candidates = nativeWindows.filter(({ parsed }) => parsed && parsed.profile === profile)
+  if (candidates.length === 0) return { status: 'profile-not-found' }
+  if (candidates.length !== 1) return { status: 'ambiguous-profile' }
+  const { page } = candidates[0].parsed
+  // Apple Events has the tabs but not the profile name. Only act when the
+  // native Accessibility window maps to a single Apple Events window.
+  const nativeMatches = nativeWindows.filter(({ title, parsed }) => {
+    return parsed ? parsed.page === page : title === page || title === page + ' - Google Chrome'
+  })
+  if (nativeMatches.length !== 1) return { status: 'ambiguous-window' }
+
+  const chrome = Application(chromeBundle)
+  const windows = chrome.windows().filter(window => window.title() === page)
+  if (windows.length !== 1 || windows[0].mode() !== 'normal') return { status: 'ambiguous-window' }
+  const window = chrome.windows.byId(windows[0].id())
+  if (window.title() !== page) return { status: 'window-changed' }
+
+  if (url) {
+    const existing = window.tabs.url().indexOf(url)
+    if (existing >= 0) {
+      if (window.activeTabIndex() === existing + 1) return { status: 'reused' }
+      window.activeTabIndex = existing + 1
+      return window.activeTabIndex() === existing + 1 ? { status: 'reused' } : { status: 'unverified' }
+    }
+  }
+
+  const tabCount = window.tabs.length
+  window.tabs.push(chrome.Tab({ url: url || 'chrome://newtab/' }))
+  if (window.tabs.length !== tabCount + 1) return { status: 'unverified' }
+  window.activeTabIndex = tabCount + 1
+  return window.activeTabIndex() === tabCount + 1 ? { status: 'opened' } : { status: 'unverified' }
+}
+
 function run(args) {
   const marker = args[0]
   if (marker === '--check-access') return JSON.stringify(Boolean($.AXIsProcessTrusted()))
+  if (marker === '--open-in-profile') {
+    if (!$.AXIsProcessTrusted()) return JSON.stringify({ status: 'accessibility-unavailable' })
+    const instances = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(chromeBundle)
+    return JSON.stringify(openInProfile(instances, args[1], args[2]))
+  }
   if (!marker || !$.AXIsProcessTrusted()) return 'null'
 
-  const separator = ' - Google Chrome - '
   const names = new Set()
-  const instances = $.NSRunningApplication.runningApplicationsWithBundleIdentifier('com.google.Chrome')
+  const instances = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(chromeBundle)
   forEachItem(instances, instance => {
     const application = $.AXUIElementCreateApplication(instance.processIdentifier)
     $.AXUIElementSetMessagingTimeout(application, 0.5)
     forEachItem(attribute(application, 'AXWindows'), window => {
       const title = textAttribute(window, 'AXTitle')
-      if (typeof title !== 'string') return
-      const suffix = title.lastIndexOf(separator)
-      if (suffix < 0) return
-      const name = title.slice(suffix + separator.length).trim()
-      if (!name || name.length > 100) return
-      if (matchesMarker(title, marker) || hasMarkedTab(window, marker)) names.add(name)
+      const parsed = parseWindowTitle(title)
+      if (parsed && (matchesMarker(title, marker) || hasMarkedTab(window, marker))) names.add(parsed.profile)
     })
   })
   return JSON.stringify(names.size === 1 ? names.values().next().value : null)

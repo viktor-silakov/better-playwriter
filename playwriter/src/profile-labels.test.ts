@@ -16,7 +16,7 @@ function nativeArray<T>(values: T[]) {
   return { count: values.length, objectAtIndex: (index: number) => values[index] }
 }
 
-function lookup(applications: AXNode[][], trusted = true): string | null {
+function runChromeScript(args: string[], applications: AXNode[][], trusted = true, chrome?: object) {
   const bridge = Object.assign((value: string) => value, {
     AXIsProcessTrusted: () => trusted,
     NSRunningApplication: {
@@ -41,8 +41,16 @@ function lookup(applications: AXNode[][], trusted = true): string | null {
     $: bridge,
     Ref: () => [],
     ObjC: { import: () => {}, castRefToObject: (value: unknown) => value, unwrap: (value: unknown) => value },
+    Application: () => {
+      if (!chrome) throw new Error('Must not send Apple Events unless the profile is verified')
+      return chrome
+    },
   })
-  return JSON.parse(run(['marker']))
+  return JSON.parse(run(args))
+}
+
+function lookup(applications: AXNode[][], trusted = true): string | null {
+  return runChromeScript(['marker'], applications, trusted)
 }
 
 const tab = (title: string): AXNode => ({ AXRole: 'AXRadioButton', AXTitle: title })
@@ -76,5 +84,55 @@ describe('local Chrome profile identification', () => {
 
   it('returns no label when Accessibility is unavailable', () => {
     expect(lookup([], false)).toBeNull()
+  })
+})
+
+function fakeChromeWindow(id: number, title: string, urls: string[]) {
+  let active = 1
+  const tabs = Object.assign([...urls], { url: () => [...tabs] })
+  return {
+    id: () => id,
+    title: () => title,
+    mode: () => 'normal',
+    tabs,
+    currentIndex: () => active,
+    set activeTabIndex(index: number) { active = index },
+    get activeTabIndex(): () => number { return () => active },
+  }
+}
+
+function fakeChrome(windows: ReturnType<typeof fakeChromeWindow>[]) {
+  return {
+    windows: Object.assign(() => windows, { byId: (id: number) => windows.find(window => window.id() === id) }),
+    Tab: ({ url }: { url: string }) => url,
+  }
+}
+
+describe('opening a tab by verified Chrome profile', () => {
+  const open = (profile: string, url = '', windows = [window('Home - Google Chrome - Work')], chrome?: object) =>
+    runChromeScript(['--open-in-profile', profile, url], [windows], true, chrome).status
+
+  it('creates a blank tab in the requested window only', () => {
+    const work = fakeChromeWindow(10, 'Home', ['https://work.example/'])
+    const personal = fakeChromeWindow(20, 'News', ['https://news.example/'])
+    const nativeWindows = [window('News - Google Chrome - Personal'), window('Home - Google Chrome - Work')]
+    expect(open('Work', '', nativeWindows, fakeChrome([personal, work]))).toBe('opened')
+    expect([...personal.tabs]).toEqual(['https://news.example/'])
+    expect([...work.tabs]).toEqual(['https://work.example/', 'chrome://newtab/'])
+    expect(work.currentIndex()).toBe(2)
+  })
+
+  it('activates an exact existing URL in the verified profile', () => {
+    const target = 'https://work.example/?scope=inbox#new'
+    const work = fakeChromeWindow(10, 'Home', ['https://work.example/', target])
+    expect(open('Work', target, undefined, fakeChrome([work]))).toBe('reused')
+    expect(work.tabs).toHaveLength(2)
+    expect(work.currentIndex()).toBe(2)
+  })
+
+  it('refuses aliases, duplicate profile names and ambiguous window mappings', () => {
+    expect(open('Wor')).toBe('profile-not-found')
+    expect(open('Work', '', [window('A - Google Chrome - Work'), window('B - Google Chrome - Work')])).toBe('ambiguous-profile')
+    expect(open('Work', '', [window('Home - Google Chrome - Work'), window('Home - Google Chrome - Personal')])).toBe('ambiguous-window')
   })
 })

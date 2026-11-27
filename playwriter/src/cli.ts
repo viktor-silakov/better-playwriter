@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { COMMAND_NAME } from './brand.js'
+import { skillReferenceNames } from './skill-references.js'
 import { readEnv, dataPath } from './runtime-config.js'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -1179,6 +1180,20 @@ cli
   })
 
 cli
+  .command('browser open [url]', 'Open or activate a tab in a verified macOS Chrome profile')
+  .option('--profile <name>', z.string().describe('Exact name shown in Chrome'))
+  .action(async (url, options) => {
+    try {
+      const { openLocalChromeProfile } = await import('./profile-identify.js')
+      const result = await openLocalChromeProfile({ profile: options.profile ?? '', url })
+      console.log(result === 'reused' ? 'Existing tab activated.' : 'Tab opened.')
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : 'Could not open the Chrome tab.')
+      process.exitCode = 1
+    }
+  })
+
+cli
   .command('browser identify [key]', 'Identify local Chrome profiles using macOS Accessibility')
   .action(async (key) => {
     if (process.platform !== 'darwin') throw new Error('Automatic profile identification requires macOS. Use a browser key from browser list.')
@@ -1259,11 +1274,14 @@ cli.command('logfile', 'Print the path to the relay server log file').action(() 
   console.log(`cdp: ${LOG_CDP_FILE_PATH}`)
 })
 
-cli.command('skill', 'Print the Better Playwriter agent instructions').action(() => {
-  const skillPath = path.join(__dirname, '..', 'src', 'skill.md')
-  const content = fs.readFileSync(skillPath, 'utf-8')
-  console.log(content)
-})
+cli
+  .command('skill', 'Print core agent instructions or a topic reference')
+  .option('--ref <topic>', z.enum(skillReferenceNames).optional().describe(`Print one topic: ${skillReferenceNames.join(', ')}`))
+  .action(({ ref }) => {
+    const sourceDir = path.join(__dirname, '..', 'src')
+    const skillPath = ref ? path.join(sourceDir, 'skill-references', `${ref}.md`) : path.join(sourceDir, 'skill.md')
+    process.stdout.write(fs.readFileSync(skillPath, 'utf-8'))
+  })
 
 cli.help()
 cli.completions()
