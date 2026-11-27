@@ -125,7 +125,7 @@ await state.page.waitForSelector('article', { timeout: 10000 })
 await waitForPageLoad({ page: state.page, timeout: 5000 })
 ```
 
-Actions and waits give up after 5 seconds by default. Pass `timeout` for content that takes longer.
+Actions and waits give up after half the execute timeout (5 seconds by default). For slow content pass `timeout` to the action or raise the execute timeout.
 
 **8. Not using better-playwriter for JS-rendered sites**
 Use the rendered page for single-page apps:

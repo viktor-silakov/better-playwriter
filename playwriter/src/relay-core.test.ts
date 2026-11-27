@@ -1171,6 +1171,10 @@ describe('Relay Core Tests', () => {
       expect(result.text).toContain('Timeout 5000ms exceeded')
       expect(result.text).toContain('#missing-button')
       expect(Date.now() - started).toBeLessThan(9000)
+
+      // A longer execute timeout also gives slow elements more time.
+      const patient = await executeCli({ sessionId, timeout: 14000, code: `await context.pages()[0].click('#missing-button')` })
+      expect(patient.text).toContain('Timeout 7000ms exceeded')
     } finally {
       await deleteCliSession(sessionId)
     }

@@ -456,6 +456,11 @@ export function formatValue(value: unknown): string {
  */
 export const DEFAULT_ACTION_TIMEOUT_MS = 5000
 
+/** Half of the execute timeout, so a call with a longer timeout also waits longer for slow elements. */
+export function actionTimeoutFor(executeTimeout: number): number {
+  return Math.min(60000, Math.max(1000, Math.round(executeTimeout / 2)))
+}
+
 export function formatConsoleLogs({
   logs,
   title = 'Console output',
@@ -1529,6 +1534,7 @@ export class PlaywrightExecutor {
       if (signal?.aborted) {
         throw new ExecuteCancelledError()
       }
+      context.setDefaultTimeout(actionTimeoutFor(timeout))
 
       this.logger.log('Executing code:', code)
 
