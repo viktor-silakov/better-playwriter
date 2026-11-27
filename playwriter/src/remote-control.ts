@@ -424,7 +424,6 @@ export type RemoteHelloMessage = {
     email?: string
     id?: string
     installId?: string
-    profileLabel?: string
     version?: string
     remote?: boolean
   }

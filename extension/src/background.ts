@@ -514,10 +514,6 @@ class ConnectionManager {
         }
         clearTimeout(openTimeout)
         this.ws = socket
-        void withTimeout(chrome.storage.local.get('profileLabel'), 2000, {} as Record<string, unknown>).then(({ profileLabel }) => {
-          if (typeof profileLabel !== 'string' || !profileLabel.trim() || socket.readyState !== WebSocket.OPEN || this.ws !== socket) return
-          socket.send(JSON.stringify({ method: 'hello', params: { profileLabel: profileLabel.trim() } }))
-        })
         void profileInfoPromise.then((info) => {
           if (!info || socket.readyState !== WebSocket.OPEN || this.ws !== socket) return
           socket.send(JSON.stringify({ method: 'hello', params: { email: info.email || '', id: info.id || '' } }))
@@ -696,13 +692,6 @@ class ConnectionManager {
 }
 
 export const connectionManager = new ConnectionManager()
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== 'local' || !changes.profileLabel) return
-  const label = changes.profileLabel.newValue
-  if (connectionManager.ws?.readyState === WebSocket.OPEN) {
-    connectionManager.ws.send(JSON.stringify({ method: 'hello', params: { profileLabel: typeof label === 'string' ? label.trim() : '' } }))
-  }
-})
 
 export const store = createStore<ExtensionState>(() => ({
   tabs: new Map(),

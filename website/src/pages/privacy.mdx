@@ -9,7 +9,7 @@ description: Data used by the Better Playwriter extension and local relay.
 
 Better Playwriter runs the browser relay on your device by default. The extension sends data from enabled tabs to the local relay so clients can run browser commands and receive results. Data can include URLs, page content, screenshots, input events, and network details, depending on the commands you run.
 
-The extension uses a random local installation ID and may read your Chrome profile name or account email to help distinguish connected profiles. You can set a profile label in extension settings. The local relay can store logs, recordings, and profile labels on your device. `better-playwriter logfile` lists the log locations. Usage telemetry is off by default.
+The extension uses a random local installation ID and may read your Chrome account email to distinguish connected profiles. On macOS, the CLI can read Chrome profile names through Accessibility and cache them locally. The local relay can store logs and recordings on your device. `better-playwriter logfile` lists the log locations. Usage telemetry is off by default.
 
 ## Optional external connections
 

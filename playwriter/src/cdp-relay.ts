@@ -1618,7 +1618,7 @@ export async function startPlayWriterCDPRelayServer({
         extensionId: ext.id,
         stableKey: ext.stableKey,
         browser: ext.info.browser || null,
-        profile: ext.info ? { email: ext.info.email || '', id: ext.info.id || '', label: ext.info.profileLabel || '' } : null,
+        profile: ext.info ? { email: ext.info.email || '', id: ext.info.id || '', label: '' } : null,
         activeTargets: ext.connectedTargets.size,
         activeTabs: [...ext.connectedTargets.values()].filter((target) => target.targetInfo.type === 'page').length,
         playwriterVersion: ext.info?.version || null,
@@ -2203,7 +2203,6 @@ export async function startPlayWriterCDPRelayServer({
                   email: helloInfo.email,
                   id: helloInfo.id,
                   installId: helloInfo.installId,
-                  profileLabel: helloInfo.profileLabel,
                   version: helloInfo.version,
                 },
               }),
@@ -3489,7 +3488,7 @@ export async function startPlayWriterCDPRelayServer({
         ...session,
         tabs: tabs?.length ?? null,
         tabUrls: includeTabs ? tabs?.map((target) => target.targetInfo.url) : undefined,
-        profile: profile ? { email: profile.email || '', id: profile.id || '', label: profile.profileLabel || '' } : session.profile,
+        profile: profile ? { email: profile.email || '', id: profile.id || '', label: '' } : session.profile,
       }
     }) })
   })
@@ -3698,7 +3697,7 @@ export async function startPlayWriterCDPRelayServer({
       sessionMetadata: {
         extensionId: conn.stableKey,
         browser: conn.info.browser || null,
-        profile: conn.info ? { email: conn.info.email || '', id: conn.info.id || '', label: conn.info.profileLabel || '' } : null,
+        profile: conn.info ? { email: conn.info.email || '', id: conn.info.id || '', label: '' } : null,
       },
       patchright,
     })
@@ -4082,7 +4081,7 @@ export async function startPlayWriterCDPRelayServer({
           sessionMetadata: {
             extensionId: extensionKey,
             browser: extension.info.browser || null,
-            profile: { email: extension.info.email || '', id: extension.info.id || '', label: extension.info.profileLabel || '' },
+            profile: { email: extension.info.email || '', id: extension.info.id || '', label: '' },
           },
         })
       }
@@ -4156,7 +4155,7 @@ export async function startPlayWriterCDPRelayServer({
           sessionMetadata: {
             extensionId: conn.stableKey,
             browser: conn.info.browser || null,
-            profile: conn.info ? { email: conn.info.email || '', id: conn.info.id || '', label: conn.info.profileLabel || '' } : null,
+            profile: conn.info ? { email: conn.info.email || '', id: conn.info.id || '', label: '' } : null,
           },
         })
         return createdId

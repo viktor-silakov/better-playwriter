@@ -4,19 +4,6 @@ import {
   readAutoAttachSettings,
 } from 'better-playwriter/src/auto-attach-rules'
 
-const input = document.querySelector<HTMLInputElement>('#label')!
-const status = document.querySelector<HTMLOutputElement>('#status')!
-
-void chrome.storage.local.get('profileLabel').then(({ profileLabel }) => {
-  input.value = typeof profileLabel === 'string' ? profileLabel : ''
-})
-document.querySelector('#profile')!.addEventListener('submit', (event) => {
-  event.preventDefault()
-  void chrome.storage.local.set({ profileLabel: input.value.trim() }).then(() => {
-    status.textContent = ' Saved'
-  })
-})
-
 const masksInput = document.querySelector<HTMLTextAreaElement>('#masks')!
 const rememberInput = document.querySelector<HTMLInputElement>('#remember')!
 const masksStatus = document.querySelector<HTMLOutputElement>('#masks-status')!

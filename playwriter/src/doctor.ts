@@ -16,26 +16,26 @@ export async function diagnoseLocalRelay({ browser, token }: { browser?: string;
     checkMacAccessibility(),
     run('ffmpeg', ['-version'], { timeout: 2000 }).then(() => true, () => false),
   ])
-  const labels = readLocalProfileNames()
+  const names = readLocalProfileNames()
   const profiles = getLocalExtensionStatuses(extensions).map((extension) => {
     const key = extension.stableKey || extension.extensionId
     return {
       key,
       browser: extension.browser,
-      label: extension.profile?.label || labels[key] || null,
+      profileName: names[key] || null,
       tabs: extension.activeTabs ?? extension.activeTargets,
       version: extension.playwriterVersion,
       warning: getExtensionOutdatedWarning(extension.playwriterVersion),
     }
   })
-  const matching = browser ? profiles.filter((profile) => profile.key === browser || profile.label === browser) : profiles
+  const matching = browser ? profiles.filter((profile) => profile.key === browser || profile.profileName === browser) : profiles
   const messages: string[] = []
   if (!info) {
     messages.push('Relay is not responding. Run better-playwriter session new to start it.')
   } else if (browser && !matching.length) {
     messages.push('The requested profile is not connected. Open it and check Better Playwriter is enabled.')
   } else if (browser && matching.length > 1) {
-    messages.push('Several profiles have this label. Pass the exact profile key with --browser.')
+    messages.push('Several Chrome profiles have this name. Pass the exact browser key with --browser.')
   } else if (!profiles.length) {
     messages.push('No extension is connected. Enable Better Playwriter in the Chrome profile you want to use.')
   } else if (matching.every((profile) => !profile.tabs)) {

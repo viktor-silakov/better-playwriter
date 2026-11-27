@@ -158,7 +158,8 @@ export interface BrowserOption {
   browser: string
   profile: string
   /** User-supplied local label, if present. */
-  profileLabel?: string
+  /** Name observed in Chrome through the local profile probe. */
+  profileName?: string
   /** Extension entries. null means the relay's only (legacy) extension */
   extensionId?: string | null
   /** Direct CDP entries */
@@ -167,13 +168,13 @@ export interface BrowserOption {
 }
 
 function extensionToBrowserOption(extension: ExtensionStatus, names: Record<string, string> = {}): BrowserOption {
-  const label = extension.profile?.label || (extension.stableKey ? names[extension.stableKey] : undefined)
+  const name = extension.stableKey ? names[extension.stableKey] : undefined
   return {
     key: extension.stableKey || extension.extensionId,
     type: 'extension',
     browser: extension.browser || 'Chrome',
-    profile: label || extension.profile?.email || '(profile unknown)',
-    profileLabel: label || undefined,
+    profile: name || '(profile unknown)',
+    profileName: name,
     extensionId: extension.extensionId === 'default' ? null : extension.stableKey || extension.extensionId,
   }
 }
@@ -236,11 +237,13 @@ export async function discoverBrowserOptions({
   relay,
   extensionWaitMs,
   logger,
+  identifyProfiles = true,
 }: {
   relay: RelayTarget
   /** How long to wait for an extension to connect to a local relay */
   extensionWaitMs: number
   logger?: { log: (...args: any[]) => void }
+  identifyProfiles?: boolean
 }): Promise<{ options: BrowserOption[]; warnings: string[] }> {
   const warnings: string[] = []
   const [extensions, instances, headless] = await Promise.all([
@@ -254,6 +257,11 @@ export async function discoverBrowserOptions({
     ...instances.map(instanceToBrowserOption),
     ...headless,
   ]
+  if (identifyProfiles && isLocalRelay(relay) && process.platform === 'darwin') {
+    const { identifyLocalChromeProfile } = await import('./profile-identify.js')
+    const { identifyUnknownProfiles } = await import('./profile-auto-identify.js')
+    await identifyUnknownProfiles(options, (key) => identifyLocalChromeProfile(key, relay))
+  }
   return { options, warnings }
 }
 
@@ -291,7 +299,7 @@ export type NewSessionOptions = {
   relay: RelayTarget
   cwd: string
   client: SessionClient
-  /** Key from discoverBrowserOptions, or "headless" (launch Chrome) */
+  /** Browser key, a verified local Chrome profile name on macOS, or "headless". */
   browser?: string
   /** Direct CDP: '' auto-discovers Chrome with debugging on, else a ws:// URL or host:port */
   direct?: string
@@ -313,7 +321,7 @@ type RelaySessionResponse = {
 /**
  * Create a relay session the same way for the CLI `session new` and the MCP
  * `session_new` tool. Selection order: remote, headless, direct, then the
- * browser key, then the only connected extension.
+ * browser key or verified Chrome profile name, then the only connected extension.
  */
 export async function newSession(options: NewSessionOptions): Promise<NewSessionResult> {
   const { relay, cwd, client, browser, direct, remote, tabGroup, tabGroupColor, patchright, logger } = options
@@ -385,18 +393,6 @@ export async function newSession(options: NewSessionOptions): Promise<NewSession
     return createExtension(option.extensionId ?? null)
   }
 
-  const selectOption = ({ key, options: browserOptions }: { key: string; options: BrowserOption[] }) => {
-    const selected = browserOptions.find((opt) => opt.key === key)
-    if (selected) {
-      return selected
-    }
-    const byProfile = browserOptions.filter((option) => option.type === 'extension' && option.profileLabel === key)
-    if (byProfile.length === 1) return byProfile[0]
-    if (byProfile.length > 1) throw new Error(`Multiple browsers have profile label "${key}"; use a browser key instead.`)
-    const available = browserOptions.map((opt) => opt.key).join(', ') || '(none)'
-    throw new Error(`Browser not found: ${key}\nAvailable: ${available}`)
-  }
-
   if (remote) {
     await ensureLocalRelay({ relay, logger })
     const result = await postRelay<RelaySessionResponse>({
@@ -447,7 +443,8 @@ export async function newSession(options: NewSessionOptions): Promise<NewSession
       `)
     }
     if (browser) {
-      return createFromOption(selectOption({ key: browser, options: directOptions }))
+      const { selectBrowserOption } = await import('./profile-auto-identify.js')
+      return createFromOption(await selectBrowserOption({ key: browser, options: directOptions }))
     }
     if (directOptions.length === 1) {
       return createFromOption(directOptions[0])
@@ -467,43 +464,45 @@ export async function newSession(options: NewSessionOptions): Promise<NewSession
   // One extension and no explicit pick: skip the slower direct discovery
   if (extensions.length === 1 && !browser) {
     const option = extensionToBrowserOption(extensions[0], local ? readLocalProfileNames() : {})
-    if (local && process.platform === 'darwin' && option.key.startsWith('install:Chrome:') && !option.profileLabel) {
+    if (local && process.platform === 'darwin' && option.key.startsWith('install:Chrome:') && !option.profileName) {
       const { identifyLocalChromeProfile } = await import('./profile-identify.js')
       const { identifyUnknownProfiles } = await import('./profile-auto-identify.js')
-      await identifyUnknownProfiles([option], identifyLocalChromeProfile)
+      await identifyUnknownProfiles([option], (key) => identifyLocalChromeProfile(key, relay))
     }
     return createFromOption(option)
   }
 
-  if (extensions.length > 0 || browser) {
+  const names = local ? readLocalProfileNames() : {}
+  const extensionOptions = extensions.map((extension) => extensionToBrowserOption(extension, names))
+  // Profile probes use this explicit-key path to avoid another lookup.
+  const selectedExtension = extensionOptions.find((option) => option.key === browser)
+  if (selectedExtension) return createFromOption(selectedExtension)
+
+  const discoverDirect = local && (browser ? browser.startsWith('direct:') : extensions.length > 0)
+  if (discoverDirect) {
     logger?.log(pc.dim('Discovering additional browsers...'))
   }
-  // An explicit direct:<port> key from session_list must work without an extension too
-  const discoverDirect = local && (extensions.length > 0 || Boolean(browser?.startsWith('direct:')))
   const directOptions = discoverDirect ? (await discoverChromeInstances()).map(instanceToBrowserOption) : []
-  const names = local ? readLocalProfileNames() : {}
-  const allOptions = [...extensions.map((extension) => extensionToBrowserOption(extension, names)), ...directOptions]
+  const allOptions = [...extensionOptions, ...directOptions]
 
-  // Explicit extension keys are used by the identification probe itself and
-  // already select the right browser without looking up its profile name.
-  if (local && process.platform === 'darwin' && !allOptions.some((option) => option.key === browser)) {
-    const unknown = allOptions.filter((option) => option.type === 'extension' && option.key.startsWith('install:Chrome:') && !option.profileLabel)
-    if (unknown.length) {
-      const { identifyLocalChromeProfile } = await import('./profile-identify.js')
-      const { identifyUnknownProfiles } = await import('./profile-auto-identify.js')
-      await identifyUnknownProfiles(unknown, identifyLocalChromeProfile)
+  if (browser) {
+    if (/^cloud(?:-\d+)?$/.test(browser)) {
+      throw new Error('Managed browsers are provisioned by your provider. Connect with --direct <CDP URL>.')
     }
+    const { selectBrowserOption } = await import('./profile-auto-identify.js')
+    const identifyProfile = local && process.platform === 'darwin' && !browser.startsWith('direct:')
+      ? (await import('./profile-identify.js')).identifyLocalChromeProfile
+      : undefined
+    const identify = identifyProfile ? (key: string) => identifyProfile(key, relay) : undefined
+    return createFromOption(await selectBrowserOption({ key: browser, options: allOptions, identify }))
   }
-
-  if (browser && /^cloud(?:-\d+)?$/.test(browser) && !allOptions.some((option) => option.profileLabel === browser)) {
-    throw new Error('Managed browsers are provisioned by your provider. Connect with --direct <CDP URL>.')
-  }
-
   if (allOptions.length === 0) {
     throw new ExtensionNotConnectedError()
   }
-  if (browser) {
-    return createFromOption(selectOption({ key: browser, options: allOptions }))
+  if (local && process.platform === 'darwin') {
+    const { identifyLocalChromeProfile } = await import('./profile-identify.js')
+    const { identifyUnknownProfiles } = await import('./profile-auto-identify.js')
+    await identifyUnknownProfiles(allOptions, (key) => identifyLocalChromeProfile(key, relay))
   }
   return { kind: 'choose', message: 'Multiple browsers detected:', options: allOptions, warnings }
 }
@@ -520,6 +519,7 @@ export type RelaySessionInfo = {
   stateKeys: string[]
   browser: string | null
   profile: { email: string; id: string; label?: string } | null
+  profileName?: string
   extensionId: string | null
   cwd: string | null
   tabGroup?: string | null
@@ -536,7 +536,11 @@ export async function listSessions(relay: RelayTarget, { includeTabs = false } =
     throw new Error(await readRelayError(response))
   }
   const result = (await response.json()) as { sessions: RelaySessionInfo[] }
-  return result.sessions
+  const names = isLocalRelay(relay) ? readLocalProfileNames() : {}
+  return result.sessions.map((session) => ({
+    ...session,
+    profileName: session.extensionId ? names[session.extensionId] : undefined,
+  }))
 }
 
 export async function pruneSessions({

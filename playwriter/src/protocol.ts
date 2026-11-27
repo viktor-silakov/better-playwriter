@@ -289,6 +289,7 @@ export type ExtensionHelloMessage = {
     email?: string
     id?: string
     installId?: string
+    /** Legacy field accepted on the wire. User-assigned labels are ignored. */
     profileLabel?: string
     version?: string
     remote?: boolean

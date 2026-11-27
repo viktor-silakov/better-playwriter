@@ -52,7 +52,7 @@ const cli = goke(COMMAND_NAME)
 
 cli
   .command('doctor', 'Check the local relay, browser profiles, tabs, and optional tools')
-  .option('--browser <key>', 'Check a specific profile by key or label')
+  .option('--browser <key>', 'Check a specific browser key or known Chrome profile name')
   .option('--json', 'Print machine-readable diagnostics')
   .option('--token <token>', 'Authentication token (or use BETTER_PLAYWRITER_TOKEN env var)')
   .action(async (options) => {
@@ -64,7 +64,7 @@ cli
       console.log(`Better Playwriter ${report.cliVersion}`)
       console.log(`Relay on port ${report.relay.port}: ${report.relay.version ?? 'not responding'}`)
       for (const profile of report.profiles) {
-        console.log(`${profile.label || profile.browser || 'Browser'} (${profile.key}): ${profile.tabs} attached tab(s), extension ${profile.version || 'unknown'}`)
+        console.log(`${profile.profileName || profile.browser || 'Browser'} (${profile.key}): ${profile.tabs} attached tab(s), extension ${profile.version || 'unknown'}`)
         if (profile.warning) console.log(profile.warning)
       }
       if (process.platform === 'darwin') {
@@ -378,7 +378,7 @@ cli
   .command('session new', 'Create a new session and print the session ID')
   .option('--host <host>', 'Remote relay server host')
   .option('--token <token>', 'Authentication token (or use BETTER_PLAYWRITER_TOKEN env var)')
-  .option('--browser <key>', 'Browser key when multiple browsers are available. Use "headless" to launch Chrome without an extension.')
+  .option('--browser <key>', 'Browser key or local Chrome profile name on macOS. Use "headless" to launch Chrome without an extension.')
   .option('--direct [endpoint]', 'Use direct CDP connection without the extension. Enable debugging first at chrome://inspect/#remote-debugging or launch Chrome with --remote-debugging-port=9222. Auto-discovers instances or accepts an explicit ws:// endpoint')
   .option('--remote <id>', 'Connect to a browser another user shared via the extension `Remote control` button')
   .option('--tab-group <name>', 'Tab group title for this session (default "playwriter", or "remote" with --remote)')
@@ -460,7 +460,7 @@ cli
 
     const idWidth = Math.max(2, ...sessions.map((session) => String(session.id).length))
     const browserWidth = Math.max(7, ...sessions.map((session) => (session.browser || 'Chrome').length))
-    const profileWidth = Math.max(7, ...sessions.map((session) => (session.profile?.label || session.profile?.email || '').length || 1))
+    const profileWidth = Math.max(7, ...sessions.map((session) => (session.profileName || session.profile?.email || '').length || 1))
     const extensionWidth = Math.max(2, ...sessions.map((session) => (session.extensionId || '').length || 1))
     const groupWidth = Math.max(5, ...sessions.map((session) => (session.tabGroup || '').length || 1))
     const cwdWidth = Math.max(3, ...sessions.map((session) => (session.cwd || '').length || 1))
@@ -487,14 +487,14 @@ cli
 
     for (const session of sessions) {
       const stateStr = session.stateKeys.length > 0 ? session.stateKeys.join(', ') : '-'
-      const profileLabel = session.profile?.label || session.profile?.email || '-'
+      const profileName = session.profileName || session.profile?.email || '-'
       const cwdLabel = session.cwd || '-'
       console.log(
         String(session.id).padEnd(idWidth) +
           '  ' +
           (session.browser || 'Chrome').padEnd(browserWidth) +
           '  ' +
-          profileLabel.padEnd(profileWidth) +
+          profileName.padEnd(profileWidth) +
           '  ' +
           (session.extensionId || '-').padEnd(extensionWidth) +
           '  ' +
@@ -1181,8 +1181,8 @@ cli
 cli
   .command('browser identify [key]', 'Identify local Chrome profiles using macOS Accessibility')
   .action(async (key) => {
-    if (process.platform !== 'darwin') throw new Error('Automatic profile identification currently requires macOS. Set a label in the extension options instead.')
-    const { options } = await discoverBrowserOptions({ relay: {}, extensionWaitMs: BROWSER_LIST_EXTENSION_WAIT_MS, logger: console })
+    if (process.platform !== 'darwin') throw new Error('Automatic profile identification requires macOS. Use a browser key from browser list.')
+    const { options } = await discoverBrowserOptions({ relay: {}, extensionWaitMs: BROWSER_LIST_EXTENSION_WAIT_MS, logger: console, identifyProfiles: false })
     const candidates = options.filter((option) => option.type === 'extension' && option.key.startsWith('install:Chrome:') && (!key || option.key === key))
     if (!candidates.length) throw new Error('No matching local Chrome extension is connected.')
     const { identifyLocalChromeProfile } = await import('./profile-identify.js')
@@ -1206,16 +1206,6 @@ cli
       extensionWaitMs: BROWSER_LIST_EXTENSION_WAIT_MS,
       logger: console,
     })
-    // Probe only local Chrome profiles without a known name. Never match a
-    // remote relay against this machine's accessibility tree.
-    if (process.platform === 'darwin' && !options.host && !readEnv('HOST')) {
-      const unknown = allOptions.filter((option) => option.type === 'extension' && option.key.startsWith('install:Chrome:') && !option.profileLabel)
-      if (unknown.length) {
-        const { identifyLocalChromeProfile } = await import('./profile-identify.js')
-        const { identifyUnknownProfiles } = await import('./profile-auto-identify.js')
-        await identifyUnknownProfiles(unknown, identifyLocalChromeProfile)
-      }
-    }
     for (const warning of warnings) {
       console.error(pc.dim(warning))
     }
@@ -1238,7 +1228,7 @@ cli
       console.log(pc.dim('Connect with: better-playwriter session new --direct'))
       console.log(pc.dim('Chrome may ask to approve the debugging connection.'))
     } else {
-      console.log(pc.dim('Use with: better-playwriter session new [--browser <key>]'))
+      console.log(pc.dim('Use with: better-playwriter session new [--browser <key-or-name>]'))
     }
   })
 

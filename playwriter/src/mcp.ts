@@ -392,7 +392,7 @@ server.tool(
         const tabs = typeof s.tabs === 'number' ? ` tabs=${s.tabs}` : ''
         const state = s.stateKeys.length > 0 ? ` state=${s.stateKeys.join(',')}` : ''
         const urls = s.tabUrls?.map((url) => '\n  - ' + JSON.stringify(url)).join('') ?? ''
-        return `- ${s.id}${tags.length > 0 ? ` (${tags.join(', ')})` : ''}: ${s.browser || 'Chrome'} ${s.profile?.label || s.profile?.email || ''}${group}${tabs}${state}${urls}`
+        return `- ${s.id}${tags.length > 0 ? ` (${tags.join(', ')})` : ''}: ${s.browser || 'Chrome'} ${s.profileName || s.profile?.email || ''}${group}${tabs}${state}${urls}`
       })
       const warnings = browsers.warnings.map((warning) => `Warning: ${warning}`)
       const browserTable = browsers.options.length > 0 ? formatBrowserTable(browsers.options) : 'No browsers detected. Ask the user to click the Better Playwriter extension icon on a tab.'
@@ -422,7 +422,7 @@ server.tool(
     browser: z
       .string()
       .optional()
-      .describe('Browser KEY from session_list. "headless" launches headless Chrome'),
+      .describe('Browser key from session_list or local Chrome profile name on macOS. "headless" launches headless Chrome'),
     direct: z
       .string()
       .optional()

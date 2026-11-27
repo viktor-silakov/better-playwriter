@@ -28,6 +28,6 @@ Enable the extension on a tab in Chrome. The MCP starts the relay. The first `ex
 | `session_delete` | Delete a session, optionally closing its tabs. |
 | `session_prune` | End idle local extension sessions and optionally release or close the tabs they created. |
 
-For multiple Chrome profiles, use `session_list` to get a browser key before calling `session_new`. For direct Chrome DevTools Protocol, enable Chrome debugging and pass `direct: "auto"` or an explicit `ws://127.0.0.1:9222/devtools/browser/...` endpoint. Chrome may ask the user to approve the connection.
+For multiple Chrome profiles, use `session_list` to get a browser key before calling `session_new`. On macOS, you can also pass a local Chrome profile name. The CLI and MCP verify the current name when selecting it. For direct Chrome DevTools Protocol, enable Chrome debugging and pass `direct: "auto"` or an explicit `ws://127.0.0.1:9222/devtools/browser/...` endpoint. Chrome may ask the user to approve the connection.
 
 For clients on another machine, use a relay you control and set `BETTER_PLAYWRITER_HOST` and `BETTER_PLAYWRITER_TOKEN` in the MCP server environment. See the [remote relay guide](./docs/remote-access.md).

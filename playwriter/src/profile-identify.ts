@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
-import { deleteSession, executeInSession, isLocalRelay, newSession } from './relay-sessions.js'
+import { deleteSession, executeInSession, isLocalRelay, newSession, type RelayTarget } from './relay-sessions.js'
 import { saveLocalProfileName } from './profile-labels.js'
 
 const run = promisify(execFile)
@@ -26,8 +26,7 @@ async function readChromeProfileName(marker: string): Promise<string | null> {
 }
 
 /** Identify a local Chrome profile through its uniquely marked temporary tab and macOS Accessibility. */
-export async function identifyLocalChromeProfile(key: string): Promise<string | null> {
-  const relay = {}
+export async function identifyLocalChromeProfile(key: string, relay: RelayTarget = {}): Promise<string | null> {
   if (process.platform !== 'darwin' || !isLocalRelay(relay) || !key.startsWith('install:Chrome:')) return null
   const marker = `better-playwriter-${randomUUID()}`
   const session = await newSession({ relay, cwd: process.cwd(), client: 'cli', browser: key, tabGroup: marker })
@@ -38,7 +37,13 @@ export async function identifyLocalChromeProfile(key: string): Promise<string | 
     const result = await executeInSession({ relay, sessionId, code, timeout: 12000, cwd: process.cwd(), signal: AbortSignal.timeout(15000) })
     if (result.isError || result.status !== 200) return null
     const name = await readChromeProfileName(marker)
-    if (name) saveLocalProfileName(key, name)
+    if (name) {
+      try {
+        saveLocalProfileName(key, name)
+      } catch {
+        // A cache write failure does not invalidate the name we just read.
+      }
+    }
     return name
   } finally {
     await deleteSession({ relay, sessionId, closeCreatedTabs: true }).catch(() => {})

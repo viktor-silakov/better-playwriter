@@ -49,22 +49,6 @@ describe('Extension Connection Tests', () => {
     })
   })
 
-  it('updates the profile label without reconnecting', async () => {
-    const serviceWorker = await getExtensionServiceWorker(getBrowserContext())
-    const before = await getExtensionsStatus(TEST_PORT)
-    await serviceWorker.evaluate(() => chrome.storage.local.set({ profileLabel: 'Test profile' }))
-    try {
-      await expect.poll(async () => {
-        const extensions = await getExtensionsStatus(TEST_PORT)
-        return extensions[0]?.profile?.label
-      }).toBe('Test profile')
-      const after = await getExtensionsStatus(TEST_PORT)
-      expect(after[0]?.stableKey).toBe(before[0]?.stableKey)
-    } finally {
-      await serviceWorker.evaluate(() => chrome.storage.local.remove('profileLabel'))
-    }
-  })
-
   it('releases session tabs without closing them or touching other tabs', async () => {
     const browserContext = getBrowserContext()
     const worker = await getExtensionServiceWorker(browserContext)
@@ -1447,6 +1431,38 @@ describe('Extension connect during relay handshake', () => {
       }
     `)
   }, 60000)
+
+  it('ignores a stored legacy profile label when reconnecting to the relay', async () => {
+    const ctx = testCtx!
+    const worker = await getExtensionServiceWorker(ctx.browserContext)
+    const [before] = await getExtensionsStatus(PORT)
+    expect(before?.stableKey).toBeDefined()
+
+    await worker.evaluate(() => chrome.storage.local.set({ profileLabel: 'Obsolete alias' }))
+    ctx.relayServer.close()
+    await expect.poll(() => worker.evaluate(() => globalThis.getExtensionState().connectionState), { timeout: 5_000 }).not.toBe('connected')
+    ctx.relayServer = await startPlayWriterCDPRelayServer({
+      port: PORT,
+      cdpLogger: ctx.cdpLogger,
+      sessionCounterFile: ctx.sessionCounterFile,
+      logger: createFileLogger({ logFilePath: path.join(process.cwd(), 'relay-server.log') }),
+    })
+    await expect.poll(async () => {
+      const [status] = await getExtensionsStatus(PORT)
+      return status?.stableKey
+    }, { timeout: 15_000 }).toBe(before.stableKey)
+
+    const options = await ctx.browserContext.newPage()
+    try {
+      await options.goto(new URL('src/profile-options.html', worker.url()).href)
+      await options.getByLabel('URL masks').waitFor()
+      expect(await options.getByLabel('Profile label').count()).toBe(0)
+      const [after] = await getExtensionsStatus(PORT)
+      expect(after?.profile?.label).toBeFalsy()
+    } finally {
+      await options.close()
+    }
+  })
 })
 
 describe('Extension toolbar icons', () => {

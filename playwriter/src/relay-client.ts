@@ -487,7 +487,9 @@ export type ExtensionBrowser = {
   browser: string
   /** Email reported by Chrome, or null when unavailable. */
   email: string | null
-  /** User-assigned profile label, when configured. */
+  /** Name previously verified in Chrome on this Mac. */
+  profileName?: string | null
+  /** @deprecated Use profileName. This returns the same Chrome name. */
   profileLabel?: string | null
   /** Tabs the extension has currently attached to Better Playwriter. */
   activeTabs: number
@@ -498,12 +500,14 @@ export type SelectBrowser = (
   browsers: ExtensionBrowser[],
 ) => ExtensionBrowser | undefined | Promise<ExtensionBrowser | undefined>
 
-function toExtensionBrowser(extension: ExtensionStatus): ExtensionBrowser {
+function toExtensionBrowser(extension: ExtensionStatus, names: Record<string, string>): ExtensionBrowser {
+  const profileName = extension.stableKey ? names[extension.stableKey] ?? null : null
   return {
     id: extension.stableKey || extension.extensionId,
     browser: extension.browser || 'Chrome',
     email: extension.profile?.email || null,
-    profileLabel: extension.profile?.label || (extension.stableKey ? readLocalProfileNames()[extension.stableKey] : null) || null,
+    profileName,
+    profileLabel: profileName,
     activeTabs: extension.activeTargets,
     playwriterVersion: extension.playwriterVersion,
   }
@@ -512,7 +516,7 @@ function toExtensionBrowser(extension: ExtensionStatus): ExtensionBrowser {
 function formatBrowserList(browsers: ExtensionBrowser[]): string {
   return browsers
     .map((browser) => {
-      return `- ${browser.browser} ${browser.profileLabel || browser.email || '(profile unknown)'} id=${browser.id}`
+      return `- ${browser.browser} ${browser.profileName || '(profile unknown)'} id=${browser.id}`
     })
     .join('\n')
 }
@@ -530,7 +534,8 @@ export async function listBrowsers({
 } = {}): Promise<ExtensionBrowser[]> {
   await ensureRelayServer({ logger })
   const extensions = await waitForConnectedExtensions({ port, logger })
-  return extensions.map(toExtensionBrowser)
+  const names = process.platform === 'darwin' ? readLocalProfileNames() : {}
+  return extensions.map((extension) => toExtensionBrowser(extension, names))
 }
 
 export async function createRelaySession({

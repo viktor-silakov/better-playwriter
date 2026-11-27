@@ -70,7 +70,7 @@ To share one tab between processes (for example many SDK scripts calling `fetch`
 
 With several browsers or profiles connected, pass `selectBrowser: (browsers) => browsers.find((b) => b.id === selectedBrowserId)`. Each item has `id` (stable), `browser` (Chrome, Brave, Ghost...), `email`.
 
-On macOS, `better-playwriter browser identify` uses the built-in Accessibility API to cache Chrome profile names. Enable Accessibility for the app running the CLI or set a label in the extension options. `better-playwriter browser list` shows names; `better-playwriter session new --browser <label>` selects one. Duplicate labels require the browser key.
+On macOS, `better-playwriter browser list` reads and caches actual local Chrome profile names via Accessibility. `better-playwriter browser identify` refreshes them. `session new --browser <name>` verifies the current name. Use the browser key when a name is unavailable or ambiguous.
 
 ### Remote access
 

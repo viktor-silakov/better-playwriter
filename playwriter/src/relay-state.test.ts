@@ -261,13 +261,6 @@ describe('removePlaywrightClient', () => {
 })
 
 describe('extension I/O fields', () => {
-  test('updates and clears a profile label without erasing account identity', () => {
-    const before = stateWithExtension('ext-1', { email: 'person@example.com', profileLabel: 'Work' })
-    const renamed = relayState.updateExtensionInfo(before, { extensionId: 'ext-1', info: { profileLabel: 'Personal' } })
-    expect(renamed.extensions.get('ext-1')?.info).toMatchObject({ email: 'person@example.com', profileLabel: 'Personal' })
-    const cleared = relayState.updateExtensionInfo(renamed, { extensionId: 'ext-1', info: { profileLabel: '' } })
-    expect(cleared.extensions.get('ext-1')?.info.profileLabel).toBe('')
-  })
   test('does not erase query identity with missing hello fields', () => {
     const before = stateWithExtension('ext-1', {
       browser: 'Chromium',

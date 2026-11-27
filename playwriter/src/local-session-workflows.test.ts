@@ -96,9 +96,15 @@ it('restores session IDs, ownership and assignments, and leaves an assigned tab 
   try {
     const first = await start()
     const firstExtension = await connectExtension(first.wsUrl)
+    firstExtension.send({ method: 'hello', params: { profileLabel: 'Misleading alias', email: 'person@example.com' } })
     attach(firstExtension, 'borrowed')
     firstExtension.send({ method: 'ready' })
     await vi.waitFor(() => expect(firstExtension.messages).toContainEqual(expect.objectContaining({ method: 'tabAssignmentOptions' })), waitOptions)
+    const extensionStatus = await first.request<{ extensions: unknown[] }>('/extensions/status')
+    expect(extensionStatus.extensions).toContainEqual(expect.objectContaining({
+      stableKey: extensionKey,
+      profile: expect.objectContaining({ email: 'person@example.com', label: '' }),
+    }))
     const one = await first.request<CreatedSession>('/cli/session/new', { extensionId: extensionKey, tabGroup: 'docs', client: 'mcp' })
     const two = await first.request<CreatedSession>('/cli/session/new', { extensionId: extensionKey, tabGroup: 'dev' })
     const firstVersion = await first.request<{ instanceId: string }>('/version')

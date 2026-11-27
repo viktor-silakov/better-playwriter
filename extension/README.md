@@ -20,7 +20,7 @@ Use **Record Skill** in the toolbar to record just that tab, then stop from the 
 - `scripting` injects the toolbar and locator picker where used.
 - `tabGroups` and `contextMenus` group session tabs and add tab, locator, and sharing actions.
 - `offscreen` and `clipboardWrite` support clipboard and audio actions initiated from the extension.
-- `storage` stores extension state and profile labels.
+- `storage` stores extension state and URL masks.
 - `identity` and `identity.email` help the local relay distinguish Chrome profiles.
 - `webNavigation` tracks navigation and popups for enabled tabs.
 - Host access allows the extension to operate on sites the user chooses.
