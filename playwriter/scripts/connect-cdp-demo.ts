@@ -1,32 +1,31 @@
 /**
  * Minimal proof: connect a Playwright client straight to the running
- * playwriter relay via the CDP URL on localhost:19988.
+ * Better Playwriter relay via its CDP WebSocket URL.
  *
  * Prereqs:
- *   1. `playwriter serve --token secret_token --replace` is running
- *   2. The Playwriter Chrome extension is connected (toggled on a tab)
+ *   1. `better-playwriter serve --token <token> --replace` is running
+ *   2. The Better Playwriter Chrome extension is connected (toggled on a tab)
  *
  * Run:
- *   tsx connect-cdp.ts
+ *   tsx playwriter/scripts/connect-cdp-demo.ts
  */
 
 import { chromium } from '@xmorse/playwright-core'
+import { getRelayPort, readEnv } from '../src/runtime-config.js'
 
-const TOKEN = process.env.PLAYWRITER_TOKEN
+const TOKEN = readEnv('TOKEN')
 if (!TOKEN) {
-  throw new Error('Set PLAYWRITER_TOKEN env var to the token you passed to `playwriter serve --token …`.')
+  throw new Error('Set BETTER_PLAYWRITER_TOKEN to the token passed to `better-playwriter serve --token`.')
 }
 const CLIENT_ID = `cdp-demo-${Date.now()}`
-// Set HOST to your tunnel for remote test, e.g. "wss://mcp.ivanleo.com",
-// or leave default for local.
-const HOST = process.env.PLAYWRITER_CDP_HOST || 'ws://127.0.0.1:19988'
-
-const cdpUrl = `${HOST}/cdp/${CLIENT_ID}?token=${TOKEN}`
+const host = readEnv('CDP_HOST') || `ws://127.0.0.1:${getRelayPort()}`
+const cdpUrl = new URL(`${host.replace(/\/$/, '')}/cdp/${CLIENT_ID}`)
+cdpUrl.searchParams.set('token', TOKEN)
 
 async function main(): Promise<void> {
-  console.log('Connecting to:', cdpUrl)
+  console.log('Connecting to the Better Playwriter relay…')
 
-  const browser = await chromium.connectOverCDP(cdpUrl)
+  const browser = await chromium.connectOverCDP(cdpUrl.href)
 
   const contexts = browser.contexts()
   console.log(`Got ${contexts.length} browser context(s)`)
@@ -40,7 +39,7 @@ async function main(): Promise<void> {
   })
 
   if (pages.length === 0) {
-    console.error('No pages — toggle the Playwriter extension on a tab first.')
+    console.error('No pages — toggle the Better Playwriter extension on a tab first.')
     await browser.close()
     process.exit(1)
   }
@@ -55,6 +54,9 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error(err)
+  const message = String(err)
+    .replaceAll(cdpUrl.href, '[relay URL]')
+    .replaceAll(cdpUrl.search, '?[redacted]')
+  console.error(message)
   process.exit(1)
 })

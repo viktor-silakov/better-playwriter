@@ -1,8 +1,9 @@
-import playwright from 'playwright-core'
+import { chromium } from '@xmorse/playwright-core'
+import { getCdpUrl } from '../src/utils.js'
 
 async function main() {
-  const cdpEndpoint = `ws://localhost:19988/cdp/${Date.now()}`
-  const browser = await playwright.chromium.connectOverCDP(cdpEndpoint)
+  const cdpEndpoint = getCdpUrl()
+  const browser = await chromium.connectOverCDP(cdpEndpoint)
 
   const contexts = browser.contexts()
   console.log(`Found ${contexts.length} browser context(s)`)

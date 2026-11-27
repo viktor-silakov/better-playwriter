@@ -1,5 +1,5 @@
 /**
- * Long-running Playwriter stability test.
+ * Long-running Better Playwriter stability test.
  *
  * Creates a session, opens a single page, then loops for hours executing
  * various Playwright operations every 5 seconds. Tracks success/failure
@@ -41,14 +41,14 @@ function logError(iteration: number, operation: string, err: unknown): void {
 
 async function pw(sessionId: string, code: string): Promise<string> {
   const result =
-    await $`playwriter -s ${sessionId} --timeout 30000 -e ${code}`.text()
+    await $`better-playwriter -s ${sessionId} --timeout 30000 -e ${code}`.text()
   return result.trim()
 }
 
 function printSummary(): void {
   const successRate = totalRuns > 0 ? ((successCount / totalRuns) * 100).toFixed(2) : '0.00'
   console.log('\n' + '='.repeat(60))
-  console.log('PLAYWRITER LONG-RUNNING STABILITY TEST — SUMMARY')
+  console.log('BETTER PLAYWRITER LONG-RUNNING STABILITY TEST — SUMMARY')
   console.log('='.repeat(60))
   console.log(`Duration requested : ${DURATION_HOURS} hours`)
   console.log(`Total operations   : ${totalRuns}`)
@@ -84,7 +84,7 @@ async function main(): Promise<void> {
 
   // Create a session
   log('Creating session...')
-  const sessionRaw = await $`playwriter session new`.text()
+  const sessionRaw = await $`better-playwriter session new`.text()
   const sessionMatch = sessionRaw.match(/Session\s+(\S+)\s+created/)
   if (!sessionMatch) {
     throw new Error(`Failed to parse session id from: ${sessionRaw.trim()}`)

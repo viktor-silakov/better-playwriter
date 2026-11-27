@@ -14,7 +14,7 @@ Get a new session ID to use in commands. Always pass a short task-specific `--ta
 
 ```bash
 better-playwriter session new --tab-group docs
-# outputs: 1
+# Session 1 created. Use with: better-playwriter -s 1 -e "..."
 ```
 
 **Always use your own session** - pass `-s <id>` to all commands. Using the same session preserves your `state` between calls. Using a different session gives you a fresh `state`.

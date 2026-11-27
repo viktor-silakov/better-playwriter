@@ -1,32 +1,17 @@
 ---
 title: Framer Plugin Iframe Snapshot Guide
 description: Step-by-step instructions to open the Framer MCP plugin iframe and run snapshot on it.
-prompt: |
-  Create a concise step-by-step guide to open the Framer plugin iframe and
-  verify snapshot on that iframe using playwriter CLI. Include the
-  exact Framer project URL and the plugins.framercdn iframe URL. Also document
-  the Command+K workflow to open the MCP plugin: press Command+K, search for MCP
-  in the command palette, press Enter, then wait ~1 second for the iframe to
-  appear. Reference any files read for context.
-
-  Sources:
-  - @/Users/morse/Documents/GitHub/playwriter/tmp/session-ses_437d9a10bffeFmy3k3hVcAFZnf.md
-  - @/Users/morse/Documents/GitHub/playwriter/tmp/session-ses_43807a563ffe1tCS0FWK79IpcV.md
 ---
 
 ## Step-by-step
 
-- Always reuse an existing Framer tab when possible (do not open a new page each run).
-  Use this pattern to pick an existing page first, and open a new tab only if none is found. Later commands use `state.page`:
+- Open your Framer project in an already running Chrome profile and connect the tab with Better Playwriter.
+- Use `better-playwriter browser list` to find the profile and create a session with `better-playwriter session new --browser <browser-key> --tab-group framer`. Set `SESSION_ID` to the returned ID.
+- Replace `YOUR_PROJECT_URL` with the exact URL of the connected tab.
 
 ```bash
-playwriter -s 1 -e "const target = 'https://framer.com/projects/unframer-source--XOxwdyyCrFEE9uKnKFPq-6gX7n?node=augiA20Il'; state.page = context.pages().findLast((p) => p.url().includes('framer.com/projects/unframer-source')); if (!state.page) { state.page = await context.newPage(); await state.page.goto(target, { waitUntil: 'domcontentloaded' }); } console.log(state.page.url());"
+better-playwriter -s "$SESSION_ID" -e "state.page = context.pages().findLast(p => p.url() === 'YOUR_PROJECT_URL'); if (state.page === undefined) throw new Error('Connect the Framer editor tab first.');"
 ```
-
-- Never call `bringToFront()` in this flow. It steals focus and interrupts manual work while tests are running.
-
-- Open the Framer project URL in Chrome:
-  https://framer.com/projects/unframer-source--XOxwdyyCrFEE9uKnKFPq-6gX7n?node=augiA20Il
 
 - Wait for the editor UI to finish loading (toolbar visible) before opening the command palette.
 
@@ -35,47 +20,41 @@ playwriter -s 1 -e "const target = 'https://framer.com/projects/unframer-source-
 - Verify the palette is open (look for the command dialog and MCP entry in the snapshot output):
 
 ```bash
-playwriter -s 1 -e "console.log(await snapshot({ page: state.page, search: /dialog|Search…|MCP/ }));"
+better-playwriter -s "$SESSION_ID" -e "console.log(await snapshot({ page: state.page, search: /dialog|Search…|MCP/ }));"
 ```
 
 - Search for **MCP**, press Enter, then wait about 1 second for the plugin iframe to appear.
 
-- Verify the plugin iframe exists (should include `plugins.framercdn.com`):
-
-```bash
-playwriter -s 1 -e "const iframes = await state.page.locator('iframe').all(); for (const f of iframes) { console.log(await f.getAttribute('src')); }"
-```
-
 - Wait until the MCP iframe is present (verifies the action worked):
 
 ```bash
-playwriter -s 1 -e "const iframe = state.page.locator(\"iframe[src*='plugins.framercdn.com']\"); await iframe.first().waitFor({ timeout: 10000 }); console.log('iframe ready');"
+better-playwriter -s "$SESSION_ID" -e "const iframe = state.page.locator(\"iframe[src*='plugins.framercdn.com']\"); await iframe.first().waitFor({ timeout: 10000 }); console.log('iframe ready');"
 ```
 
 - Grab the iframe’s locator by URL:
 
 ```bash
-playwriter -s 1 -e "const iframe = state.page.locator(\"iframe[src*='plugins.framercdn.com']\"); console.log(await iframe.count());"
+better-playwriter -s "$SESSION_ID" -e "const iframe = state.page.locator(\"iframe[src*='plugins.framercdn.com']\"); console.log(await iframe.count());"
 ```
 
 - Run the accessibility snapshot on that iframe using `contentFrame()` (FrameLocator is auto-resolved to Frame):
 
 ```bash
-playwriter -s 1 -e "const frame = await state.page.locator(\"iframe[src*='plugins.framercdn.com']\").contentFrame(); console.log(await snapshot({ page: state.page, frame }));"
+better-playwriter -s "$SESSION_ID" -e "const frame = await state.page.locator(\"iframe[src*='plugins.framercdn.com']\").contentFrame(); console.log(await snapshot({ page: state.page, frame }));"
 ```
 
 - Alternative: use `state.page.frames()` to get the Frame directly:
 
 ```bash
-playwriter -s 1 -e "const frame = state.page.frames().find(f => f.url().includes('plugins.framercdn.com')); console.log(await snapshot({ page: state.page, frame }));"
+better-playwriter -s "$SESSION_ID" -e "const frame = state.page.frames().find(f => f.url().includes('plugins.framercdn.com')); console.log(await snapshot({ page: state.page, frame }));"
 ```
 
 - Validate the snapshot contains MCP UI text (confirms the panel is actually loaded):
 
 ```bash
-playwriter -s 1 -e "const frame = await state.page.locator(\"iframe[src*='plugins.framercdn.com']\").contentFrame(); console.log(await snapshot({ page: state.page, frame, search: /Control Framer with MCP|Login With Google/ }));"
+better-playwriter -s "$SESSION_ID" -e "const frame = await state.page.locator(\"iframe[src*='plugins.framercdn.com']\").contentFrame(); console.log(await snapshot({ page: state.page, frame, search: /Control Framer with MCP|Login With Google/ }));"
 ```
 
 ## Expected iframe URL
 
-- https://nw12xtr7iedsczg1le9s9pqfl.plugins.framercdn.com/?mode=canvas
+- The hostname ends in `plugins.framercdn.com`.
