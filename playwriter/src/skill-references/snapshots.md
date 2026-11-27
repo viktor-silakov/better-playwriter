@@ -19,6 +19,8 @@ const form = state.page.getByRole('form', { name: 'Lookup' })
 return await snapshot({ locator: form, mode: 'compact', maxDepth: 4, maxChars: 1800 })
 ```
 
+A snapshot taken within 5 seconds of a navigation first waits up to 4 seconds for the page to load its content. Pass `waitForLoad: false` to skip that.
+
 Subsequent snapshots of the same scope can return a diff when it is shorter. Use `showDiffSinceLastCall: false` for a fresh view. Search uses a fresh view by default. A navigated document needs a fresh snapshot.
 
 Existing calls with `interactiveOnly` or `format: 'raw'` use legacy locator output. Set `mode` explicitly to choose a view.

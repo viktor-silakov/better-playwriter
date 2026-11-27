@@ -52,6 +52,8 @@ export interface WaitForPageLoadOptions {
    * fires `load` on an empty shell and fetches its content afterwards. Default 500, 0 turns it off.
    */
   quietMs?: number
+  /** Requests the browser has in flight, seen from outside the page. The sandbox fills this in. */
+  network?: () => { inFlight: number; quietForMs: number }
 }
 
 /** A page that never goes quiet (a heartbeat every 200 ms) counts as loaded after this long. */
@@ -98,7 +100,9 @@ async function waitForPageLoadInner(options: WaitForPageLoadOptions): Promise<Wa
       return result
     }
     completeSince ??= Date.now()
-    if (result.quietForMs >= quietMs || Date.now() - completeSince >= MAX_QUIET_WAIT_MS) {
+    const network = options.network?.()
+    const networkQuiet = !network || (network.inFlight === 0 && network.quietForMs >= quietMs)
+    if ((result.quietForMs >= quietMs && networkQuiet) || Date.now() - completeSince >= MAX_QUIET_WAIT_MS) {
       return result
     }
     return { ...result, ready: false, pendingRequests: ['requests finished in the last moments: the page is still fetching'] }

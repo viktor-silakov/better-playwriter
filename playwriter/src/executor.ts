@@ -5,7 +5,7 @@ import { readEnv, getRelayPort } from './runtime-config.js'
  */
 
 import type { Page, Frame, Browser, BrowserContext, Locator, FrameLocator, ElementHandle } from '@xmorse/playwright-core'
-import { getChromium } from './playwright-import.js'
+import { evaluateIsolated, getChromium } from './playwright-import.js'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -22,7 +22,7 @@ import { isRemoteExtensionKey } from './relay-state.js'
 import { REMOTE_EXTENSION_NOT_CONNECTED_ERROR } from './remote-control.js'
 import { EXTENSION_NOT_CONNECTED_ERROR, getExtensionOutdatedWarning } from './relay-client.js'
 import { waitForPageLoad, WaitForPageLoadOptions, WaitForPageLoadResult } from './wait-for-page-load.js'
-import { getLatestRequests, observeRequests, type RecentRequestsOptions } from './network-requests.js'
+import { getLatestRequests, getNetworkActivity, observeRequests, type RecentRequestsOptions } from './network-requests.js'
 import { ICDPSession, getCDPSessionForPage } from './cdp-session.js'
 import { MAX_EXECUTE_OUTPUT_LENGTH, boundExecuteOutput } from './execute-output.js'
 import type { Protocol } from './cdp-types.js'
@@ -492,6 +492,9 @@ const SNAPSHOT_SEARCH_CONTEXT_LINES = 5
 const DEFAULT_SNAPSHOT_MAX_CHARS = 4000
 const MIN_SNAPSHOT_MAX_CHARS = 100
 const SNAPSHOT_NAVIGATION_RETRY_MS = 5000
+const SNAPSHOT_SETTLE_WINDOW_MS = 5000
+const SNAPSHOT_SETTLE_TIMEOUT_MS = 4000
+const SNAPSHOT_SETTLE_QUIET_MS = 500
 
 /**
  * A page snapshot stops at the border of an iframe, and embedded apps keep all their content in one
@@ -787,6 +790,8 @@ export class PlaywrightExecutor {
   private nextSnapshotReference = 1
   private lastScreenshotHashes = new WeakMap<Page, Map<string, string>>()
   private pageDocumentGenerations: WeakMap<Page, number> = new WeakMap()
+  /** When the main frame of a page last navigated, so a snapshot taken right after can wait for the content. */
+  private lastNavigationAt: WeakMap<Page, number> = new WeakMap()
   private outputEvents: OutputEvent[] = []
   private nextOutputEventId = 0
   private lastDeliveredOutputEventId = 0
@@ -1116,6 +1121,7 @@ export class PlaywrightExecutor {
     this.lastRefToLocator.delete(page)
     this.lastScreenshotHashes.delete(page)
     this.pageDocumentGenerations.set(page, (this.pageDocumentGenerations.get(page) || 0) + 1)
+    this.lastNavigationAt.set(page, Date.now())
   }
 
   private forgetFrameReferences(references: PageSnapshotReferences, frame: Frame) {
@@ -1745,6 +1751,8 @@ export class PlaywrightExecutor {
         format?: SnapshotFormat
         /** Select a legacy locator-based view. */
         interactiveOnly?: boolean
+        /** Right after a navigation, wait up to 3 s for the page to stop loading. Default true. */
+        waitForLoad?: boolean
       } = {}) => {
         const usesLegacyView = Boolean(options.search) || options.interactiveOnly !== undefined || options.format === 'raw'
         const {
@@ -1765,6 +1773,43 @@ export class PlaywrightExecutor {
           throw new Error(`snapshot maxChars must be an integer of at least ${MIN_SNAPSHOT_MAX_CHARS}`)
         }
         const resolvedPage = resolveSandboxPage({ helper: 'snapshot', page: targetPage, locator, frame })
+        // goto(..., { waitUntil: 'domcontentloaded' }) returns on the empty shell of a single-page app.
+        // A snapshot taken then would show a progress bar and cost the agent a second call.
+        const navigatedAt = this.lastNavigationAt.get(resolvedPage)
+        if (options.waitForLoad !== false && navigatedAt !== undefined && Date.now() - navigatedAt < SNAPSHOT_SETTLE_WINDOW_MS) {
+          const settleUntil = Date.now() + SNAPSHOT_SETTLE_TIMEOUT_MS
+          const settle = () => {
+            return waitForPageLoad({
+              page: resolvedPage,
+              timeout: Math.max(300, settleUntil - Date.now()),
+              quietMs: SNAPSHOT_SETTLE_QUIET_MS,
+              minWait: 100,
+              network: () => getNetworkActivity(resolvedPage),
+            }).catch(() => {})
+          }
+          await settle()
+          // A splash screen is complete and quiet while the app's scripts are still starting: it has no text
+          // at all. Wait for the first text, then for the page to settle again.
+          const isBlank = () => {
+            return evaluateIsolated({
+              target: resolvedPage,
+              // No text and nothing to act on. A page of icon buttons has no text either, but it is ready.
+              fn: () => {
+                const body = (globalThis as any).document?.body
+                return !body || (body.innerText.trim().length === 0 && !body.querySelector('a[href],button,input,select,textarea,[contenteditable]'))
+              },
+              // A redirect destroyed the document under the check: the next one is still on its way.
+            }).catch(() => !resolvedPage.isClosed())
+          }
+          let wasBlank = false
+          while (Date.now() < settleUntil && (await isBlank())) {
+            wasBlank = true
+            await sleep(200)
+          }
+          if (wasBlank) {
+            await settle()
+          }
+        }
         const frameNotes = !frame && !locator && mode !== undefined ? await describeChildFrames(resolvedPage).catch(() => '') : ''
         const withPageUrl = (body: string) => {
           const url = resolvedPage.url()
@@ -2279,8 +2324,8 @@ export class PlaywrightExecutor {
         },
         clearAllLogs,
         waitForPageLoad: (options: WaitForPageLoadOptions) => {
-          resolveSandboxPage({ helper: 'waitForPageLoad', page: options?.page })
-          return waitForPageLoad(options)
+          const loadPage = resolveSandboxPage({ helper: 'waitForPageLoad', page: options?.page })
+          return waitForPageLoad({ network: () => getNetworkActivity(loadPage), ...options })
         },
         getCDPSession,
         createDebugger,
