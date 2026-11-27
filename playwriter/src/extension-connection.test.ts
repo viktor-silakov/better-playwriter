@@ -1471,6 +1471,25 @@ describe('Extension connect during relay handshake', () => {
       await options.close()
     }
   })
+
+  it('reconnects under the stored install id when storage answers after the connect', async () => {
+    const ctx = testCtx!
+    const worker = await getExtensionServiceWorker(ctx.browserContext)
+    const [before] = await getExtensionsStatus(PORT)
+    const storedKey = before?.stableKey || ''
+    expect(storedKey).toMatch(/^install:[^:]+:[^:]+$/)
+    const [, browser, storedId] = storedKey.split(':')
+    const connectedKeys = async () => {
+      return (await getExtensionsStatus(PORT)).map((status) => status.stableKey)
+    }
+
+    // The worker connected under one id and learns the stored one later, as after a slow storage read.
+    await worker.evaluate((id) => globalThis.adoptLateInstallId(id), 'late-install-id')
+    await expect.poll(connectedKeys, { timeout: 15_000 }).toEqual([`install:${browser}:late-install-id`])
+
+    await worker.evaluate((id) => globalThis.adoptLateInstallId(id), storedId)
+    await expect.poll(connectedKeys, { timeout: 15_000 }).toEqual([storedKey])
+  })
 })
 
 describe('Extension toolbar icons', () => {

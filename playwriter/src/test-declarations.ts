@@ -4,6 +4,7 @@ declare global {
   var toggleExtensionForActiveTab: () => Promise<{ isConnected: boolean; state: ExtensionState }>
   var getExtensionState: () => ExtensionState
   var disconnectEverything: () => Promise<void>
+  var adoptLateInstallId: (installId: string) => Promise<void>
   var startRemoteControlForActiveTab: () => Promise<{ url: string }>
   var stopRemoteControl: () => boolean
   var getRemoteControlState: () => {

@@ -270,6 +270,18 @@ async function getInstallId(): Promise<string> {
   return installIdPromise
 }
 
+/** Storage answered after the connect went out under a temporary id: reconnect under the stored one. */
+async function adoptLateInstallId(installId: string): Promise<void> {
+  const current = await identityPromise?.catch(() => null)
+  if (!installId || current?.installId === installId) {
+    return
+  }
+  const browser = current?.browser ?? (await detectBrowserName())
+  identityPromise = Promise.resolve({ browser, email: '', id: '', installId })
+  logger.debug('Install id arrived after the connect, reconnecting under it')
+  await connectionManager.reconnect('Install id ready')
+}
+
 async function getExtensionIdentity(): Promise<ExtensionIdentity> {
   if (identityPromise) {
     return identityPromise
@@ -280,7 +292,15 @@ async function getExtensionIdentity(): Promise<ExtensionIdentity> {
     // Storage can be unavailable or hang during startup. Fall back to the per-worker
     // runtime scope so we still avoid the coarse browser-only key that causes
     // cross-browser relay takeovers, and never block the connection on storage.
-    const installId = await withTimeout(getInstallId(), 2000, tabSessionScope)
+    const stored = getInstallId()
+    const installId = await withTimeout(stored, 2000, tabSessionScope)
+    if (installId === tabSessionScope) {
+      // The temporary id gives this profile a different browser key. Go back to the stored id when it arrives.
+      stored.then(adoptLateInstallId, () => {
+        // Storage failed: read it again on the next connect.
+        identityPromise = null
+      })
+    }
     return {
       browser,
       email: '',
@@ -366,6 +386,13 @@ class ConnectionManager {
   // inert if it belongs to a superseded attempt. Fixes the connect/disconnect loop (#40).
   private currentAttemptId = 0
   preserveTabsOnDetach = false
+
+  /** Close the relay socket so the maintain loop connects again, for example under a new identity. */
+  async reconnect(reason: string): Promise<void> {
+    // A connect in flight already read the old identity: let it finish, then replace its socket.
+    await this.connectionPromise?.catch(() => {})
+    this.ws?.close(1000, reason)
+  }
 
   async ensureConnection(): Promise<void> {
     // Reuse in-progress connection attempt - prevents races between user clicks and maintain loop
@@ -707,6 +734,8 @@ globalThis.toggleExtensionForActiveTab = toggleExtensionForActiveTab
 globalThis.disconnectEverything = disconnectEverything
 // @ts-ignore
 globalThis.getExtensionState = () => store.getState()
+// @ts-ignore
+globalThis.adoptLateInstallId = adoptLateInstallId
 // @ts-ignore
 globalThis.startRemoteControlForActiveTab = startRemoteControlForActiveTab
 // @ts-ignore
