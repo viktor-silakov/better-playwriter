@@ -222,6 +222,9 @@ async function detectBrowserName(): Promise<string> {
 
 let identityPromise: Promise<ExtensionIdentity> | null = null
 let installIdPromise: Promise<string> | null = null
+// Chrome can leave this API pending indefinitely. Never make connecting depend on it.
+// Keep the promise so a late answer can still update the relay without reconnecting.
+const profileInfoPromise = chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' }).catch(() => null)
 const tabSessionScope = (() => {
   const values = new Uint32Array(2)
   crypto.getRandomValues(values)
@@ -266,15 +269,10 @@ async function getExtensionIdentity(): Promise<ExtensionIdentity> {
     // runtime scope so we still avoid the coarse browser-only key that causes
     // cross-browser relay takeovers, and never block the connection on storage.
     const installId = await withTimeout(getInstallId(), 2000, tabSessionScope)
-    const info = await withTimeout(
-      chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' }),
-      2000,
-      { email: '', id: '' } as chrome.identity.ProfileUserInfo,
-    )
     return {
       browser,
-      email: info.email || '',
-      id: info.id || '',
+      email: '',
+      id: '',
       installId,
     }
   })()
@@ -501,6 +499,14 @@ class ConnectionManager {
         }
         clearTimeout(openTimeout)
         this.ws = socket
+        void withTimeout(chrome.storage.local.get('profileLabel'), 2000, {} as Record<string, unknown>).then(({ profileLabel }) => {
+          if (typeof profileLabel !== 'string' || !profileLabel.trim() || socket.readyState !== WebSocket.OPEN || this.ws !== socket) return
+          socket.send(JSON.stringify({ method: 'hello', params: { profileLabel: profileLabel.trim() } }))
+        })
+        void profileInfoPromise.then((info) => {
+          if (!info || socket.readyState !== WebSocket.OPEN || this.ws !== socket) return
+          socket.send(JSON.stringify({ method: 'hello', params: { email: info.email || '', id: info.id || '' } }))
+        })
         handshakeTimeout = setTimeout(() => {
           socket.close(EXTENSION_INVENTORY_TIMEOUT_CLOSE, 'Target inventory timeout')
           rejectConnection(new Error('Target inventory timeout'))
@@ -670,6 +676,13 @@ class ConnectionManager {
 }
 
 export const connectionManager = new ConnectionManager()
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !changes.profileLabel) return
+  const label = changes.profileLabel.newValue
+  if (connectionManager.ws?.readyState === WebSocket.OPEN) {
+    connectionManager.ws.send(JSON.stringify({ method: 'hello', params: { profileLabel: typeof label === 'string' ? label.trim() : '' } }))
+  }
+})
 
 export const store = createStore<ExtensionState>(() => ({
   tabs: new Map(),
@@ -920,6 +933,35 @@ async function dispatchRelayMessage(message: any, sink: RelayMessageSink): Promi
     return
   }
 
+  // Release only this session's tabs, preserving their pages. Removing them from
+  // the store also prevents the next group sync from putting them back.
+  if (message.method === 'releaseTabsForKey') {
+    const params = message.params as { key?: string } | undefined
+    const key = resolveTabGroupKey({ key: params?.key, remote: Boolean(sink.remoteRuntime) })
+    if (!key) {
+      sink.send({ id: message.id, error: 'releaseTabsForKey requires a key' })
+      return
+    }
+    const release = tabGroupQueue.then(async () => {
+      const tabIds = [...store.getState().tabs].filter(([, info]) => info.groupKey === key).map(([id]) => id)
+      for (const tabId of tabIds) detachTab(tabId, true)
+      const results = await Promise.allSettled(tabIds.map(async (tabId) => {
+        const tab = await chrome.tabs.get(tabId)
+        if (tab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) await chrome.tabs.ungroup(tabId)
+      }))
+      const errors = results.flatMap((result) => result.status === 'rejected' ? [String(result.reason?.message ?? result.reason)] : [])
+        .filter((error) => !error.startsWith('No tab with id'))
+      if (errors.length) throw new Error(errors.join('; '))
+      return tabIds.length
+    })
+    tabGroupQueue = release.then(() => undefined, () => undefined)
+    void release.then(
+      (releasedTabs) => sink.send({ id: message.id, result: { success: true, releasedTabs } }),
+      (error: Error) => sink.send({ id: message.id, error: error.message }),
+    )
+    return
+  }
+
   // Close the tabs a session owns (groupKey === key): tabs it created and their popups.
   // Toggled tabs and other sessions' tabs have another key or none, so they stay open.
   if (message.method === 'closeTabsForKey') {
@@ -932,9 +974,21 @@ async function dispatchRelayMessage(message: any, sink: RelayMessageSink): Promi
     const tabIds = [...store.getState().tabs]
       .filter(([, info]) => info.groupKey === key)
       .map(([tabId]) => tabId)
-    // One call per tab: chrome.tabs.remove([...]) stops at the first id that fails, e.g. a tab
-    // the user closed meanwhile, and would leave the remaining tabs open.
-    void Promise.allSettled(tabIds.map((tabId) => chrome.tabs.remove(tabId))).then((results) => {
+    // Ungroup owned tabs before closing them: closing the last grouped tab can
+    // leave a saved group behind in Chrome. Serialize with group sync so it
+    // cannot put these tabs straight back while they are being closed.
+    const closeTabs = tabGroupQueue.then(async () => {
+      await Promise.allSettled(tabIds.map(async (tabId) => {
+        const tab = await chrome.tabs.get(tabId)
+        if (tab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) {
+          await chrome.tabs.ungroup(tabId)
+        }
+      }))
+      // One call per tab: a stale id must not prevent closing the other tabs.
+      return await Promise.allSettled(tabIds.map((tabId) => chrome.tabs.remove(tabId)))
+    })
+    tabGroupQueue = closeTabs.then(() => undefined, () => undefined)
+    void closeTabs.then((results) => {
       const errors = results
         .flatMap((r) => (r.status === 'rejected' ? [String(r.reason?.message ?? r.reason)] : []))
         .filter((error) => !error.startsWith('No tab with id'))

@@ -12,6 +12,7 @@ import { getListeningPidsForPort, killPid } from './kill-port.js'
 import { VERSION, getCdpUrl, sleep, LOG_FILE_PATH } from './utils.js'
 import { isRemoteExtensionKey } from './relay-state.js'
 import { getChromium, type Browser } from './playwright-import.js'
+import { readLocalProfileNames } from './profile-labels.js'
 import type { TabGroupColor } from './protocol.js'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -36,7 +37,7 @@ export type ExtensionStatus = {
   extensionId: string
   stableKey?: string
   browser: string | null
-  profile: { email: string; id: string } | null
+  profile: { email: string; id: string; label?: string } | null
   activeTargets: number
   playwriterVersion: string | null
 }
@@ -479,8 +480,10 @@ export type ExtensionBrowser = {
   id: string
   /** Browser brand detected by the extension: Chrome, Brave, Edge, Ghost, ... */
   browser: string
-  /** Email of the Chrome profile signed-in account, or null if not signed in. */
+  /** Email reported by Chrome, or null when unavailable. */
   email: string | null
+  /** User-assigned profile label, when configured. */
+  profileLabel?: string | null
   /** Tabs the extension has currently attached to Playwriter. */
   activeTabs: number
   playwriterVersion: string | null
@@ -495,6 +498,7 @@ function toExtensionBrowser(extension: ExtensionStatus): ExtensionBrowser {
     id: extension.stableKey || extension.extensionId,
     browser: extension.browser || 'Chrome',
     email: extension.profile?.email || null,
+    profileLabel: extension.profile?.label || (extension.stableKey ? readLocalProfileNames()[extension.stableKey] : null) || null,
     activeTabs: extension.activeTargets,
     playwriterVersion: extension.playwriterVersion,
   }
@@ -503,7 +507,7 @@ function toExtensionBrowser(extension: ExtensionStatus): ExtensionBrowser {
 function formatBrowserList(browsers: ExtensionBrowser[]): string {
   return browsers
     .map((browser) => {
-      return `- ${browser.browser} ${browser.email || '(not signed in)'} id=${browser.id}`
+      return `- ${browser.browser} ${browser.profileLabel || browser.email || '(profile unknown)'} id=${browser.id}`
     })
     .join('\n')
 }

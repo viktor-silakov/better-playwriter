@@ -17,20 +17,24 @@ Other browser MCPs spawn a fresh Chrome — no logins, no extensions, instantly 
 
 ## Installation
 
-1. [**Install Extension**](https://chromewebstore.google.com/detail/playwriter/jfeammnjpkecdekppnclgkkffahnhfhe) from Chrome Web Store
+1. Build the project and load `extension/dist` as an unpacked Chrome extension.
 
 2. Click extension icon on a tab → turns green when connected
 
 3. Install the CLI and start automating the browser:
 
    ```bash
-   npm i -g playwriter
+   cd playwriter && npm link
    playwriter -s 1 -e 'state.page = await context.newPage(); await state.page.goto("https://example.com")'
    ```
 
+On macOS, `playwriter browser list` identifies previously unknown local Chrome profiles using `cmux-cua` and Accessibility access, then caches their names locally. The first lookup can take a few seconds. You can also run `playwriter browser identify` to retry manually or set a label in the extension options. `playwriter session new --browser <label>` selects a profile; duplicate labels require the browser key.
+
+Use `playwriter session list` to see each session's idle time and group. To finish a session and keep its tabs, run `playwriter session delete <id> --release-created-tabs`; its tabs are detached and ungrouped. Alternatively use `--close-created-tabs` to close its own tabs. Both options remove the group when it becomes empty; neither touches tabs owned by another session. Chrome does not expose already-closed saved groups to extensions, so old groups cannot be safely removed automatically by title. Idle time is only a clue, not proof that a session has been abandoned.
+
 4. Install the skill so your agent knows how to use Playwriter:
    ```bash
-   npx -y skills add https://playwriter.dev -g -y
+   playwriter skill
    ```
 
 ## Quick Start
@@ -349,7 +353,7 @@ Control Chrome on a remote machine over the internet using [traforo](https://tra
 **On host:**
 
 ```bash
-npx -y traforo -p 19988 -t my-machine -- npx -y playwriter serve --token <secret>
+npx -y traforo -p 19988 -t my-machine -- playwriter serve --token <secret>
 ```
 
 **From remote:**
@@ -402,7 +406,7 @@ server.close()
 Or connect to a running server:
 
 ```bash
-npx -y playwriter serve --host 127.0.0.1
+playwriter serve --host 127.0.0.1
 ```
 
 ```typescript

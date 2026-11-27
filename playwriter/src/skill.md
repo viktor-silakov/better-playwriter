@@ -1,15 +1,10 @@
 ## CLI Usage
 
-If `playwriter` command is not found, install globally or use npx/bunx:
+If `playwriter` is not on PATH, run the local Better Playwriter executable directly:
 
 ```bash
-npm install -g playwriter@latest
-# or use without installing:
-npx playwriter@latest session new --tab-group docs
-bunx playwriter@latest session new --tab-group docs
+~/Projects/better-playwriter/playwriter/bin.js session new --tab-group docs
 ```
-
-If using npx or bunx always use @latest for the first session command. so we are sure of using the latest version of the package
 
 ### Session management
 
@@ -84,13 +79,15 @@ To share one tab between processes (for example many SDK scripts calling `fetch`
 
 With several browsers or profiles connected, pass `selectBrowser: (browsers) => browsers.find((b) => b.email === 'me@work.com')`. Each item has `id` (stable), `browser` (Chrome, Brave, Ghost...), `email`.
 
+On macOS, `playwriter browser identify` uses local Accessibility access to identify Chrome profiles and cache their names. Alternatively, set a label in Better Playwriter's extension options. `playwriter browser list` shows names; `playwriter session new --browser <label>` selects one. Duplicate labels require the browser key.
+
 ### Remote access (control browser from another machine)
 
 Playwriter can control a Chrome browser running on a different machine over the internet. The host machine runs `playwriter serve` with a [traforo](https://traforo.dev) tunnel, and the remote machine connects through the tunnel URL.
 
 ```bash
 # Host machine (has Chrome + extension)
-npx -y traforo -p 19988 -- npx -y playwriter serve --token MY_SECRET_TOKEN
+npx -y traforo -p 19988 -- playwriter serve --token MY_SECRET_TOKEN
 
 # Remote machine
 export PLAYWRITER_HOST=https://<tunnel-id>-tunnel.traforo.dev

@@ -171,7 +171,7 @@ export type RelayServer = {
 }
 
 export async function startPlayWriterCDPRelayServer({
-  port = 19988,
+  port = Number(process.env.PLAYWRITER_PORT) || 19988,
   host = '127.0.0.1',
   token,
   logger,
@@ -1554,7 +1554,7 @@ export async function startPlayWriterCDPRelayServer({
         extensionId: ext.id,
         stableKey: ext.stableKey,
         browser: ext.info.browser || null,
-        profile: ext.info ? { email: ext.info.email || '', id: ext.info.id || '' } : null,
+        profile: ext.info ? { email: ext.info.email || '', id: ext.info.id || '', label: ext.info.profileLabel || '' } : null,
         activeTargets: ext.connectedTargets.size,
         playwriterVersion: ext.info?.version || null,
         inventoryReady: ext.inventoryReady,
@@ -2136,6 +2136,7 @@ export async function startPlayWriterCDPRelayServer({
                   email: helloInfo.email,
                   id: helloInfo.id,
                   installId: helloInfo.installId,
+                  profileLabel: helloInfo.profileLabel,
                   version: helloInfo.version,
                 },
               }),
@@ -3343,7 +3344,7 @@ export async function startPlayWriterCDPRelayServer({
       sessionMetadata: {
         extensionId: conn.stableKey,
         browser: conn.info.browser || null,
-        profile: conn.info ? { email: conn.info.email || '', id: conn.info.id || '' } : null,
+        profile: conn.info ? { email: conn.info.email || '', id: conn.info.id || '', label: conn.info.profileLabel || '' } : null,
       },
       enableCloudScope: true,
       cloudAuth: body.cloudAuth,
@@ -3489,7 +3490,7 @@ export async function startPlayWriterCDPRelayServer({
 
   app.post('/cli/session/delete', async (c) => {
     try {
-      const body: { sessionId: string | number; closeCreatedTabs?: boolean; ownershipKey?: string } =
+      const body: { sessionId: string | number; closeCreatedTabs?: boolean; releaseCreatedTabs?: boolean; ownershipKey?: string } =
         await c.req.json()
       const sessionId = normalizeSessionId(body.sessionId)
 
@@ -3507,22 +3508,23 @@ export async function startPlayWriterCDPRelayServer({
       }
 
       const extensionId = executor.getSessionMetadata().extensionId
+      if (body.closeCreatedTabs && body.releaseCreatedTabs) return c.json({ error: 'Choose only one tab cleanup option' }, 400)
       // The extension tracks tab ownership: tabs a session creates (and their popups) carry its
       // ownership key. Old extensions reply `{id}` with no result, so tabs stay open.
       let closeTabsWarning: string | undefined
-      if (body.closeCreatedTabs && extensionId) {
+      if ((body.closeCreatedTabs || body.releaseCreatedTabs) && extensionId) {
         try {
           const result = (await sendToExtension({
             extensionId,
-            method: 'closeTabsForKey',
+            method: body.releaseCreatedTabs ? 'releaseTabsForKey' : 'closeTabsForKey',
             params: { key: ownershipKey(sessionId) },
             timeout: 10000,
           })) as CloseTabsForKeyResult | undefined
           if (result?.success !== true) {
-            closeTabsWarning = 'Your Playwriter extension is too old to close session tabs. Update the extension.'
+            closeTabsWarning = 'Your Playwriter extension cannot clean up session tabs. Update the extension.'
           }
         } catch (error) {
-          closeTabsWarning = `Could not close session tabs: ${error instanceof Error ? error.message : String(error)}`
+          closeTabsWarning = `Could not clean up session tabs: ${error instanceof Error ? error.message : String(error)}`
         }
       }
 
@@ -3631,7 +3633,7 @@ export async function startPlayWriterCDPRelayServer({
           sessionMetadata: {
             extensionId: conn.stableKey,
             browser: conn.info.browser || null,
-            profile: conn.info ? { email: conn.info.email || '', id: conn.info.id || '' } : null,
+            profile: conn.info ? { email: conn.info.email || '', id: conn.info.id || '', label: conn.info.profileLabel || '' } : null,
           },
         })
         return createdId

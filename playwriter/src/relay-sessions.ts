@@ -20,6 +20,7 @@ import {
 } from './relay-client.js'
 import { discoverChromeInstances, resolveDirectInput, type DiscoveredInstance } from './chrome-discovery.js'
 import { getCloudClient, loadCloudAuth, buildLiveUrl } from './cloud-client.js'
+import { readLocalProfileNames } from './profile-labels.js'
 
 const STATUS_TIMEOUT_MS = 2000
 const SESSION_EXTENSION_WAIT_MS = 20_000
@@ -157,6 +158,8 @@ export interface BrowserOption {
   type: 'extension' | 'direct' | 'cloud' | 'headless'
   browser: string
   profile: string
+  /** User-supplied local label, if present. */
+  profileLabel?: string
   /** Extension entries. null means the relay's only (legacy) extension */
   extensionId?: string | null
   /** Direct CDP entries */
@@ -166,12 +169,14 @@ export interface BrowserOption {
   activeCloudSessionId?: string
 }
 
-function extensionToBrowserOption(extension: ExtensionStatus): BrowserOption {
+function extensionToBrowserOption(extension: ExtensionStatus, names: Record<string, string> = {}): BrowserOption {
+  const label = extension.profile?.label || (extension.stableKey ? names[extension.stableKey] : undefined)
   return {
     key: extension.stableKey || extension.extensionId,
     type: 'extension',
     browser: extension.browser || 'Chrome',
-    profile: extension.profile?.email || '(not signed in)',
+    profile: label || extension.profile?.email || '(profile unknown)',
+    profileLabel: label || undefined,
     extensionId: extension.extensionId === 'default' ? null : extension.stableKey || extension.extensionId,
   }
 }
@@ -271,8 +276,9 @@ export async function discoverBrowserOptions({
     getHeadlessOption(),
     discoverCloudBrowsers({ warnings }),
   ])
+  const names = isLocalRelay(relay) ? readLocalProfileNames() : {}
   const options = [
-    ...extensions.map(extensionToBrowserOption),
+    ...extensions.map((extension) => extensionToBrowserOption(extension, names)),
     ...instances.map(instanceToBrowserOption),
     ...headless,
     ...cloudOptions,
@@ -565,6 +571,9 @@ export async function newSession(options: NewSessionOptions): Promise<NewSession
     if (selected) {
       return selected
     }
+    const byProfile = browserOptions.filter((option) => option.type === 'extension' && option.profileLabel === key)
+    if (byProfile.length === 1) return byProfile[0]
+    if (byProfile.length > 1) throw new Error(`Multiple browsers have profile label "${key}"; use a browser key instead.`)
     const hasCloudOptions = browserOptions.some((opt) => opt.type === 'cloud')
     const cloudMessage = await getCloudUnavailableMessage({ browserKey: key, hasCloudOptions })
     const available = browserOptions.map((opt) => opt.key).join(', ') || '(none)'
@@ -640,7 +649,13 @@ export async function newSession(options: NewSessionOptions): Promise<NewSession
 
   // One extension and no explicit pick: skip the slower direct and cloud discovery
   if (extensions.length === 1 && !browser) {
-    return createFromOption(extensionToBrowserOption(extensions[0]))
+    const option = extensionToBrowserOption(extensions[0], local ? readLocalProfileNames() : {})
+    if (local && process.platform === 'darwin' && option.key.startsWith('install:Chrome:') && !option.profileLabel) {
+      const { identifyLocalChromeProfile } = await import('./profile-identify.js')
+      const { identifyUnknownProfiles } = await import('./profile-auto-identify.js')
+      await identifyUnknownProfiles([option], identifyLocalChromeProfile)
+    }
+    return createFromOption(option)
   }
 
   if (extensions.length > 0 || browser) {
@@ -650,7 +665,19 @@ export async function newSession(options: NewSessionOptions): Promise<NewSession
   // An explicit direct:<port> key from session_list must work without an extension too
   const discoverDirect = local && (extensions.length > 0 || Boolean(browser?.startsWith('direct:')))
   const directOptions = discoverDirect ? (await discoverChromeInstances()).map(instanceToBrowserOption) : []
-  const allOptions = [...extensions.map(extensionToBrowserOption), ...directOptions, ...cloudOptions]
+  const names = local ? readLocalProfileNames() : {}
+  const allOptions = [...extensions.map((extension) => extensionToBrowserOption(extension, names)), ...directOptions, ...cloudOptions]
+
+  // Explicit extension keys are used by the identification probe itself and
+  // already select the right browser without looking up its profile name.
+  if (local && process.platform === 'darwin' && !allOptions.some((option) => option.key === browser)) {
+    const unknown = allOptions.filter((option) => option.type === 'extension' && option.key.startsWith('install:Chrome:') && !option.profileLabel)
+    if (unknown.length) {
+      const { identifyLocalChromeProfile } = await import('./profile-identify.js')
+      const { identifyUnknownProfiles } = await import('./profile-auto-identify.js')
+      await identifyUnknownProfiles(unknown, identifyLocalChromeProfile)
+    }
+  }
 
   if (allOptions.length === 0) {
     const cloudMessage = browser ? await getCloudUnavailableMessage({ browserKey: browser, hasCloudOptions: false }) : null
@@ -672,9 +699,10 @@ export async function newSession(options: NewSessionOptions): Promise<NewSession
 
 export type RelaySessionInfo = {
   id: string
+  idleMs?: number
   stateKeys: string[]
   browser: string | null
-  profile: { email: string; id: string } | null
+  profile: { email: string; id: string; label?: string } | null
   extensionId: string | null
   cwd: string | null
   tabGroup?: string | null
@@ -747,16 +775,19 @@ export async function deleteSession({
   relay,
   sessionId,
   closeCreatedTabs,
+  releaseCreatedTabs,
 }: {
   relay: RelayTarget
   sessionId: string
   /** Also close the tabs this session opened. Other sessions' and user-enabled tabs stay open */
   closeCreatedTabs?: boolean
+  /** Detach and ungroup this session's tabs while keeping them open */
+  releaseCreatedTabs?: boolean
 }): Promise<{ warning?: string }> {
   return postRelay<{ warning?: string }>({
     relay,
     path: '/cli/session/delete',
-    body: { sessionId, closeCreatedTabs: closeCreatedTabs || undefined },
+    body: { sessionId, closeCreatedTabs: closeCreatedTabs || undefined, releaseCreatedTabs: releaseCreatedTabs || undefined },
   })
 }
 

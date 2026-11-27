@@ -401,12 +401,9 @@
           </svg>
           <span class="copy-btn-label">Copy agent prompt to install</span>
         </button>
-        <p id="prompt-text" hidden>Install the Playwriter skill by running: npx -y skills add https://playwriter.dev -g -y
-Then read the skill (or run `npx playwriter skill`) to learn the API.
-Then use Playwriter to open a new tab and navigate to the GitHub project at https://github.com/remorses/playwriter.
-Then explain to the user Playwriter benefits and value.</p>
+        <p id="prompt-text" hidden>Run `playwriter skill` and read its output to learn how to use Better Playwriter. Then use the existing browser session to complete the requested task.</p>
 
-        <p>It installs the skill, then drives your <span class="hl">existing Chrome</span>. No new browser, no context bloat.</p>
+        <p>It uses the installed skill and your <span class="hl">existing Chrome</span>.</p>
       </section>
 
       <details>
@@ -444,8 +441,7 @@ Then explain to the user Playwriter benefits and value.</p>
             <span class="step-number">3</span>
             <div class="step-content">
               <strong>Install the CLI and run a command</strong>
-              <pre><code class="language-bash">npm i -g playwriter
-playwriter session new
+              <pre><code class="language-bash">playwriter session new
 playwriter -e "state.page = await context.newPage()"</code></pre>
             </div>
           </div>
@@ -454,9 +450,8 @@ playwriter -e "state.page = await context.newPage()"</code></pre>
             <span class="step-number">4</span>
             <div class="step-content">
               <strong>Add the skill to your agent</strong>
-              <p>Install the Playwriter skill so your agent can call the CLI:</p>
-              <pre><code class="language-bash"># add playwriter skill to your coding agent
-npx -y skills add https://playwriter.dev -g -y</code></pre>
+              <p>Read the installed Better Playwriter instructions:</p>
+              <pre><code class="language-bash">playwriter skill</code></pre>
             </div>
           </div>
 
@@ -512,10 +507,9 @@ playwriter -e "await state.page.getByRole('link').first().click()"</code></pre>
         <section>
           <h2>MCP Setup (Optional)</h2>
 
-          <p>The CLI is the recommended way to use Playwriter. If you need MCP server setup, auto-configure it with:</p>
+          <p>The CLI is the recommended way to use Better Playwriter. To run its local MCP server:</p>
 
-          <pre><code class="language-bash"># auto-configure MCP server for your editor
-npx -y @playwriter/install-mcp playwriter@latest</code></pre>
+          <pre><code class="language-bash">playwriter</code></pre>
 
           <p>
             For full MCP instructions, see

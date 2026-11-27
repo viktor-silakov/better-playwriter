@@ -32,7 +32,7 @@ export const EXTENSION_IDS = [
  *   "192.168.1.10"                        → http://192.168.1.10:19988, ws://192.168.1.10:19988
  *   "https://my-machine-tunnel.traforo.dev" → https://my-machine-tunnel.traforo.dev, wss://my-machine-tunnel.traforo.dev
  */
-export function parseRelayHost(host: string, port: number = 19988): { httpBaseUrl: string; wsBaseUrl: string } {
+export function parseRelayHost(host: string, port: number = Number(process.env.PLAYWRITER_PORT) || 19988): { httpBaseUrl: string; wsBaseUrl: string } {
   if (host.startsWith('https://') || host.startsWith('http://')) {
     const url = new URL(host)
     const httpBaseUrl = url.origin
@@ -47,7 +47,7 @@ export function parseRelayHost(host: string, port: number = 19988): { httpBaseUr
 }
 
 export function getCdpUrl({
-  port = 19988,
+  port = Number(process.env.PLAYWRITER_PORT) || 19988,
   host = '127.0.0.1',
   token,
   extensionId,

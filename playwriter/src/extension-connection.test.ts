@@ -48,6 +48,56 @@ describe('Extension Connection Tests', () => {
     })
   })
 
+  it('updates the profile label without reconnecting', async () => {
+    const serviceWorker = await getExtensionServiceWorker(getBrowserContext())
+    const before = await getExtensionsStatus(TEST_PORT)
+    await serviceWorker.evaluate(() => chrome.storage.local.set({ profileLabel: 'Test profile' }))
+    try {
+      await expect.poll(async () => {
+        const extensions = await getExtensionsStatus(TEST_PORT)
+        return extensions[0]?.profile?.label
+      }).toBe('Test profile')
+      const after = await getExtensionsStatus(TEST_PORT)
+      expect(after[0]?.stableKey).toBe(before[0]?.stableKey)
+    } finally {
+      await serviceWorker.evaluate(() => chrome.storage.local.remove('profileLabel'))
+    }
+  })
+
+  it('releases session tabs without closing them or touching other tabs', async () => {
+    const browserContext = getBrowserContext()
+    const worker = await getExtensionServiceWorker(browserContext)
+    const otherTabIds = await worker.evaluate(() => [...globalThis.getExtensionState().tabs.keys()])
+    const response = await fetch(`http://127.0.0.1:${TEST_PORT}/cli/session/new`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cwd: os.tmpdir(), tabGroup: 'cleanup-test' }),
+    })
+    const session = await response.json() as { id: string; extensionId: string }
+    const listed = await (await fetch(`http://127.0.0.1:${TEST_PORT}/cli/sessions`)).json() as { sessions: Array<{ id: string; idleMs: number }> }
+    expect(listed.sessions.find((entry) => entry.id === session.id)?.idleMs).toEqual(expect.any(Number))
+    const browser = await chromium.connectOverCDP(getCdpUrl({ port: TEST_PORT, extensionId: session.extensionId, sessionId: session.id, tabGroup: 'cleanup-test' }))
+    try {
+      const page = await browser.contexts()[0].newPage()
+      await page.evaluate(() => { document.title = 'cleanup-marker' })
+      const tabId = await worker.evaluate(async () => (await chrome.tabs.query({ title: 'cleanup-marker' }))[0]?.id)
+      expect(tabId).toBeDefined()
+      await expect.poll(async () => worker.evaluate(async (id) => (await chrome.tabs.get(id!)).groupId, tabId)).not.toBe(-1)
+      const deletion = await fetch(`http://127.0.0.1:${TEST_PORT}/cli/session/delete`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: session.id, releaseCreatedTabs: true }),
+      })
+      expect(await deletion.json()).toMatchObject({ success: true })
+      await expect.poll(async () => worker.evaluate(async (id) => {
+        const tab = await chrome.tabs.get(id!).catch(() => null)
+        return tab ? { groupId: tab.groupId, attached: globalThis.getExtensionState().tabs.has(id!) } : null
+      }, tabId)).toEqual({ groupId: -1, attached: false })
+      expect(await worker.evaluate((ids) => ids.every((id) => globalThis.getExtensionState().tabs.has(id)), otherTabIds)).toBe(true)
+      await worker.evaluate((id) => chrome.tabs.remove(id!), tabId)
+    } finally {
+      await browser.close().catch(() => {})
+    }
+  }, 60_000)
+
   it('should handle new pages and toggling with new connections', async () => {
     const browserContext = getBrowserContext()
     const serviceWorker = await getExtensionServiceWorker(browserContext)

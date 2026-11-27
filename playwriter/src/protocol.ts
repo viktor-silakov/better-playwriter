@@ -289,6 +289,7 @@ export type ExtensionHelloMessage = {
     email?: string
     id?: string
     installId?: string
+    profileLabel?: string
     version?: string
     remote?: boolean
   }

@@ -405,7 +405,7 @@ cli
 
     const idWidth = Math.max(2, ...sessions.map((session) => String(session.id).length))
     const browserWidth = Math.max(7, ...sessions.map((session) => (session.browser || 'Chrome').length))
-    const profileWidth = Math.max(7, ...sessions.map((session) => (session.profile?.email || '').length || 1))
+    const profileWidth = Math.max(7, ...sessions.map((session) => (session.profile?.label || session.profile?.email || '').length || 1))
     const extensionWidth = Math.max(2, ...sessions.map((session) => (session.extensionId || '').length || 1))
     const groupWidth = Math.max(5, ...sessions.map((session) => (session.tabGroup || '').length || 1))
     const cwdWidth = Math.max(3, ...sessions.map((session) => (session.cwd || '').length || 1))
@@ -424,15 +424,15 @@ cli
         '  ' +
         'CWD'.padEnd(cwdWidth) +
         '  ' +
-        'STATE KEYS',
+        'IDLE'.padEnd(9) + '  ' + 'STATE KEYS',
     )
     console.log(
-      '-'.repeat(idWidth + browserWidth + profileWidth + extensionWidth + groupWidth + cwdWidth + stateWidth + 12),
+      '-'.repeat(idWidth + browserWidth + profileWidth + extensionWidth + groupWidth + cwdWidth + stateWidth + 23),
     )
 
     for (const session of sessions) {
       const stateStr = session.stateKeys.length > 0 ? session.stateKeys.join(', ') : '-'
-      const profileLabel = session.profile?.email || '-'
+      const profileLabel = session.profile?.label || session.profile?.email || '-'
       const cwdLabel = session.cwd || '-'
       console.log(
         String(session.id).padEnd(idWidth) +
@@ -447,13 +447,15 @@ cli
           '  ' +
           cwdLabel.padEnd(cwdWidth) +
           '  ' +
-          stateStr,
+          (session.idleMs === undefined ? '-' : `${Math.floor(session.idleMs / 60000)}m`).padEnd(9) + '  ' + stateStr,
       )
     }
   })
 
 cli
   .command('session delete <sessionId>', 'Delete a session and clear its state')
+  .option('--close-created-tabs', 'Close tabs created by this session and remove their empty groups')
+  .option('--release-created-tabs', 'Ungroup and detach tabs created by this session, keeping them open')
   .option('--host <host>', 'Remote relay server host')
   .option('--token <token>', 'Authentication token (or use PLAYWRITER_TOKEN env var)')
   .action(async (sessionId, options) => {
@@ -462,7 +464,9 @@ cli
     }
 
     try {
-      await deleteSession({ relay: { host: options.host, token: options.token }, sessionId: String(sessionId) })
+      if (options.closeCreatedTabs && options.releaseCreatedTabs) throw new Error('Choose only one tab cleanup option')
+      const result = await deleteSession({ relay: { host: options.host, token: options.token }, sessionId: String(sessionId), closeCreatedTabs: Boolean(options.closeCreatedTabs), releaseCreatedTabs: Boolean(options.releaseCreatedTabs) })
+      if (result.warning) console.warn(result.warning)
       console.log(`Session ${sessionId} deleted.`)
     } catch (error: any) {
       console.error(`Error: ${error.message}`)
@@ -1099,6 +1103,24 @@ cli
   })
 
 cli
+  .command('browser identify [key]', 'Identify local Chrome profiles using macOS Accessibility')
+  .action(async (key) => {
+    if (process.platform !== 'darwin') throw new Error('Automatic profile identification currently requires macOS. Set a label in the extension options instead.')
+    const { options } = await discoverBrowserOptions({ relay: {}, extensionWaitMs: BROWSER_LIST_EXTENSION_WAIT_MS, logger: console })
+    const candidates = options.filter((option) => option.type === 'extension' && option.key.startsWith('install:Chrome:') && (!key || option.key === key))
+    if (!candidates.length) throw new Error('No matching local Chrome extension is connected.')
+    const { identifyLocalChromeProfile } = await import('./profile-identify.js')
+    for (const option of candidates) {
+      try {
+        const name = await identifyLocalChromeProfile(option.key)
+        console.log(`${option.key}: ${name || 'unknown (window or Accessibility unavailable)'}`)
+      } catch (error) {
+        console.error(`${option.key}: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+  })
+
+cli
   .command('browser list', 'List all available browsers: extension-connected and direct CDP on port 9222')
   .option('--host <host>', z.string().describe('Remote relay server host'))
   .option('--token <token>', 'Authentication token (or use PLAYWRITER_TOKEN env var)')
@@ -1108,6 +1130,16 @@ cli
       extensionWaitMs: BROWSER_LIST_EXTENSION_WAIT_MS,
       logger: console,
     })
+    // Probe only local Chrome profiles without a known name. Never match a
+    // remote relay against this machine's accessibility tree.
+    if (process.platform === 'darwin' && !options.host && !process.env.PLAYWRITER_HOST) {
+      const unknown = allOptions.filter((option) => option.type === 'extension' && option.key.startsWith('install:Chrome:') && !option.profileLabel)
+      if (unknown.length) {
+        const { identifyLocalChromeProfile } = await import('./profile-identify.js')
+        const { identifyUnknownProfiles } = await import('./profile-auto-identify.js')
+        await identifyUnknownProfiles(unknown, identifyLocalChromeProfile)
+      }
+    }
     for (const warning of warnings) {
       console.error(pc.dim(warning))
     }

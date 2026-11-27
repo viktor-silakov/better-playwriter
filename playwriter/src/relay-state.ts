@@ -47,6 +47,7 @@ export type ExtensionInfo = {
   email?: string
   id?: string
   installId?: string
+  profileLabel?: string
   /** playwriter package version the extension was built with (sent as ?v= query param) */
   version?: string
 }
@@ -382,6 +383,7 @@ export function updateExtensionInfo(
       email: info.email ?? ext.info.email,
       id: info.id ?? ext.info.id,
       installId: info.installId ?? ext.info.installId,
+      ...(info.profileLabel !== undefined ? { profileLabel: info.profileLabel } : {}),
       version: info.version ?? ext.info.version,
     },
   })

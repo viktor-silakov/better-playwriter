@@ -393,15 +393,16 @@ export interface CdpConfig {
 export interface SessionMetadata {
   extensionId: string | null
   browser: string | null
-  profile: { email: string; id: string } | null
+  profile: { email: string; id: string; label?: string } | null
 }
 
 export interface SessionInfo {
   id: string
+  idleMs: number
   stateKeys: string[]
   extensionId: string | null
   browser: string | null
-  profile: { email: string; id: string } | null
+  profile: { email: string; id: string; label?: string } | null
   cwd: string | null
   /** Explicit tab group title, null when the mode supplies its default */
   tabGroup: string | null
@@ -1152,7 +1153,7 @@ export class PlaywrightExecutor {
     activeTargets: number
     playwriterVersion: string | null
   }> {
-    const { host = '127.0.0.1', port = 19988, extensionId, token } = this.cdpConfig
+    const { host = '127.0.0.1', port = Number(process.env.PLAYWRITER_PORT) || 19988, extensionId, token } = this.cdpConfig
     const { httpBaseUrl } = parseRelayHost(host, port)
     const notConnected = { connected: false, activeTargets: 0, playwriterVersion: null }
     const headers: Record<string, string> = {}
@@ -2381,6 +2382,7 @@ export class PlaywrightExecutor {
   getSessionInfo({ id }: { id: string }): SessionInfo {
     return {
       id,
+      idleMs: this.idleMs(),
       stateKeys: this.getStateKeys(),
       extensionId: this.sessionMetadata.extensionId,
       browser: this.sessionMetadata.browser,
