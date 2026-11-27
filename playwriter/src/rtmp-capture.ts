@@ -29,14 +29,16 @@ const STDERR_TAIL_SIZE = 20
 const DEFAULT_JPEG_QUALITY = 90
 
 /** ffmpeg inputs: JPEG frames on stdin, optional s16le PCM on fd 3. */
-function captureInputArgs(options: { fps: number; audio: boolean }): string[] {
-  const video = ['-f', 'image2pipe', '-c:v', 'mjpeg', '-framerate', String(options.fps), '-thread_queue_size', '512', '-i', 'pipe:0']
+function captureInputArgs(options: { fps: number; audio: boolean; inputThreadQueue: boolean }): string[] {
+  // ffmpeg 9 accepts -thread_queue_size only for outputs and exits when it stands before an input.
+  const queue = options.inputThreadQueue ? ['-thread_queue_size', '512'] : []
+  const video = ['-f', 'image2pipe', '-c:v', 'mjpeg', '-framerate', String(options.fps), ...queue, '-i', 'pipe:0']
   if (!options.audio) {
     return video
   }
   return [
     ...video,
-    '-f', 's16le', '-ar', String(AUDIO_SAMPLE_RATE), '-ac', '2', '-thread_queue_size', '512', '-i', 'pipe:3',
+    '-f', 's16le', '-ar', String(AUDIO_SAMPLE_RATE), '-ac', '2', ...queue, '-i', 'pipe:3',
   ]
 }
 
@@ -55,6 +57,8 @@ export interface StreamFfmpegOptions {
   codec: string
   /** Keyframe interval in seconds. 3 = X Live recommended (and its max), 2 = Twitch. */
   keyframeSeconds: number
+  /** Raise the input packet queues. Off for ffmpeg 9+, see supportsInputThreadQueue(). Default true. */
+  inputThreadQueue?: boolean
 }
 
 /**
@@ -69,6 +73,7 @@ export interface StreamFfmpegOptions {
  */
 export function buildStreamFfmpegArgs(options: StreamFfmpegOptions): string[] {
   const { rtmpUrls, width, height, fps, videoBitrateKbps, audioBitrateKbps, audio, preset, codec, keyframeSeconds } = options
+  const inputThreadQueue = options.inputThreadQueue ?? true
 
   if (rtmpUrls.length === 0) {
     throw new Error('At least one RTMP destination is required')
@@ -76,8 +81,8 @@ export function buildStreamFfmpegArgs(options: StreamFfmpegOptions): string[] {
 
   const gop = Math.round(fps * keyframeSeconds)
   const inputArgs = audio
-    ? captureInputArgs({ fps, audio: true })
-    : [...captureInputArgs({ fps, audio: false }), '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo']
+    ? captureInputArgs({ fps, audio: true, inputThreadQueue })
+    : [...captureInputArgs({ fps, audio: false, inputThreadQueue }), '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo']
 
   const codecArgs: string[] = (() => {
     const base = [

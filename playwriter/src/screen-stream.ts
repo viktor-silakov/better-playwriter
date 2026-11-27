@@ -1,5 +1,5 @@
 import type { Page } from '@xmorse/playwright-core'
-import { detectEncoder } from './ffmpeg.js'
+import { detectEncoder, supportsInputThreadQueue } from './ffmpeg.js'
 import type { CaptureStats, PageCapture } from './rtmp-capture.js'
 import { requirePage, type CaptureTargetOptions, type Logger } from './screen-recording.js'
 
@@ -63,6 +63,7 @@ export class ScreenStream {
       }, line)
     }
     const codec = options.codec || (await detectEncoder()).codec
+    const inputThreadQueue = await supportsInputThreadQueue()
     const capture = await PageCapture.start({
       page: options.page,
       fps: options.fps || 30,
@@ -82,6 +83,7 @@ export class ScreenStream {
           preset: options.preset || 'veryfast',
           codec,
           keyframeSeconds: options.keyframeSeconds || 3,
+          inputThreadQueue,
         })
       },
     })

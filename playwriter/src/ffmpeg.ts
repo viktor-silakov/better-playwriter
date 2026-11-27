@@ -69,6 +69,35 @@ export async function detectEncoder(): Promise<EncoderInfo> {
     return cachedEncoder
 }
 
+let cachedInputThreadQueue: Promise<boolean> | undefined
+
+/**
+ * ffmpeg up to 8 takes `-thread_queue_size` before an input. ffmpeg 9 made it a muxer option and exits
+ * with "cannot be applied to input url". Ask the installed ffmpeg once instead of parsing its version.
+ */
+export function supportsInputThreadQueue(): Promise<boolean> {
+  cachedInputThreadQueue ??= new Promise<boolean>((resolve) => {
+    const child = spawn('ffmpeg', [
+      '-hide_banner', '-loglevel', 'error',
+      '-f', 'lavfi', '-thread_queue_size', '8', '-i', 'nullsrc=s=16x16:d=0.01',
+      '-f', 'null', '-',
+    ], { stdio: 'ignore', windowsHide: true })
+    const timeout = setTimeout(() => {
+      child.kill()
+      resolve(false)
+    }, 5000)
+    child.on('close', (code) => {
+      clearTimeout(timeout)
+      resolve(code === 0)
+    })
+    child.on('error', () => {
+      clearTimeout(timeout)
+      resolve(false)
+    })
+  })
+  return cachedInputThreadQueue
+}
+
 /**
  * Quick probe: can this encoder produce even a single frame?
  * Runs `ffmpeg -f lavfi -i nullsrc=s=64x64:d=0.01 -c:v <encoder> -f null -`

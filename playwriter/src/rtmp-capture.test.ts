@@ -125,6 +125,7 @@ describe('buildStreamFfmpegArgs', () => {
   })
 
   test('multi destination uses tee muxer with onfail=ignore', () => {
+    expect(buildStreamFfmpegArgs({ ...base, inputThreadQueue: false }).join(' ')).not.toContain('thread_queue_size')
     const args = buildStreamFfmpegArgs({
       ...base,
       rtmpUrls: ['rtmp://live.example/app/key1', 'rtmp://broadcast.example/app/key2'],
