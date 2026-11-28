@@ -208,6 +208,13 @@ describe('agent snapshot views', () => {
     const miss = await executor.execute(`await state.formPage.getByRole('textbox', { name: 'Recipient' }).click({ timeout: 500 })`, { timeout: 10000 })
     expect(miss.isError).toBe(true)
     expect(miss.text).toContain('act on its ref instead')
+    // A click under an open dialog names the dialog, not only the backdrop's markup.
+    const covered = await executor.execute(`
+      await state.formPage.setContent('<button>Save</button><div role="dialog" aria-label="Discard draft?" style="position:fixed;inset:0;background:#fff"><button>Cancel</button></div>')
+      await state.formPage.getByRole('button', { name: 'Save' }).click({ timeout: 800 })
+    `, { timeout: 10000 })
+    expect(covered.text).toContain('covered by the dialog "Discard draft?"')
+    expect(covered.text).not.toContain('\u001b[')
     await executor.execute('await state.formPage.close()')
   }, 60000)
 

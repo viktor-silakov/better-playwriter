@@ -69,7 +69,7 @@ describe('better-playwriter CLI help', () => {
   }, 30000)
 
   test('reports a structured error when no extension is connected', async () => {
-    const port = 19995
+    const port = 19982
     const { startPlayWriterCDPRelayServer } = await import('./cdp-relay.js')
     const server = await startPlayWriterCDPRelayServer({ port })
 

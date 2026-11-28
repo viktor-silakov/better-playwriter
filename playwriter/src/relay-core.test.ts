@@ -2052,7 +2052,7 @@ describe('Relay Core Tests', () => {
       name: 'execute',
       arguments: {
         code: js`
-          await state.errorTestPage.click('#covered-btn', { timeout: 100 });
+          await state.errorTestPage.click('#covered-btn', { timeout: 1000 });
         `,
       },
     })
@@ -2061,7 +2061,7 @@ describe('Relay Core Tests', () => {
     const text = (result.content as any)[0].text as string
     expect(text.slice(0, text.indexOf('Call log:'))).toMatchInlineSnapshot(`
       "
-      Error executing code: page.click: Timeout 100ms exceeded. <div id="overlay">Overlay</div> intercepts pointer events
+      Error executing code: page.click: Timeout 1000ms exceeded. <div id="overlay">Overlay</div> intercepts pointer events
       "
     `)
     expect(text).toContain('intercepts pointer events')

@@ -463,12 +463,19 @@ const INSPECT_OPTIONS: util.InspectOptions = {
   depth: 4,
   colors: false,
   maxArrayLength: 100,
-  maxStringLength: 1000,
+  maxStringLength: 4000,
   breakLength: 80,
 }
 
 export function formatValue(value: unknown): string {
-  return typeof value === 'string' ? value : util.inspect(value, INSPECT_OPTIONS)
+  if (typeof value === 'string') {
+    return value
+  }
+  const text = util.inspect(value, INSPECT_OPTIONS)
+  // util.inspect cuts a long string inside an object and says only how many characters went missing.
+  return /\.\.\. \d+ more characters?/.test(text)
+    ? `${text}\n[A long string inside this value was cut. Return that string by itself to get all of it.]`
+    : text
 }
 
 /** Format captured console calls, folding identical consecutive lines into `(xN)`. */
@@ -601,7 +608,9 @@ export function limitSnapshotOutput({
   if (lines.join('\n').length + 1 + notice(originalLineCount).length <= maxChars) {
     return [...lines, notice(originalLineCount - lines.length)].join('\n')
   }
-  let remaining = maxChars - notice(originalLineCount).length
+  // Room for the names of the regions that get cut, so the reader knows where to look next.
+  const cutRoom = maxChars >= 1000 ? 220 : 0
+  let remaining = maxChars - notice(originalLineCount).length - cutRoom
   const parents: number[] = []
   const ancestors: Array<{ index: number; indent: number }> = []
   const priority: number[] = []
@@ -647,7 +656,33 @@ export function limitSnapshotOutput({
     include(index)
   }
 
-  return [...lines.filter((_, i) => included.has(i)), notice(originalLineCount - included.size)].join('\n')
+  // The largest cut subtrees, by name: "the message list is missing" tells the agent what to scope to.
+  const cutSizes = new Map<number, number>()
+  for (const index of lines.keys()) {
+    if (included.has(index)) {
+      continue
+    }
+    // Count a cut line under its nearest named ancestor: that is the region an agent can scope to.
+    let top = parents[index]!
+    while (top >= 0 && !SNAPSHOT_LINE.exec(lines[top]!)?.[3] && parents[top]! >= 0) {
+      top = parents[top]!
+    }
+    if (top < 0) {
+      top = index
+    }
+    cutSizes.set(top, (cutSizes.get(top) ?? 0) + 1)
+  }
+  const cut = [...cutSizes]
+    .filter(([, size]) => size >= 3)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4)
+    .map(([index, size]) => {
+      const match = SNAPSHOT_LINE.exec(lines[index]!)
+      const name = match?.[3] ? ` "${match[3].length > 30 ? `${match[3].slice(0, 30)}…` : match[3]}"` : ''
+      return `${match?.[2] ?? 'region'}${name} (${size} lines)`
+    })
+  const cutNote = cutRoom && cut.length ? `\n[Cut: ${cut.join(', ')}]`.slice(0, cutRoom) : ''
+  return [...lines.filter((_, i) => included.has(i)), notice(originalLineCount - included.size)].join('\n') + cutNote
 }
 
 const SNAPSHOT_LINE = /^(\s*)- ([^\s"]+)(?: "((?:[^"\\]|\\.)*)")?(.*)$/
@@ -2697,8 +2732,15 @@ export class PlaywrightExecutor {
       const logsText = formatConsoleLogs({ logs: consoleLogs, title: 'Console output (before error)' })
       const outputText = this.flushOutputForScope(outputScope)
 
+      const coveringDialog = /intercepts pointer events/.test(error instanceof Error ? error.message : String(error))
+        ? await this.describeOpenDialog()
+        : undefined
       const resetHint = (() => {
         const message = error instanceof Error ? error.message : String(error)
+        if (/intercepts pointer events/.test(message)) {
+          const dialog = coveringDialog === undefined ? 'another element, often a dialog' : coveringDialog ? `the dialog "${coveringDialog}"` : 'an open dialog'
+          return `\n\n[HINT: The target is covered by ${dialog}. Find it with snapshot({ page, search: /dialog|modal/i }) and close or answer it first.]`
+        }
         // Snapshot roles come from Chrome. Playwright computes its own, and the two differ for some elements,
         // such as an editable div without a role.
         if (/Timeout \d+ms exceeded/.test(message) && /waiting for .*getByRole\(/.test(message)) {
@@ -2739,6 +2781,32 @@ export class PlaywrightExecutor {
     } finally {
       this.navigatedPages = null
     }
+  }
+
+  /** Name of a dialog that is open on one of the session's pages: '' when it has none, undefined when no dialog is open. */
+  private async describeOpenDialog(): Promise<string | undefined> {
+    const pages = Object.values(this.userState).filter((value): value is Page => this.pagesWithListeners.has(value))
+    for (const page of pages) {
+      const name = await Promise.race([
+        page.evaluate(() => {
+          const doc = (globalThis as any).document
+          const dialog = [...doc.querySelectorAll('[role=dialog],[role=alertdialog],dialog[open]')].find((element: any) => {
+            return element.getClientRects().length > 0
+          }) as any
+          if (!dialog) {
+            return undefined
+          }
+          const labelledBy = dialog.getAttribute('aria-labelledby')
+          const label = dialog.getAttribute('aria-label') || (labelledBy && doc.getElementById(labelledBy.split(' ')[0])?.textContent) || ''
+          return String(label).trim().slice(0, 80)
+        }),
+        new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 500)),
+      ]).catch(() => undefined)
+      if (name !== undefined) {
+        return name
+      }
+    }
+    return undefined
   }
 
   private async reportBotChallenges({

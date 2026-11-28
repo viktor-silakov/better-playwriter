@@ -6,6 +6,7 @@ import {
   formatConsoleLogs,
   boundExecuteOutput,
   limitSnapshotOutput,
+  formatValue,
   condenseSnapshotLines,
   searchSnapshot,
 } from './executor.js'
@@ -236,6 +237,26 @@ describe('execute output', () => {
 
   it('returns short output unchanged', () => {
     expect(boundExecuteOutput({ before: 'a\n', after: 'b\n' })).toBe('a\nb\n')
+  })
+})
+
+describe('what a bounded answer says about its cuts', () => {
+  it('names the largest regions a snapshot over its budget left out', () => {
+    const snapshot = [
+      '- navigation "Apps"',
+      ...Array.from({ length: 30 }, (_, i) => `  - button "App ${i}" @e${i + 1}`),
+      '- list "Messages"',
+      ...Array.from({ length: 60 }, (_, i) => `  - listitem "Message number ${i} with a long preview text" @e${i + 100}`),
+    ].join('\n')
+    const out = limitSnapshotOutput({ snapshot, maxChars: 1200, condense: false })
+    expect(out.length).toBeLessThanOrEqual(1200)
+    expect(out.split('\n').at(-1)).toMatch(/^\[Cut: list "Messages" \(\d+ lines\)/)
+  })
+
+  it('says how to get a string that was cut inside a returned object', () => {
+    expect(formatValue({ menu: 'x'.repeat(3000) })).not.toContain('more characters')
+    expect(formatValue({ menu: 'x'.repeat(5000) })).toContain('Return that string by itself')
+    expect(formatValue('x'.repeat(5000))).toHaveLength(5000)
   })
 })
 

@@ -730,7 +730,7 @@ function httpGet({ port, path, host }: { port: number; path: string; host: strin
 
 describe('Host header validation (DNS rebinding protection)', () => {
   let server: { close(): void } | null = null
-  const TEST_PORT = 19996
+  const TEST_PORT = 19981
 
   beforeAll(async () => {
     const { startPlayWriterCDPRelayServer } = await import('./cdp-relay.js')
@@ -749,7 +749,7 @@ describe('Host header validation (DNS rebinding protection)', () => {
     expect(res.body).toContain('Invalid Host header')
 
     // With port suffix
-    const res2 = await httpGet({ port: TEST_PORT, path: '/version', host: 'evil.com:19996' })
+    const res2 = await httpGet({ port: TEST_PORT, path: '/version', host: 'evil.com:19981' })
     expect(res2.status).toBe(403)
   })
 
