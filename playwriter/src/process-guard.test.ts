@@ -64,12 +64,12 @@ describe('relay process guard', () => {
     const second = await execute(`return 1 + 1`)
     const warnings = second.text
       .split('\n')
-      .filter((line: string) => line.startsWith('[WARNING]') || line.startsWith('[return value]'))
+      .filter((line: string) => line.startsWith('[WARNING') || line.startsWith('[return value]'))
     expect(warnings).toMatchInlineSnapshot(`
       [
-        "[WARNING] Unhandled promise rejection in your code (missing await?): Error: late",
-        "[WARNING] setTimeout callback threw: Error: boom",
-        "[WARNING] Unhandled promise rejection in your code (missing await?): page.click: Timeout 300ms exceeded.",
+        "[WARNING from an earlier call] Unhandled promise rejection in your code (missing await?): Error: late",
+        "[WARNING from an earlier call] setTimeout callback threw: Error: boom",
+        "[WARNING from an earlier call] Unhandled promise rejection in your code (missing await?): page.click: Timeout 300ms exceeded.",
         "[return value] 2",
       ]
     `)

@@ -332,6 +332,8 @@ interface OutputEvent {
   id: number
   type: 'warning' | 'page-error'
   message: string
+  /** Arrived while no call was running, so it belongs to a call that already returned. */
+  late?: boolean
 }
 
 interface OutputScope {
@@ -1004,7 +1006,7 @@ export class PlaywrightExecutor {
       } catch (error) {
         const message = describeThrown(error)
         this.logger.error(`[sandbox] ${kind} callback threw:`, message)
-        this.enqueueWarning(`${kind} callback threw: ${message}`)
+        this.enqueueWarning(`${kind} callback threw: ${message}`, { fromAgentCode: true })
       }
     }
     const assertFunction = (callback: unknown) => {
@@ -1139,8 +1141,10 @@ export class PlaywrightExecutor {
     return this.pendingOperations > 0 ? 0 : Date.now() - this.lastActivityAt
   }
 
-  enqueueWarning(message: string) {
-    this.enqueueOutputEvent({ type: 'warning', message })
+  /** fromAgentCode: a fault of agent code. With no call running it is labelled as coming from an earlier call. */
+  enqueueWarning(message: string, options?: { fromAgentCode?: boolean }) {
+    const late = Boolean(options?.fromAgentCode) && this.activeOutputScopes.size === 0
+    this.enqueueOutputEvent({ type: 'warning', message, late })
   }
 
   private enqueueOutputEvent(event: Omit<OutputEvent, 'id'>) {
@@ -1176,7 +1180,10 @@ export class PlaywrightExecutor {
     }
 
     return `${relevantEvents
-      .map((event) => `[${event.type === 'warning' ? 'WARNING' : 'PAGE ERROR'}] ${event.message}`)
+      .map((event) => {
+        const label = event.type === 'warning' ? 'WARNING' : 'PAGE ERROR'
+        return `[${label}${event.late ? ' from an earlier call' : ''}] ${event.message}`
+      })
       .join('\n')}\n`
   }
 
@@ -2144,7 +2151,7 @@ export class PlaywrightExecutor {
         if (!map) {
           return null
         }
-        return map.get(options.ref) ?? null
+        return map.get(String(options.ref ?? '').replace(/^@/, '')) ?? null
       }
 
       const elementForRef = async (options: { ref: string; page?: Page }): Promise<ElementHandle> => {

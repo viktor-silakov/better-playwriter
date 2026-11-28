@@ -17,7 +17,7 @@ export const SANDBOX_FILENAME = '.playwriter-eval.js'
 
 /** Code that owns a fault: an executor running agent code. */
 export type FaultOwner = {
-  enqueueWarning(message: string): void
+  enqueueWarning(message: string, options?: { fromAgentCode?: boolean }): void
 }
 
 export type GuardLogger = {
@@ -88,6 +88,7 @@ export function installProcessGuard({ logger }: { logger: GuardLogger }) {
     const owner = ownerStore.getStore()
     owner?.enqueueWarning(
       `Unhandled promise rejection in your code (missing await?): ${describeThrown(reason)}`,
+      { fromAgentCode: true },
     )
     logContainedFault({ kind: 'unhandledRejection', error: reason, owned: Boolean(owner) })
   })
@@ -100,7 +101,7 @@ export function installProcessGuard({ logger }: { logger: GuardLogger }) {
     }
     // A throw from a sandbox callback keeps the async context of the code that registered it.
     const owner = ownerStore.getStore()
-    owner?.enqueueWarning(`Uncaught exception in your code: ${describeThrown(error)}`)
+    owner?.enqueueWarning(`Uncaught exception in your code: ${describeThrown(error)}`, { fromAgentCode: true })
     logContainedFault({ kind: 'uncaughtException', error, owned: Boolean(owner) })
   })
 

@@ -1343,6 +1343,9 @@ describe('Relay Core Tests', () => {
         state.oldRef = Array.from({ length: 20 }, (_, index) => 'e' + index).find((ref) => {
           return refToLocator({ ref, page: state.page })?.includes('Old page')
         })
+        if (refToLocator({ ref: '@' + state.oldRef, page: state.page }) !== refToLocator({ ref: state.oldRef, page: state.page })) {
+          throw new Error('a ref with @ must resolve like one without')
+        }
         return state.oldRef
       `,
       })
