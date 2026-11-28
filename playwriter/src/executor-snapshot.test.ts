@@ -190,9 +190,11 @@ describe('agent snapshot views', () => {
     const result = await executor.execute(`
       state.rolePage = await context.newPage()
       await state.rolePage.setContent('<main><div contenteditable aria-label="To"></div><button>New</button><button>Send</button></main>')
-      await snapshot({ page: state.rolePage, showDiffSinceLastCall: false })
+      return await snapshot({ page: state.rolePage, showDiffSinceLastCall: false })
     `, { timeout: 30000 })
     expect(result.isError).toBe(false)
+    expect(result.text).toMatch(/textbox "To" \[use ref\] @e\d+/)
+    expect(result.text).toMatch(/button "New" @e\d+/)
     const sameName = await executor.execute(`await state.rolePage.getByRole('textbox', { name: /^To$/ }).click({ timeout: 500 })`, { timeout: 10000 })
     expect(sameName.text).toMatch(/Your last snapshot has textbox "To" @e\d+: Playwright gives that element another role, so use the ref\./)
     const byLabel = await executor.execute(`await state.rolePage.getByRole('textbox', { name: 'To' }).click({ timeout: 500 })`, { timeout: 10000 })

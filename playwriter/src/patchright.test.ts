@@ -264,7 +264,7 @@ describe('Patchright and verification pages', () => {
         worker: await worker.evaluate(() => self.ready),
       };
     `)).toMatchInlineSnapshot(`
-      "[PAGE ERROR] Error: boom
+      "[ERROR IN PAGE SCRIPT] Error: boom
       [return value] {
         first: [ '[log] boot 42', '[pageerror] Error: boom' ],
         second: [ '[warning] later' ],
@@ -306,9 +306,9 @@ describe('Patchright and verification pages', () => {
       await post('/cli/session/delete', { sessionId: session.id })
       return result.text as string
     }
-    expect(await thrown(false)).toContain('[PAGE ERROR] Object { code: 42, reason: "no access" }')
+    expect(await thrown(false)).toContain('[ERROR IN PAGE SCRIPT] Object { code: 42, reason: "no access" }')
     // Patchright reads exceptions from Chrome's replay, which carries no preview of the object
-    expect(await thrown(true)).toContain('[PAGE ERROR] Object')
+    expect(await thrown(true)).toContain('[ERROR IN PAGE SCRIPT] Object')
   }, 60000)
 
   it('switches a session to Patchright and back mid-run, tabs stay open', async () => {

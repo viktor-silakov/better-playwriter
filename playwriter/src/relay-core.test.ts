@@ -1416,7 +1416,7 @@ describe('Relay Core Tests', () => {
           await pageError;
         `,
       })
-      expect(sessionAResult.text).toContain('[PAGE ERROR] tracked-agent-a-error')
+      expect(sessionAResult.text).toContain('[ERROR IN PAGE SCRIPT] tracked-agent-a-error')
       expect(sessionAResult.text).not.toContain('tracked-agent-b-error')
       expect(sessionAResult.isError).toBe(false)
 
@@ -1424,7 +1424,7 @@ describe('Relay Core Tests', () => {
         sessionId: sessionB,
         code: 'await state.pageError; return state.page.url()',
       })
-      expect(sessionBResult.text).toContain('[PAGE ERROR] tracked-agent-b-error')
+      expect(sessionBResult.text).toContain('[ERROR IN PAGE SCRIPT] tracked-agent-b-error')
       expect(sessionBResult.text).not.toContain('tracked-agent-a-error')
       expect(sessionBResult.isError).toBe(false)
     } finally {
@@ -2000,7 +2000,7 @@ describe('Relay Core Tests', () => {
       name: 'execute',
       arguments: {
         code: js`
-          await state.errorTestPage.click('#hidden-btn', { timeout: 100 });
+          await state.errorTestPage.click('#hidden-btn', { timeout: 1000 });
         `,
       },
     })
@@ -2009,7 +2009,7 @@ describe('Relay Core Tests', () => {
     const text = (result.content as any)[0].text as string
     expect(text.slice(0, text.indexOf('Call log:'))).toMatchInlineSnapshot(`
       "
-      Error executing code: page.click: Timeout 100ms exceeded. Element is not visible — it may be hidden by CSS, inside a collapsed <details>, inactive tab, or closed accordion. Try: interact with the page to reveal it first, or use { force: true } to skip visibility checks
+      Error executing code: page.click: Timeout 1000ms exceeded. Element is not visible — it may be hidden by CSS, inside a collapsed <details>, inactive tab, or closed accordion. Try: interact with the page to reveal it first, or use { force: true } to skip visibility checks
       "
     `)
     expect(text).toContain('element is not visible')

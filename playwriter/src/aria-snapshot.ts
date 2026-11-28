@@ -886,6 +886,7 @@ export function finalizeSnapshotOutput(
   shortRefMap: Map<string, string>,
   references = new Map<string, string>(),
   hints = new Map<string, string>(),
+  refOnly = new Set<string>(),
 ): { snapshot: string; tree: AriaSnapshotNode[] } {
   const locatorCounts = lines.reduce<Map<string, number>>((acc, line) => {
     if (!line.baseLocator) {
@@ -923,7 +924,9 @@ export function finalizeSnapshotOutput(
           const role = line.role ?? ''
           const name = line.name ? ` ${JSON.stringify(line.name.replace(/\s+/g, ' '))}` : ''
           const state = line.state ? ` ${line.state}` : ''
-          text = `${'  '.repeat(line.indent ?? 0)}- ${role}${name}${state} @${ref}`
+          // Playwright gives this element no role, so getByRole would wait for nothing: say so on the line.
+          const marker = line.ref && refOnly.has(line.ref) ? ' [use ref]' : ''
+          text = `${'  '.repeat(line.indent ?? 0)}- ${role}${name}${state}${marker} @${ref}`
         } else {
           text = buildLocatorLineText({ line, locator })
         }
@@ -1513,7 +1516,18 @@ export async function getAriaSnapshot({
       }
     }
     const hints = references.size ? controlHints({ refs: renderedRefs, axById, axByBackendId, domByBackendId }) : undefined
-    const finalized = finalizeSnapshotOutput(snapshotLines, snapshotNodes, shortRefMap, references, hints)
+    // An editable element that is not an input and has no role attribute: Chrome calls it a textbox,
+    // Playwright gives it no role, and getByRole('textbox') does not find it.
+    const refOnly = new Set<string>()
+    if (references.size) {
+      for (const entry of renderedRefs) {
+        const dom = entry.backendNodeId === undefined ? undefined : domByBackendId.get(entry.backendNodeId)
+        if (entry.role === 'textbox' && dom && !['INPUT', 'TEXTAREA'].includes(dom.nodeName.toUpperCase()) && !dom.attributes.get('role')) {
+          refOnly.add(entry.ref)
+        }
+      }
+    }
+    const finalized = finalizeSnapshotOutput(snapshotLines, snapshotNodes, shortRefMap, references, hints, refOnly)
     const refsWithShortRef: Array<AriaRef & { selector?: string }> = renderedRefs.map((entry) => {
       return {
         ...entry,

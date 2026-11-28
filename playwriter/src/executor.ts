@@ -1455,7 +1455,7 @@ export class PlaywrightExecutor {
         hiddenPageErrors += 1
         continue
       }
-      lines.push(`[PAGE ERROR] ${event.message.length > 300 ? `${event.message.slice(0, 300)}…` : event.message}`)
+      lines.push(`[ERROR IN PAGE SCRIPT] ${event.message.length > 300 ? `${event.message.slice(0, 300)}…` : event.message}`)
     }
     if (hiddenPageErrors > 0) {
       lines.push(`[${hiddenPageErrors} more page errors: getLatestLogs({ page, search: /pageerror/ })]`)
