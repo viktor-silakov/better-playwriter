@@ -692,9 +692,10 @@ export async function describeHiddenRegions(page: Page): Promise<string> {
  */
 function findScrollingLists(root: any): Array<{ role: string; name: string; rows: number; total: number; shown: number }> {
   const view = (globalThis as any).window
-  const listSelector = '[role=listbox],[role=list],[role=grid],[role=treegrid],[role=tree],[role=feed],[role=log],[role=table],ul,ol,table'
+  // Lists by role or tag, and any labelled container: an app can keep its rows in a plain labelled div.
+  const listSelector = '[role=listbox],[role=list],[role=grid],[role=treegrid],[role=tree],[role=feed],[role=log],[role=table],ul,ol,table,[aria-label],[aria-labelledby]'
   const rowSelector = '[role=option],[role=row],[role=listitem],[role=treeitem],[role=article],li,tr'
-  const candidates: any[] = [...(root.matches?.(listSelector) ? [root] : []), ...root.querySelectorAll(listSelector)].slice(0, 400)
+  const candidates: any[] = [...(root.matches?.(listSelector) ? [root] : []), ...root.querySelectorAll(listSelector)].slice(0, 600)
   const seen = new Set<any>()
   const found: Array<{ role: string; name: string; rows: number; total: number; shown: number; height: number }> = []
   const scrolls = (element: any) => {
@@ -721,7 +722,15 @@ function findScrollingLists(root: any): Array<{ role: string; name: string; rows
       continue
     }
     seen.add(scroller)
-    const rowElements: any[] = [...list.querySelectorAll(rowSelector)]
+    let rowElements: any[] = [...list.querySelectorAll(rowSelector)]
+    if (rowElements.length < 2) {
+      // Rows without a role: the children of the first element under the scroller that has several.
+      let holder = scroller
+      for (let level = 0; level < 6 && holder.children.length === 1; level++) {
+        holder = holder.children[0]
+      }
+      rowElements = [...holder.children]
+    }
     const rows = rowElements.length
     if (rows < 2) {
       continue
@@ -730,7 +739,14 @@ function findScrollingLists(root: any): Array<{ role: string; name: string; rows
     const total = Math.max(0, ...rowElements.slice(0, 50).map((row) => Number(row.getAttribute('aria-setsize')) || 0))
     found.push({
       role: list.getAttribute('role') || list.tagName.toLowerCase(),
-      name: (list.getAttribute('aria-label') || '').slice(0, 30),
+      name: (
+        list.getAttribute('aria-label') ||
+        (list.getAttribute('aria-labelledby') || '')
+          .split(/\s+/)
+          .map((id: string) => view.document.getElementById(id)?.textContent ?? '')
+          .join(' ')
+          .trim()
+      ).slice(0, 40),
       rows,
       total,
       shown: Math.round((scroller.clientHeight / scroller.scrollHeight) * 100),
@@ -752,7 +768,8 @@ export async function describeScrollingLists(target: Page | Locator): Promise<st
     .map((list) => {
       const name = list.name ? ` "${list.name}"` : ''
       const count = list.total > list.rows ? `${list.rows} of about ${list.total} rows` : `${list.rows} rows`
-      return `[scrolls: ${list.role}${name} has ${count} in the page and shows ${list.shown}% of its height. More rows load as it scrolls: page.mouse.wheel over it. Recipe: skill --ref actions, "Collect a list".]`
+      const locator = list.name ? `page.getByLabel('${list.name.replace(/[\\']/g, (char) => `\\${char}`)}', { exact: true }).first()` : 'a row of it'
+      return `[scrolls: ${list.role}${name} has ${count} in the page and shows ${list.shown}% of its height. More rows load as it scrolls: await scrollRegion({ locator: ${locator}, by: -1500 }), negative is up. Recipe: skill --ref actions, "Collect a list".]`
     })
     .join('\n')
 }
@@ -2368,6 +2385,89 @@ export class PlaywrightExecutor {
         return map.get(String(options.ref ?? '').replace(/^@/, '')) ?? null
       }
 
+      /**
+       * Scroll the region that holds an element. The scroller of a list is often a wrapper above it or a
+       * child inside it, and setting scrollTop does not always load more rows: a wheel over it does.
+       */
+      const scrollRegion = async (options: { locator?: Locator; ref?: string; page?: Page; by: number }) => {
+        if (typeof options?.by !== 'number' || !Number.isFinite(options.by)) {
+          throw new Error('scrollRegion requires by: a number of pixels, negative to scroll up.')
+        }
+        const handle = options.ref
+          ? await elementForRef({ ref: options.ref, page: options.page })
+          : await options.locator?.first().elementHandle({ timeout: SNAPSHOT_SCOPE_WAIT_MS })
+        if (!handle) {
+          throw new Error('scrollRegion requires a locator or a ref of the list, or of an element in it.')
+        }
+        const targetPage = options.ref ? resolveSandboxPage({ helper: 'scrollRegion', page: options.page }) : options.locator!.page()
+        const scroller = (
+          await handle.evaluateHandle((start: any) => {
+            const view = (globalThis as any).window
+            const scrolls = (element: any) => {
+              const overflow = view.getComputedStyle(element).overflowY
+              return (overflow === 'auto' || overflow === 'scroll') && element.scrollHeight > element.clientHeight + 20
+            }
+            for (let element = start; element && element !== view.document.documentElement; element = element.parentElement) {
+              if (scrolls(element)) {
+                return element
+              }
+            }
+            for (let level = 0, layer: any[] = [start]; level < 4 && layer.length && layer.length < 40; level++) {
+              layer = layer.flatMap((element) => [...element.children])
+              const found = layer.find(scrolls)
+              if (found) {
+                return found
+              }
+            }
+            return view.document.scrollingElement
+          })
+        ).asElement()
+        if (!scroller) {
+          throw new Error('scrollRegion: found no scrolling element at, above or inside the locator.')
+        }
+        const read = () => {
+          return scroller.evaluate((element: any) => {
+            const view = (globalThis as any).window
+            const box = element.getBoundingClientRect()
+            const left = Math.max(box.left, 0)
+            const top = Math.max(box.top, 0)
+            return {
+              top: Math.round(element.scrollTop),
+              height: element.scrollHeight,
+              viewHeight: element.clientHeight,
+              // A point inside the part of the scroller that is on screen.
+              x: (left + Math.min(box.right, view.innerWidth)) / 2,
+              y: (top + Math.min(box.bottom, view.innerHeight)) / 2,
+            }
+          })
+        }
+        const before = await read()
+        await targetPage.mouse.move(before.x, before.y)
+        await targetPage.mouse.wheel(0, options.by)
+        let after = before
+        for (let attempt = 0; attempt < 6; attempt++) {
+          await sleep(100)
+          after = await read()
+          if (after.top !== before.top || after.height !== before.height) {
+            break
+          }
+        }
+        if (after.top === before.top && after.height === before.height) {
+          // The wheel went to something else, such as an overlay: scroll the element itself.
+          await scroller.evaluate((element: any, by: number) => element.scrollBy(0, by), options.by)
+          await sleep(150)
+          after = await read()
+        }
+        return {
+          scrolled: after.top !== before.top || after.height !== before.height,
+          top: after.top,
+          height: after.height,
+          viewHeight: after.viewHeight,
+          atStart: after.top <= 0,
+          atEnd: after.top + after.viewHeight >= after.height - 2,
+        }
+      }
+
       const elementForRef = async (options: { ref: string; page?: Page }): Promise<ElementHandle> => {
         const targetPage = resolveSandboxPage({ helper: 'elementForRef', page: options.page })
         if (!/^@?e[1-9]\d*$/.test(options.ref)) {
@@ -2780,6 +2880,7 @@ export class PlaywrightExecutor {
         inspect,
         refToLocator,
         elementForRef,
+        scrollRegion,
         getCleanHTML: async (options: GetCleanHTMLOptions) => {
           if (options?.ref) {
             // A snapshot ref reaches elements that no role or label locator finds.

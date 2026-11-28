@@ -420,24 +420,23 @@ await state.page.waitForFunction(({ el, old }) => el.innerText !== old, { el: aw
 return (await pane.innerText()).slice(0, 4000)
 ```
 
-**Collect a list that loads more as it scrolls** (history, feed, long table). Such a list keeps only the rows near the viewport, so one read never has them all. Keep what you saw in `state`, keyed by a stable attribute of the row, and scroll until the count stops growing:
+**Collect a list that loads more as it scrolls** (history, feed, long table). Such a list keeps only the rows near the viewport in the page, so one read never has them all. A snapshot ends with a `[scrolls: …]` note for it. Keep what you saw in `state`, keyed by a stable attribute of the row, and scroll with `scrollRegion` until nothing new comes:
 
 ```js
 state.rows ??= new Map()
-const list = state.page.getByRole('list', { name: 'History' }) // the scrolling region, by role and name
-for (let round = 0; round < 20; round++) {
-  const before = state.rows.size
+const list = state.page.getByLabel('History', { exact: true }).first() // the list, or any element inside it
+for (let round = 0; round < 30 && state.rows.size < 100; round++) {
   const seen = await list.locator('[data-id]').evaluateAll((rows) => rows.map((row) => [row.dataset.id, row.innerText]))
+  const before = state.rows.size
   seen.forEach(([id, text]) => state.rows.set(id, text))
-  if (state.rows.size >= 100 || (round > 0 && state.rows.size === before)) break
-  await list.hover()
-  await state.page.mouse.wheel(0, -1500) // up through a history; a positive number goes down a feed
-  await state.page.waitForTimeout(700)
+  const moved = await scrollRegion({ locator: list, by: -1500 }) // negative is up; a ref works too: { ref: '@e12', page }
+  await state.page.waitForTimeout(600)
+  if (!moved.scrolled && state.rows.size === before) break
 }
 return state.rows.size
 ```
 
-Find the row attribute first with one `getCleanHTML` of a single row. A snapshot ends with a `[scrolls: …]` note for such a list. Rows can sit in the page in another order than on screen: to act on "the first 10", sort them by `getBoundingClientRect().top`, and check `count()` before `nth()`. Setting `scrollTop` often loads nothing; the mouse wheel does.
+`scrollRegion` finds the scrolling element at, above or inside the locator, scrolls it and returns `{ scrolled, top, height, viewHeight, atStart, atEnd }`. Find the row attribute first with one `getCleanHTML` of a single row. Rows can sit in the page in another order than on screen: to act on "the first 10", go to the start (`by: -100000`), sort the rows by `getBoundingClientRect().top`, and check `count()` before `nth()`.
 
 ## page.evaluate
 

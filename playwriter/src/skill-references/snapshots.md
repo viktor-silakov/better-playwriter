@@ -38,6 +38,8 @@ Use the ref with the page that returned it. A surviving DOM node keeps its ref w
 
 ## Read the page text
 
+Plain text of one region: `await locator.innerText()`. A long list that scrolls inside the page: `await scrollRegion({ locator, by: -1500 })` loads more rows (see `actions`, "Collect a list").
+
 **getCleanHTML** - get cleaned HTML from a locator or page, with search and diffing:
 
 ```js

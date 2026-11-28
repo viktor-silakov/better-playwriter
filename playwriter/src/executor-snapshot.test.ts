@@ -200,10 +200,31 @@ describe('agent snapshot views', () => {
     const { whole, scoped } = JSON.parse(result.text.replace('[return value] ', ''))
     expect(whole).toMatchInlineSnapshot(`
       [
-        "[scrolls: listbox "Rows" has 40 rows in the page and shows 10% of its height. More rows load as it scrolls: page.mouse.wheel over it. Recipe: skill --ref actions, "Collect a list".]",
+        "[scrolls: listbox "Rows" has 40 rows in the page and shows 10% of its height. More rows load as it scrolls: await scrollRegion({ locator: page.getByLabel('Rows', { exact: true }).first(), by: -1500 }), negative is up. Recipe: skill --ref actions, "Collect a list".]",
       ]
     `)
     expect(scoped).toEqual(whole)
+    // The scroller is the wrapper above the listbox, and a plain labelled div counts as a list too.
+    const scrolled = await executor.execute(`
+      const down = await scrollRegion({ locator: state.listPage.getByRole('listbox'), by: 300 })
+      const again = await scrollRegion({ locator: state.listPage.getByRole('option').first(), by: 100000 })
+      await state.listPage.setContent('<div aria-label="Thread" style="height:100px;overflow-y:auto"><div>' + Array.from({ length: 30 }, (_, i) => '<div style="height:30px">Message ' + i + '</div>').join('') + '</div></div>')
+      const plain = await snapshot({ page: state.listPage, mode: 'compact', showDiffSinceLastCall: false })
+      return JSON.stringify({ down, again, plain: plain.split('\\n').filter((line) => line.startsWith('[scrolls')) })
+    `, { timeout: 30000 })
+    expect(scrolled.isError).toBe(false)
+    const { down, again, plain } = JSON.parse(scrolled.text.replace('[return value] ', ''))
+    expect(down).toMatchObject({ scrolled: true, top: 300, atStart: false, atEnd: false })
+    expect(again).toMatchObject({ scrolled: true, atEnd: true })
+    expect(plain).toMatchInlineSnapshot(`
+      [
+        "[scrolls: div "Thread" has 30 rows in the page and shows 11% of its height. More rows load as it scrolls: await scrollRegion({ locator: page.getByLabel('Thread', { exact: true }).first(), by: -1500 }), negative is up. Recipe: skill --ref actions, "Collect a list".]",
+      ]
+    `)
+    await executor.execute(`
+      const rows = Array.from({ length: 40 }, (_, i) => '<div role="option" style="height:30px">Row ' + (i + 1) + '</div>').join('')
+      await state.listPage.setContent('<main><div style="height:120px;overflow-y:auto"><div role="listbox" aria-label="Rows">' + rows + '</div></div></main>')
+    `)
     const miss = await executor.execute(`await state.listPage.getByRole('option').nth(60).click({ timeout: 500 })`, { timeout: 10000 })
     expect(miss.isError).toBe(true)
     expect(miss.text).toContain('check count() first')
