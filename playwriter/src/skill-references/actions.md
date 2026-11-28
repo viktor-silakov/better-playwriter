@@ -188,6 +188,9 @@ When something doesn't respond to a click, do NOT start inspecting CDP event lis
 3. Take another `snapshot({ page: state.page })` to see what changed
 4. Only investigate DOM internals if correct interaction patterns produce zero response after 2–3 attempts
 
+**13. Mail and chat apps**
+Text read from the page can start with icon-font and zero-width characters that `trim()` keeps: strip them before matching (`text.replace(/[^\p{L}\p{N}\p{P}\p{Z}]/gu, '').trim()`). After Delete a mail app opens the next message by itself, which can mark it read: leave the folder right away. Long lists render only the rows on screen and keep their scroll position. A message's menu button shows only on hover: focus it and press Enter.
+
 ## selector best practices
 
 **For unknown websites**: use `snapshot({ page: state.page })` - it shows what's actually interactive with stable locators.

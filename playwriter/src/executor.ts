@@ -2465,9 +2465,15 @@ export class PlaywrightExecutor {
         inspect,
         refToLocator,
         elementForRef,
-        getCleanHTML: (options: GetCleanHTMLOptions) => {
+        getCleanHTML: async (options: GetCleanHTMLOptions) => {
+          if (options?.ref) {
+            // A snapshot ref reaches elements that no role or label locator finds.
+            const refPage = resolveSandboxPage({ helper: 'getCleanHTML', page: options.page })
+            const element = await elementForRef({ ref: options.ref, page: refPage })
+            return getCleanHTML({ ...options, locator: undefined, page: refPage, element })
+          }
           if (!options?.locator) {
-            throw new Error("getCleanHTML requires { locator }, e.g. getCleanHTML({ locator: state.page }) or getCleanHTML({ locator: state.page.locator('main') }).")
+            throw new Error("getCleanHTML requires { locator } or { ref, page }, e.g. getCleanHTML({ locator: state.page }) or getCleanHTML({ ref: '@e12', page: state.page }).")
           }
           return getCleanHTML(options)
         },
@@ -2738,7 +2744,11 @@ export class PlaywrightExecutor {
       const resetHint = (() => {
         const message = error instanceof Error ? error.message : String(error)
         if (/intercepts pointer events/.test(message)) {
-          const dialog = coveringDialog === undefined ? 'another element, often a dialog' : coveringDialog ? `the dialog "${coveringDialog}"` : 'an open dialog'
+          if (coveringDialog === undefined) {
+            // No dialog: often a control that only shows on hover, such as a message's menu button.
+            return '\n\n[HINT: Another element covers the target and no dialog is open. A control that shows only on hover can be used from the keyboard: await element.focus(); await page.keyboard.press(\'Enter\'). Then take a snapshot to see what opened.]'
+          }
+          const dialog = coveringDialog ? `the dialog "${coveringDialog}"` : 'an open dialog'
           return `\n\n[HINT: The target is covered by ${dialog}. Find it with snapshot({ page, search: /dialog|modal/i }) and close or answer it first.]`
         }
         // Snapshot roles come from Chrome. Playwright computes its own, and the two differ for some elements,

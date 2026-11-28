@@ -1,9 +1,15 @@
-import { Page, Locator } from '@xmorse/playwright-core'
+import { Page, Locator, ElementHandle } from '@xmorse/playwright-core'
 import { formatHtmlForPrompt } from './htmlrewrite.js'
 import { createSmartDiff } from './diff-utils.js'
 
 export interface GetCleanHTMLOptions {
-  locator: Locator | Page
+  /** A locator or a page. Leave it out when passing `ref`. */
+  locator?: Locator | Page
+  /** A reference from a recent snapshot, such as '@e12', with `page`. */
+  ref?: string
+  page?: Page
+  /** The element `ref` resolved to. Set by the executor. */
+  element?: ElementHandle
   search?: string | RegExp
   showDiffSinceLastCall?: boolean
   includeStyles?: boolean
@@ -45,7 +51,12 @@ export async function getCleanHTML(options: GetCleanHTMLOptions): Promise<string
   let rawHtml: string
   let page: Page
 
-  if (isPage(locator)) {
+  if (options.element && options.page) {
+    page = options.page
+    rawHtml = await options.element.evaluate((element) => (element as { outerHTML: string }).outerHTML)
+  } else if (!locator) {
+    throw new Error('getCleanHTML requires { locator } or { ref, page }.')
+  } else if (isPage(locator)) {
     page = locator
     rawHtml = await locator.content()
   } else {
@@ -71,7 +82,7 @@ export async function getCleanHTML(options: GetCleanHTMLOptions): Promise<string
     lastHtmlSnapshots.set(page, pageSnapshots)
   }
 
-  const snapshotKey = getSnapshotKey(locator)
+  const snapshotKey = locator ? getSnapshotKey(locator) : `ref:${options.ref}`
   const previousSnapshot = pageSnapshots.get(snapshotKey)
   pageSnapshots.set(snapshotKey, htmlStr)
 

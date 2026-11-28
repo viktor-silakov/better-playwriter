@@ -51,6 +51,7 @@ const fullHtml = await getCleanHTML({ locator: state.page, showDiffSinceLastCall
 **Parameters:**
 
 - `locator` - Playwright Locator or Page to get HTML from
+- `ref` with `page` - read the element of a snapshot ref instead of a locator: `getCleanHTML({ ref: '@e12', page: state.page })`
 - `search` - string/regex to filter results (returns first 10 matching lines with 5 lines context)
 - `showDiffSinceLastCall` - returns diff since last call (default: `true`, but `false` when `search` is provided). Pass `false` to get full HTML.
 - `includeStyles` - keep style and class attributes (default: false)

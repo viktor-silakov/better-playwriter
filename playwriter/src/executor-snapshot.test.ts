@@ -208,6 +208,17 @@ describe('agent snapshot views', () => {
     const miss = await executor.execute(`await state.formPage.getByRole('textbox', { name: 'Recipient' }).click({ timeout: 500 })`, { timeout: 10000 })
     expect(miss.isError).toBe(true)
     expect(miss.text).toContain('act on its ref instead')
+    const html = await executor.execute(`
+      const ref = /button "Send" (@e\\d+)/.exec(await snapshot({ page: state.formPage, showDiffSinceLastCall: false }))[1]
+      return await getCleanHTML({ ref, page: state.formPage, showDiffSinceLastCall: false })
+    `, { timeout: 10000 })
+    expect(html.text).toContain('<button>Send</button>')
+    // Covered with no dialog open: a hover-only control, reachable from the keyboard.
+    const hover = await executor.execute(`
+      await state.formPage.setContent('<button>More</button><div style="position:fixed;inset:0"></div>')
+      await state.formPage.getByRole('button', { name: 'More' }).click({ timeout: 800 })
+    `, { timeout: 10000 })
+    expect(hover.text).toContain("await page.keyboard.press('Enter')")
     // A click under an open dialog names the dialog, not only the backdrop's markup.
     const covered = await executor.execute(`
       await state.formPage.setContent('<button>Save</button><div role="dialog" aria-label="Discard draft?" style="position:fixed;inset:0;background:#fff"><button>Cancel</button></div>')
