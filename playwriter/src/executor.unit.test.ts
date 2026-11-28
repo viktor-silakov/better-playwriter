@@ -11,6 +11,7 @@ import {
   searchSnapshot,
   shortenCallLog,
   shortenUrlForOutput,
+  describeActionCap,
 } from './executor.js'
 import { trimStackForAgent } from './process-guard.js'
 
@@ -24,6 +25,19 @@ describe('a snapshot over its budget keeps the main region', () => {
     const count = (text: string) => out.split('\n').filter((line) => line.includes(text)).length
     expect(count('Content row')).toBeGreaterThan(count('Section number'))
     expect(count('Section number')).toBeGreaterThan(3)
+  })
+})
+
+describe('describeActionCap', () => {
+  const message = 'locator.click: Timeout 15000ms exceeded.\nCall log:\n  - waiting for getByText(\'Ready\')'
+  it('names the action timeout when the cap cut a longer execute timeout short', () => {
+    expect(describeActionCap(message, 120000)).toContain('{ timeout: 90000 }')
+    expect(describeActionCap(message, 40000)).toContain('{ timeout: 30000 }')
+  })
+  it('stays silent when the execute timeout set the wait', () => {
+    expect(describeActionCap(message, 30000)).toBe('')
+    expect(describeActionCap(message.replace('15000', '5000'), 10000)).toBe('')
+    expect(describeActionCap(message.replace('15000', '20000'), 120000)).toBe('')
   })
 })
 

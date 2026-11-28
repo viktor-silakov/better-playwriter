@@ -538,11 +538,23 @@ export function formatValue(value: unknown): string {
  */
 export const DEFAULT_ACTION_TIMEOUT_MS = 5000
 
-/** Half of the execute timeout, so a call with a longer timeout also waits longer for slow elements. */
+/** Longest wait of an action that has no timeout of its own, whatever the execute timeout. */
+export const ACTION_TIMEOUT_CAP_MS = 15000
+
+/** Half of the execute timeout, at most ACTION_TIMEOUT_CAP_MS. */
 export function actionTimeoutFor(executeTimeout: number): number {
   // An action that has not found its element in 15 seconds will not find it in 60: a long execute
   // timeout is for long scripts, and one wrong locator should not spend half of it.
-  return Math.min(15000, Math.max(1000, Math.round(executeTimeout / 2)))
+  return Math.min(ACTION_TIMEOUT_CAP_MS, Math.max(1000, Math.round(executeTimeout / 2)))
+}
+
+/** A longer execute timeout no longer lengthens an action past the cap: say so when the cap cut a wait short. */
+export function describeActionCap(message: string, executeTimeout: number): string {
+  const capped = Math.round(executeTimeout / 2) > ACTION_TIMEOUT_CAP_MS
+  if (!capped || !message.includes(`Timeout ${ACTION_TIMEOUT_CAP_MS}ms exceeded`)) return ''
+  // Below the execute timeout, so the action fails with its own error rather than the whole call's.
+  const suggested = Math.floor((executeTimeout * 0.75) / 1000) * 1000
+  return `\n\n[HINT: Actions wait at most ${ACTION_TIMEOUT_CAP_MS / 1000} s, also with a longer execute timeout. If the element is only slow to appear, give this action its own timeout: { timeout: ${suggested} }.]`
 }
 
 export function formatConsoleLogs({
@@ -3369,7 +3381,7 @@ export class PlaywrightExecutor {
       return {
         text: boundExecuteOutput({
           before: outputText + logsText,
-          after: `\nError executing code: ${errorText}${resetHint}`,
+          after: `\nError executing code: ${errorText}${resetHint}${describeActionCap(String(error?.message), timeout)}`,
         }),
         images: [],
         screenshots: [],
