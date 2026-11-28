@@ -690,39 +690,46 @@ export async function describeHiddenRegions(page: Page): Promise<string> {
  * Lists that scroll inside the page. An app often keeps only the rows near the viewport in the page, so a
  * snapshot of such a list looks complete while most of its rows are missing.
  */
-function findScrollingLists(root: any): Array<{ role: string; name: string; rows: number; total: number; shown: number }> {
+function findScrollingLists(root: any): Array<{ role: string; name: string; rows: number; total: number; shown: number; atEnd: boolean }> {
   const view = (globalThis as any).window
-  // Lists by role or tag, and any labelled container: an app can keep its rows in a plain labelled div.
   const listSelector = '[role=listbox],[role=list],[role=grid],[role=treegrid],[role=tree],[role=feed],[role=log],[role=table],ul,ol,table,[aria-label],[aria-labelledby]'
   const rowSelector = '[role=option],[role=row],[role=listitem],[role=treeitem],[role=article],li,tr'
-  const candidates: any[] = [...(root.matches?.(listSelector) ? [root] : []), ...root.querySelectorAll(listSelector)].slice(0, 600)
-  const seen = new Set<any>()
-  const found: Array<{ role: string; name: string; rows: number; total: number; shown: number; height: number }> = []
-  const scrolls = (element: any) => {
-    const overflow = view.getComputedStyle(element).overflowY
-    return (overflow === 'auto' || overflow === 'scroll') && element.scrollHeight > element.clientHeight * 1.5 && element.clientHeight > 40
+  const nameOf = (element: any) => {
+    return (
+      element.getAttribute('aria-label') ||
+      (element.getAttribute('aria-labelledby') || '')
+        .split(/\s+/)
+        .map((id: string) => view.document.getElementById(id)?.textContent ?? '')
+        .join(' ')
+        .trim()
+    ).slice(0, 40)
   }
-  for (const list of candidates) {
-    if (list.checkVisibility && !list.checkVisibility()) {
+  // Start from what really scrolls: the scroller of a list can sit many levels above or below the element
+  // that carries its role and name.
+  const around: any[] = []
+  for (let element = root.matches ? root : undefined, level = 0; element && level < 7; element = element.parentElement, level++) {
+    around.push(element)
+  }
+  const all: any[] = [...around, ...root.querySelectorAll('*')].slice(0, 6000)
+  const found: Array<{ role: string; name: string; rows: number; total: number; shown: number; atEnd: boolean; height: number }> = []
+  for (const scroller of all) {
+    if (scroller.clientHeight <= 40 || scroller.scrollHeight <= scroller.clientHeight * 1.5 || scroller === view.document.body) {
       continue
     }
-    // The scroller is the list, a wrapper a few levels up or down, never the page itself.
-    let scroller: any
-    for (let element = list, level = 0; element && level < 5 && element !== view.document.body; element = element.parentElement, level++) {
-      if (scrolls(element)) {
-        scroller = element
-        break
+    const overflow = view.getComputedStyle(scroller).overflowY
+    if ((overflow !== 'auto' && overflow !== 'scroll') || (scroller.checkVisibility && !scroller.checkVisibility())) {
+      continue
+    }
+    // Its list: the scroller, the nearest labelled element around it, or the first one inside it.
+    let list: any = scroller.matches(listSelector) ? scroller : undefined
+    for (let element = scroller.parentElement, level = 0; !list && element && level < 6; element = element.parentElement, level++) {
+      // A wrapper that holds much more than this scroller names the page, not the list.
+      if (element.matches(listSelector) && element.clientHeight <= scroller.clientHeight * 2) {
+        list = element
       }
     }
-    for (let level = 0, layer: any[] = [list]; !scroller && level < 3 && layer.length && layer.length < 20; level++) {
-      layer = layer.flatMap((element) => [...element.children])
-      scroller = layer.find(scrolls)
-    }
-    if (!scroller || seen.has(scroller)) {
-      continue
-    }
-    seen.add(scroller)
-    let rowElements: any[] = [...list.querySelectorAll(rowSelector)]
+    list ??= scroller.querySelector(listSelector) ?? scroller
+    let rowElements: any[] = [...scroller.querySelectorAll(rowSelector)]
     if (rowElements.length < 2) {
       // Rows without a role: the children of the first element under the scroller that has several.
       let holder = scroller
@@ -731,32 +738,25 @@ function findScrollingLists(root: any): Array<{ role: string; name: string; rows
       }
       rowElements = [...holder.children]
     }
-    const rows = rowElements.length
-    if (rows < 2) {
+    if (rowElements.length < 2) {
       continue
     }
-    // The page may say how many rows the whole list has.
-    const total = Math.max(0, ...rowElements.slice(0, 50).map((row) => Number(row.getAttribute('aria-setsize')) || 0))
     found.push({
       role: list.getAttribute('role') || list.tagName.toLowerCase(),
-      name: (
-        list.getAttribute('aria-label') ||
-        (list.getAttribute('aria-labelledby') || '')
-          .split(/\s+/)
-          .map((id: string) => view.document.getElementById(id)?.textContent ?? '')
-          .join(' ')
-          .trim()
-      ).slice(0, 40),
-      rows,
-      total,
+      name: nameOf(list),
+      rows: rowElements.length,
+      // The page may say how many rows the whole list has.
+      total: Math.max(0, ...rowElements.slice(0, 50).map((row) => Number(row.getAttribute('aria-setsize')) || 0)),
       shown: Math.round((scroller.clientHeight / scroller.scrollHeight) * 100),
+      // A history opens at its end: the rows that are not in the page yet are above.
+      atEnd: scroller.scrollTop > (scroller.scrollHeight - scroller.clientHeight) / 2,
       height: scroller.scrollHeight,
     })
   }
   return found
     .sort((a, b) => b.height - a.height)
-    .slice(0, 2)
-    .map(({ role, name, rows, total, shown }) => ({ role, name, rows, total, shown }))
+    .slice(0, 3)
+    .map(({ role, name, rows, total, shown, atEnd }) => ({ role, name, rows, total, shown, atEnd }))
 }
 
 export async function describeScrollingLists(target: Page | Locator): Promise<string> {
@@ -769,7 +769,7 @@ export async function describeScrollingLists(target: Page | Locator): Promise<st
       const name = list.name ? ` "${list.name}"` : ''
       const count = list.total > list.rows ? `${list.rows} of about ${list.total} rows` : `${list.rows} rows`
       const locator = list.name ? `page.getByLabel('${list.name.replace(/[\\']/g, (char) => `\\${char}`)}', { exact: true }).first()` : 'a row of it'
-      return `[scrolls: ${list.role}${name} has ${count} in the page and shows ${list.shown}% of its height. More rows load as it scrolls: await scrollRegion({ locator: ${locator}, by: -1500 }), negative is up. Recipe: skill --ref actions, "Collect a list".]`
+      return `[scrolls: ${list.role}${name} has ${count} in the page and shows ${list.shown}% of its height. More rows load as it scrolls: await scrollRegion({ locator: ${locator}, by: ${list.atEnd ? '-1500 }) to go up' : '1500 }) to go down'}. Recipe: skill --ref actions, "Collect a list".]`
     })
     .join('\n')
 }
@@ -1115,7 +1115,10 @@ export function searchSnapshot({ snapshot, search }: { snapshot: string; search:
     if (!isTree && i > 0 && sortedIndices[i - 1] !== lineIdx - 1) {
       result.push('---')
     }
-    result.push(lines[lineIdx])
+    // A match shows where a thing is. A name that is a whole message or row is cut: a snapshot of that
+    // element has all of it.
+    const line = lines[lineIdx]!
+    result.push(isTree ? line.replace(/"((?:[^"\\]|\\.){160})(?:[^"\\]|\\.)+"/, (_, head) => `"${head}…"`) : line)
   }
   return result.join('\n')
 }
@@ -2443,20 +2446,26 @@ export class PlaywrightExecutor {
         const scroller = (
           await handle.evaluateHandle((start: any) => {
             const view = (globalThis as any).window
-            const scrolls = (element: any) => {
+            const range = (element: any) => {
               const overflow = view.getComputedStyle(element).overflowY
-              return (overflow === 'auto' || overflow === 'scroll') && element.scrollHeight > element.clientHeight + 20
+              return overflow === 'auto' || overflow === 'scroll' ? element.scrollHeight - element.clientHeight : 0
             }
-            for (let element = start; element && element !== view.document.documentElement; element = element.parentElement) {
-              if (scrolls(element)) {
-                return element
+            if (range(start) > 20) {
+              return start
+            }
+            // A list is often a wrapper around its scroller: take the scroller inside that fills most of it.
+            let inside: any
+            for (const element of [...start.querySelectorAll('*')].slice(0, 3000) as any[]) {
+              if (element.clientHeight * 2 >= start.clientHeight && range(element) > 20 && range(element) > (inside ? range(inside) : 0)) {
+                inside = element
               }
             }
-            for (let level = 0, layer: any[] = [start]; level < 4 && layer.length && layer.length < 40; level++) {
-              layer = layer.flatMap((element) => [...element.children])
-              const found = layer.find(scrolls)
-              if (found) {
-                return found
+            if (inside) {
+              return inside
+            }
+            for (let element = start.parentElement; element && element !== view.document.documentElement; element = element.parentElement) {
+              if (range(element) > 20) {
+                return element
               }
             }
             return view.document.scrollingElement

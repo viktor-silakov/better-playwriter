@@ -196,7 +196,8 @@ describe('agent snapshot views', () => {
     const sameName = await executor.execute(`await state.rolePage.getByRole('textbox', { name: /^To$/ }).click({ timeout: 500 })`, { timeout: 10000 })
     expect(sameName.text).toMatch(/Your last snapshot has textbox "To" @e\d+: Playwright gives that element another role, so use the ref\./)
     const wrongName = await executor.execute(`await state.rolePage.getByRole('button', { name: 'New mail' }).click({ timeout: 500 })`, { timeout: 10000 })
-    expect(wrongName.text).toMatch(/Your last snapshot has these with role button: button "New" @e\d+, button "Send" @e\d+\./)
+    // Other tests of this file leave pages in state: their buttons are listed too.
+    expect(wrongName.text).toMatch(/Your last snapshot has these with role button: .*button "New" @e\d+, button "Send" @e\d+\./)
   }, 60000)
 
   it('notes a list that scrolls inside the page and explains an index past the last row', async () => {
@@ -213,7 +214,7 @@ describe('agent snapshot views', () => {
     const { whole, scoped } = JSON.parse(result.text.replace('[return value] ', ''))
     expect(whole).toMatchInlineSnapshot(`
       [
-        "[scrolls: listbox "Rows" has 40 rows in the page and shows 10% of its height. More rows load as it scrolls: await scrollRegion({ locator: page.getByLabel('Rows', { exact: true }).first(), by: -1500 }), negative is up. Recipe: skill --ref actions, "Collect a list".]",
+        "[scrolls: listbox "Rows" has 40 rows in the page and shows 10% of its height. More rows load as it scrolls: await scrollRegion({ locator: page.getByLabel('Rows', { exact: true }).first(), by: 1500 }) to go down. Recipe: skill --ref actions, "Collect a list".]",
       ]
     `)
     expect(scoped).toEqual(whole)
@@ -231,7 +232,7 @@ describe('agent snapshot views', () => {
     expect(again).toMatchObject({ scrolled: true, atEnd: true })
     expect(plain).toMatchInlineSnapshot(`
       [
-        "[scrolls: div "Thread" has 30 rows in the page and shows 11% of its height. More rows load as it scrolls: await scrollRegion({ locator: page.getByLabel('Thread', { exact: true }).first(), by: -1500 }), negative is up. Recipe: skill --ref actions, "Collect a list".]",
+        "[scrolls: div "Thread" has 30 rows in the page and shows 11% of its height. More rows load as it scrolls: await scrollRegion({ locator: page.getByLabel('Thread', { exact: true }).first(), by: 1500 }) to go down. Recipe: skill --ref actions, "Collect a list".]",
       ]
     `)
     await executor.execute(`
