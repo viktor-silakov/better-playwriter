@@ -252,6 +252,13 @@ export function resolveSandboxPage(options: {
   locator?: { page(): Page }
   frame?: { page?: () => Page | null; owner?: () => { page(): Page } }
 }): Page {
+  if (options.locator && typeof options.locator.page !== 'function') {
+    // An ElementHandle from elementForRef, or a string: neither can scope a helper.
+    throw new Error(
+      `${options.helper}: locator must be a Playwright Locator such as page.getByRole('main'), not an element handle or a string. ` +
+        `For a snapshot ref, read it with getCleanHTML({ ref, page }) or scope by role and name.`,
+    )
+  }
   const resolved = options.locator?.page() ?? pageFromFrame(options.frame) ?? options.page
   if (!resolved) {
     throw missingPageError(options.helper)
