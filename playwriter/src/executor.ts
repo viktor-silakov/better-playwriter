@@ -570,6 +570,59 @@ export async function describeChildFrames(page: Page): Promise<string> {
 }
 
 /**
+ * Notes for regions a person sees that the page hides from assistive technology with aria-hidden. A snapshot
+ * is built from the accessibility tree, so an app launcher marked this way was missing from it without a word.
+ */
+export async function describeHiddenRegions(page: Page): Promise<string> {
+  const regions = await evaluateIsolated({
+    target: page,
+    fn: () => {
+      const doc = (globalThis as any).document
+      const view = (globalThis as any).window
+      const controls = 'a[href],button,input,select,textarea,[role=menuitem],[role=option]'
+      const found: Array<{ selector: string; controls: number }> = []
+      for (const element of doc.querySelectorAll('[aria-hidden="true"]') as Iterable<any>) {
+        if (found.length >= 3) {
+          break
+        }
+        // Only the outermost hidden element, and only one that holds things to act on.
+        if (element.parentElement?.closest('[aria-hidden="true"]')) {
+          continue
+        }
+        const inside = [...element.querySelectorAll(controls)].filter((control: any) => {
+          return control.checkVisibility ? control.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) : true
+        })
+        if (inside.length < 2) {
+          continue
+        }
+        // Really in front of the user: a point in the middle of one of its controls belongs to it. This leaves
+        // out carousel slides parked off screen and content under a modal's backdrop.
+        const box = inside[0].getBoundingClientRect()
+        const x = box.left + box.width / 2
+        const y = box.top + box.height / 2
+        if (box.width < 4 || box.height < 4 || x < 0 || y < 0 || x > view.innerWidth || y > view.innerHeight) {
+          continue
+        }
+        const top = doc.elementFromPoint(x, y)
+        if (!top || !element.contains(top)) {
+          continue
+        }
+        const tag = element.tagName.toLowerCase()
+        const role = element.getAttribute('role')
+        const id = element.id && /^[A-Za-z][\w-]*$/.test(element.id) ? `#${element.id}` : ''
+        found.push({ selector: id || `${tag}${role ? `[role="${role}"]` : ''}[aria-hidden="true"]`, controls: inside.length })
+      }
+      return found
+    },
+  })
+  return regions
+    .map((region) => {
+      return `[visible region not included: the page hides it from the accessibility tree (${region.controls} controls). Read it with getCleanHTML({ locator: page.locator('${region.selector}') })]`
+    })
+    .join('\n')
+}
+
+/**
  * Bound the rendered tree on whole lines, keeping ancestor paths and giving
  * dialogs and status messages priority over other parts of a large page.
  */
@@ -1966,7 +2019,17 @@ export class PlaywrightExecutor {
             await sleep(SNAPSHOT_SETTLE_POLL_MS)
           }
         }
-        const frameNotes = !frame && !locator && mode !== undefined ? await describeChildFrames(resolvedPage).catch(() => '') : ''
+        const frameNotes =
+          !frame && !locator && mode !== undefined
+            ? (
+                await Promise.all([
+                  describeChildFrames(resolvedPage).catch(() => ''),
+                  describeHiddenRegions(resolvedPage).catch(() => ''),
+                ])
+              )
+                .filter(Boolean)
+                .join('\n')
+            : ''
         const withPageUrl = (body: string, { condense = false }: { condense?: boolean } = {}) => {
           const url = resolvedPage.url()
           const boundedUrl = maxChars !== undefined && url.length > 512 ? `${url.slice(0, 512)}…` : url
@@ -2041,7 +2104,9 @@ export class PlaywrightExecutor {
           this.lastSnapshots.set(resolvedPage, pageSnapshots)
         }
         const previousSnapshot = shouldCacheSnapshot ? pageSnapshots.get(snapshotKey) : undefined
-        if (shouldCacheSnapshot) {
+        // The cache holds what the agent last saw. A search shows only the matching lines, so it must not
+        // make the next snapshot answer "no changes" about content the agent never got.
+        if (shouldCacheSnapshot && (!search || showDiffSinceLastCall)) {
           pageSnapshots.set(snapshotKey, snapshotStr)
         }
 

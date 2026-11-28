@@ -208,6 +208,30 @@ describe('agent snapshot views', () => {
     const miss = await executor.execute(`await state.formPage.getByRole('textbox', { name: 'Recipient' }).click({ timeout: 500 })`, { timeout: 10000 })
     expect(miss.isError).toBe(true)
     expect(miss.text).toContain('act on its ref instead')
+    // A search in between does not count as having seen the page: the next snapshot still shows what changed.
+    const afterSearch = await executor.execute(`
+      await state.formPage.setContent('<button aria-expanded="false" onclick="this.setAttribute(\\'aria-expanded\\', \\'true\\')">Apps</button><p>Text</p>')
+      await snapshot({ page: state.formPage, mode: 'compact', showDiffSinceLastCall: false })
+      await state.formPage.getByRole('button', { name: 'Apps' }).click()
+      await snapshot({ page: state.formPage, search: 'no such thing' })
+      const next = await snapshot({ page: state.formPage, mode: 'compact' })
+      await state.formPage.setContent('<main><p>Quarterly report is ready</p><div contenteditable aria-label="To"></div><button>Send</button></main>')
+      return next
+    `, { timeout: 10000 })
+    expect(afterSearch.text).toContain('[expanded]')
+    // A panel the page hides from assistive technology while showing it: the snapshot says where it is.
+    const hidden = await executor.execute(`
+      await state.formPage.setContent('<button>Apps</button><div role="dialog" aria-hidden="true"><button>Files</button><button>Mail</button></div><div aria-hidden="true" style="display:none"><button>A</button><button>B</button></div>')
+      const withPanel = await snapshot({ page: state.formPage, showDiffSinceLastCall: false })
+      const panel = await getCleanHTML({ locator: state.formPage.locator('div[role="dialog"][aria-hidden="true"]'), showDiffSinceLastCall: false })
+      await state.formPage.setContent('<main><p>Quarterly report is ready</p><div contenteditable aria-label="To"></div><button>Send</button></main>')
+      return JSON.stringify({ withPanel, panel })
+    `, { timeout: 10000 })
+    const { withPanel, panel } = JSON.parse(hidden.text.replace('[return value] ', ''))
+    expect(withPanel).not.toContain('"Files"')
+    expect(withPanel.match(/visible region not included/g)).toHaveLength(1)
+    expect(withPanel).toContain(`getCleanHTML({ locator: page.locator('div[role="dialog"][aria-hidden="true"]') })`)
+    expect(panel).toContain('Mail')
     const html = await executor.execute(`
       const ref = /button "Send" (@e\\d+)/.exec(await snapshot({ page: state.formPage, showDiffSinceLastCall: false }))[1]
       return await getCleanHTML({ ref, page: state.formPage, showDiffSinceLastCall: false })
