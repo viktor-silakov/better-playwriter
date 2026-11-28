@@ -2746,7 +2746,7 @@ export class PlaywrightExecutor {
         if (/intercepts pointer events/.test(message)) {
           if (coveringDialog === undefined) {
             // No dialog: often a control that only shows on hover, such as a message's menu button.
-            return '\n\n[HINT: Another element covers the target and no dialog is open. A control that shows only on hover can be used from the keyboard: await element.focus(); await page.keyboard.press(\'Enter\'). Then take a snapshot to see what opened.]'
+            return '\n\n[HINT: Another element covers the target and no dialog is open. If the covering element is part of the same row or label, click that element. A control that shows only on hover can be used from the keyboard: await element.focus(); await page.keyboard.press(\'Enter\'). Then take a snapshot to see what opened.]'
           }
           const dialog = coveringDialog ? `the dialog "${coveringDialog}"` : 'an open dialog'
           return `\n\n[HINT: The target is covered by ${dialog}. Find it with snapshot({ page, search: /dialog|modal/i }) and close or answer it first.]`
@@ -2800,7 +2800,7 @@ export class PlaywrightExecutor {
       const name = await Promise.race([
         page.evaluate(() => {
           const doc = (globalThis as any).document
-          const dialog = [...doc.querySelectorAll('[role=dialog],[role=alertdialog],dialog[open]')].find((element: any) => {
+          const dialog = [...doc.querySelectorAll('[role=dialog][aria-modal=true],[role=alertdialog],dialog[open]')].find((element: any) => {
             return element.getClientRects().length > 0
           }) as any
           if (!dialog) {

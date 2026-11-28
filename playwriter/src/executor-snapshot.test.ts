@@ -215,13 +215,15 @@ describe('agent snapshot views', () => {
     expect(html.text).toContain('<button>Send</button>')
     // Covered with no dialog open: a hover-only control, reachable from the keyboard.
     const hover = await executor.execute(`
-      await state.formPage.setContent('<button>More</button><div style="position:fixed;inset:0"></div>')
+      await state.formPage.setContent('<button>More</button><div role="dialog" aria-label="Details" style="position:fixed;inset:0"></div>')
       await state.formPage.getByRole('button', { name: 'More' }).click({ timeout: 800 })
     `, { timeout: 10000 })
+    // A side panel with the dialog role is not a modal: the hint must not blame it.
+    expect(hover.text).not.toContain('covered by the dialog')
     expect(hover.text).toContain("await page.keyboard.press('Enter')")
     // A click under an open dialog names the dialog, not only the backdrop's markup.
     const covered = await executor.execute(`
-      await state.formPage.setContent('<button>Save</button><div role="dialog" aria-label="Discard draft?" style="position:fixed;inset:0;background:#fff"><button>Cancel</button></div>')
+      await state.formPage.setContent('<button>Save</button><div role="dialog" aria-modal="true" aria-label="Discard draft?" style="position:fixed;inset:0;background:#fff"><button>Cancel</button></div>')
       await state.formPage.getByRole('button', { name: 'Save' }).click({ timeout: 800 })
     `, { timeout: 10000 })
     expect(covered.text).toContain('covered by the dialog "Discard draft?"')
