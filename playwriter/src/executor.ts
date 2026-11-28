@@ -724,7 +724,7 @@ function findScrollingLists(root: any): Array<{ role: string; name: string; rows
     const values = new Map<string, Set<string>>()
     for (const row of sample) {
       const own = new Set<string>()
-      for (const element of [row, ...[...row.querySelectorAll('*')].slice(0, 15)] as any[]) {
+      for (const element of [row, ...[...row.querySelectorAll('*')].slice(0, 60)] as any[]) {
         for (const attribute of element.attributes as Iterable<any>) {
           const isKey = attribute.name === 'id' || attribute.name.startsWith('data-')
           if (!isKey || !attribute.value || attribute.value.length > 80 || own.has(attribute.name)) {
@@ -755,7 +755,15 @@ function findScrollingLists(root: any): Array<{ role: string; name: string; rows
         list = element
       }
     }
-    list ??= scroller.querySelector(listSelector) ?? scroller
+    if (!list) {
+      // A list inside counts when it is most of what scrolls. A pane of text with a short list of links
+      // in it is a document, not a list that loads rows.
+      const inside = scroller.querySelector(listSelector)
+      if (inside && inside.offsetHeight * 2 < scroller.scrollHeight) {
+        continue
+      }
+      list = inside ?? scroller
+    }
     let rowElements: any[] = [...scroller.querySelectorAll(rowSelector)]
     if (rowElements.length < 2) {
       // Rows without a role: the children of the first element under the scroller that has several.
