@@ -232,6 +232,17 @@ describe('agent snapshot views', () => {
     expect(withPanel.match(/visible region not included/g)).toHaveLength(1)
     expect(withPanel).toContain(`getCleanHTML({ locator: page.locator('div[role="dialog"][aria-hidden="true"]') })`)
     expect(panel).toContain('Mail')
+    // A styled checkbox: the input sits under its own drawn mark.
+    const styled = await executor.execute(`
+      await state.formPage.setContent('<label style="position:relative;display:block;width:24px;height:24px"><input type="checkbox" aria-label="Select row" style="position:absolute;inset:0;margin:0;opacity:0"><span style="position:absolute;inset:0;background:#ccc"></span></label><button>Other</button>')
+      const ref = /checkbox "Select row"[^@]*(@e\\d+)/.exec(await snapshot({ page: state.formPage, showDiffSinceLastCall: false }))[1]
+      const box = await elementForRef({ ref, page: state.formPage })
+      await box.click({ timeout: 2000 })
+      const checked = await state.formPage.getByLabel('Select row').isChecked()
+      await state.formPage.setContent('<main><p>Quarterly report is ready</p><div contenteditable aria-label="To"></div><button>Send</button></main>')
+      return checked
+    `, { timeout: 15000 })
+    expect(styled.text).toContain('true')
     const html = await executor.execute(`
       const ref = /button "Send" (@e\\d+)/.exec(await snapshot({ page: state.formPage, showDiffSinceLastCall: false }))[1]
       return await getCleanHTML({ ref, page: state.formPage, showDiffSinceLastCall: false })

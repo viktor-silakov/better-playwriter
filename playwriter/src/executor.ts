@@ -2156,7 +2156,34 @@ export class PlaywrightExecutor {
         if (!reference) {
           throw new Error(`Snapshot reference ${options.ref} is unavailable on this page. Take a fresh snapshot.`)
         }
-        return await resolveSnapshotReference({ page: targetPage, reference })
+        const element = await resolveSnapshotReference({ page: targetPage, reference })
+        // A styled checkbox or radio keeps the real input under its own drawn mark, so a click on the input
+        // waits for something that never moves. The mark belongs to the same control: click it instead.
+        const click = element.click.bind(element)
+        element.click = async (clickOptions) => {
+          const ownCover = clickOptions?.force || clickOptions?.position ? null : await element.evaluateHandle((node) => {
+            const input = node as unknown as { type?: string; getAttribute(name: string): string | null; getBoundingClientRect(): any; contains(other: unknown): boolean; parentElement: any; labels?: Iterable<unknown>; ownerDocument: any }
+            const isToggle = input.type === 'checkbox' || input.type === 'radio' || /^(checkbox|radio|switch)$/.test(input.getAttribute('role') ?? '')
+            if (!isToggle) {
+              return null
+            }
+            const box = input.getBoundingClientRect()
+            const top = input.ownerDocument.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)
+            if (!top || top === node || input.contains(top)) {
+              return null
+            }
+            // Only a cover that is part of this control: its label, or a sibling inside the same small wrapper.
+            const inLabel = [...(input.labels ?? [])].some((label: any) => label.contains(top))
+            const wrapper = input.parentElement
+            const inWrapper = wrapper && wrapper.contains(top) && wrapper.querySelectorAll('input,button,a[href],select,textarea').length === 1
+            return inLabel || inWrapper ? top : null
+          }).then((handle) => handle.asElement()).catch(() => null)
+          if (ownCover) {
+            return await ownCover.click(clickOptions)
+          }
+          return await click(clickOptions)
+        }
+        return element
       }
 
       const getLocatorStringForElement = async (element: Locator | ElementHandle) => {

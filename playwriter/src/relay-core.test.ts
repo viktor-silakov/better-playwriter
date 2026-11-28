@@ -41,6 +41,7 @@ describe('Relay Core Tests', () => {
   }, 600000)
 
   afterAll(async () => {
+    await snapshotPages?.close()
     await cleanupTestContext(testCtx, cleanup)
     cleanup = null
     testCtx = null
@@ -773,31 +774,58 @@ describe('Relay Core Tests', () => {
     })
   }, 30000)
 
+  // Local pages shaped like a discussion thread and a component site. Live sites changed under the
+  // stored snapshots and failed this test at random.
   const snapshotTestCases = [
     {
-      name: 'hacker-news',
-      url: 'https://news.ycombinator.com/item?id=1',
-      expectedContent: ['role=link', 'Hacker News'],
-      waitForCode: js`
-        await state.page.locator('a[href="news"]').first().waitFor({ timeout: 10000 });
-        await state.page.locator('a[href^="user?id="]').first().waitFor({ timeout: 10000 });
-      `,
+      name: 'discussion-thread',
+      path: '/thread',
+      html: `<!doctype html><html lang="en"><head><title>Thread | Example News</title></head><body>
+        <table><tr><td><a href="/news"><b>Example News</b></a> <a href="/newest">new</a> | <a href="/past">past</a> | <a href="/comments">comments</a> | <a href="/submit">submit</a></td><td><a href="/login">login</a></td></tr></table>
+        <table><tr><td><a id="up_1" href="/vote?id=1">▲</a></td><td><a href="https://example.com/">Example Launch</a> <span>(<a href="/from?site=example.com">example.com</a>)</span></td></tr>
+        <tr><td></td><td><span>57 points</span> by <a href="/user?id=ada">ada</a> <a href="/item?id=1">on Oct 9, 2006</a> | <a href="/hide?id=1">hide</a> | <a href="/past?id=1">past</a> | <a href="/fave?id=1">favorite</a> | <a href="/item?id=1">3 comments</a></td></tr></table>
+        <form action="/comment" method="post"><textarea name="text" rows="4" aria-label="Comment"></textarea><br><input type="submit" value="add comment"></form>
+        <table>
+          <tr><td><a id="up_15" href="/vote?id=15">▲</a></td><td><a href="/user?id=grace">grace</a> <a href="/item?id=15">on Oct 9, 2006</a><p>The rising star of venture capital.</p><a href="/reply?id=15">reply</a></td></tr>
+          <tr><td><a id="up_17" href="/vote?id=17">▲</a></td><td><a href="/user?id=linus">linus</a> <a href="/item?id=17">on Oct 9, 2006</a><p>Is there anywhere to eat nearby?</p><a href="/reply?id=17">reply</a></td></tr>
+          <tr><td><a id="up_1079" href="/vote?id=1079">▲</a></td><td><a href="/user?id=alan">alan</a> <a href="/item?id=1079">on Feb 25, 2007</a><p>So, just to see how this works, a third comment.</p><a href="/reply?id=1079">reply</a></td></tr>
+        </table>
+        <footer><a href="/guidelines">Guidelines</a> | <a href="/faq">FAQ</a> | <a href="/lists">Lists</a><form action="/search"><label>Search: <input type="text" name="q"></label></form></footer>
+      </body></html>`,
+      expectedContent: ['role=link', 'Example News'],
     },
     {
-      name: 'shadcn-ui',
-      url: 'https://ui.shadcn.com/',
-      expectedContent: ['shadcn'],
-      waitForCode: js`
-        await state.page.getByRole('link', { name: 'Get Started' }).first().waitFor({ timeout: 10000 });
-        // shadcn.com is a Next.js SPA that keeps navigating/hydrating after load;
-        // wait for the network to settle so snapshot() is not captured mid-navigation.
-        await state.page.waitForLoadState('networkidle');
-      `,
+      name: 'component-site',
+      path: '/components',
+      html: `<!doctype html><html lang="en"><head><title>Components | Example UI</title></head><body>
+        <header><a href="/">Example UI</a><nav aria-label="Main"><a href="/docs">Docs</a><a href="/components">Components</a><a href="/blocks">Blocks</a><a href="/themes">Themes</a></nav>
+          <button aria-label="Search documentation" aria-haspopup="dialog">Search… <kbd>⌘K</kbd></button><button aria-label="Toggle theme" aria-pressed="false"></button></header>
+        <main><h1>Build your component library</h1><p>Accessible components you can copy into your apps.</p>
+          <a href="/docs/installation">Get Started</a> <a href="/components">Browse Components</a>
+          <div role="tablist" aria-label="Examples"><button role="tab" aria-selected="true" aria-controls="panel-mail">Mail</button><button role="tab" aria-selected="false" aria-controls="panel-tasks">Tasks</button><button role="tab" aria-selected="false" aria-controls="panel-forms">Forms</button></div>
+          <div role="tabpanel" id="panel-mail" aria-label="Mail">
+            <form aria-label="Create account"><label>Email <input type="email" name="email" placeholder="m@example.com"></label><label>Password <input type="password" name="password"></label>
+              <label><input type="checkbox" name="terms"> Accept terms</label>
+              <label>Plan <select name="plan"><option>Free</option><option>Team</option></select></label>
+              <fieldset><legend>Notify me about</legend><label><input type="radio" name="notify" checked> All messages</label><label><input type="radio" name="notify"> Mentions</label></fieldset>
+              <button type="submit">Create account</button><button type="button" disabled>Import</button></form>
+            <table aria-label="Payments"><thead><tr><th>Status</th><th>Email</th><th>Amount</th></tr></thead><tbody><tr><td>Success</td><td>ken@example.com</td><td>$316.00</td></tr><tr><td>Processing</td><td>abe@example.com</td><td>$242.00</td></tr></tbody></table>
+          </div>
+        </main>
+        <footer><p>Built for the examples. The source is on <a href="https://example.com/source">Example Code</a>.</p></footer>
+      </body></html>`,
+      expectedContent: ['Example UI'],
     },
   ]
+  let snapshotPages: Awaited<ReturnType<typeof createSimpleServer>> | undefined
+  // The port differs on every run: keep it out of the stored snapshots.
+  const withoutPort = (text: unknown) => (typeof text === 'string' ? text.replace(/127\.0\.0\.1:\d+/g, '127.0.0.1:PORT') : text)
 
   for (const testCase of snapshotTestCases) {
     it(`should get accessibility snapshot of ${testCase.name}`, async () => {
+      snapshotPages ??= await createSimpleServer({
+        routes: Object.fromEntries(snapshotTestCases.map(({ path, html }) => [path, html])),
+      })
       await client.callTool({
         name: 'execute',
         arguments: {
@@ -814,24 +842,19 @@ describe('Relay Core Tests', () => {
       const interactiveResult = await client.callTool({
         name: 'execute',
         arguments: {
-          // goto + waitFor each allow up to 10s; the default 10s exec window is
-          // too tight for slow external sites, so widen it for this one call.
-          timeout: 40000,
           code: js`
-              // External pages can expose a partial AX tree right after domcontentloaded,
-              // so wait for stable page-specific content before snapshotting.
-              await state.page.goto('${testCase.url}', { waitUntil: 'domcontentloaded' });
-              ${testCase.waitForCode}
+              await state.page.goto('${snapshotPages.baseUrl}${testCase.path}');
               const snap = await snapshot({ page: state.page, showDiffSinceLastCall: false, interactiveOnly: true });
               return snap;
             `,
         },
       })
 
-      const interactiveData =
+      const interactiveData = withoutPort(
         typeof interactiveResult === 'object' && interactiveResult.content?.[0]?.text
           ? tryJsonParse(interactiveResult.content[0].text)
-          : interactiveResult
+          : interactiveResult,
+      )
       await expect(interactiveData).toMatchFileSnapshot(`snapshots/${testCase.name}-accessibility-interactive.md`)
       expect(interactiveResult.content).toBeDefined()
       for (const expected of testCase.expectedContent) {
@@ -849,10 +872,11 @@ describe('Relay Core Tests', () => {
         },
       })
 
-      const fullData =
+      const fullData = withoutPort(
         typeof fullResult === 'object' && fullResult.content?.[0]?.text
           ? tryJsonParse(fullResult.content[0].text)
-          : fullResult
+          : fullResult,
+      )
       await expect(fullData).toMatchFileSnapshot(`snapshots/${testCase.name}-accessibility-full.md`)
       expect(fullResult.content).toBeDefined()
       for (const expected of testCase.expectedContent) {
