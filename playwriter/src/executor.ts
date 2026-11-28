@@ -1586,7 +1586,8 @@ export class PlaywrightExecutor {
    * name, and the names this role has. A guess at a name then costs one failed call, not two.
    */
   private async describeLiveRole(message: string): Promise<string> {
-    const call = [...message.matchAll(/getByRole\('([a-z]+)'(?:, \{ name: '((?:[^'\\]|\\.)*)')?/g)].at(-1)
+    const calls = [...message.matchAll(/getByRole\('([a-z]+)'(?:, \{ name: (?:'((?:[^'\\]|\\.)*)'|\/((?:[^/\\]|\\.)+)\/))?/g)]
+    const call = calls.at(-1)
     // The page saved in state last is the likeliest one the failed call was about.
     const pages = [...new Set(Object.values(this.userState).filter((value): value is Page => this.pagesWithListeners.has(value as Page)))]
       .reverse()
@@ -1594,7 +1595,9 @@ export class PlaywrightExecutor {
     if (!call || pages.length === 0) {
       return ''
     }
-    const [, role, text] = call
+    const [, role, text, pattern] = call
+    // Words of the name that was asked for: names that share one come first.
+    const words = (text ?? pattern ?? '').toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []
     const notes: string[] = []
     const chromium = await getChromium({ patchright: this.patchright })
     await chromium
@@ -1602,6 +1605,13 @@ export class PlaywrightExecutor {
         for (const page of pages) {
           if (page.isClosed()) {
             continue
+          }
+          // A chain fails at its first step that matches nothing.
+          for (const [, stepRole] of calls.slice(0, -1)) {
+            if ((await page.getByRole(stepRole as Parameters<Page['getByRole']>[0]).count()) === 0) {
+              notes.push(` The page has no element with role ${stepRole}, the scope of this locator.`)
+              return
+            }
           }
           if (text) {
             const byLabel = await page.getByLabel(text, { exact: true }).count()
@@ -1616,7 +1626,8 @@ export class PlaywrightExecutor {
               .map((element) => (element.getAttribute('aria-label') || element.innerText || element.value || '').trim().replace(/\s+/g, ' ').slice(0, 30))
               .filter(Boolean)
           })
-          const unique = [...new Set(names)]
+          const close = (name: string) => words.some((word) => name.toLowerCase().includes(word))
+          const unique = [...new Set(names)].sort((a, b) => Number(close(b)) - Number(close(a)))
           if (unique.length) {
             notes.push(` The page has ${unique.length} named ${role} elements: ${unique.slice(0, 12).map((name) => `"${name}"`).join(', ')}${unique.length > 12 ? ', …' : ''}.`)
             return

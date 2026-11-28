@@ -199,7 +199,11 @@ describe('agent snapshot views', () => {
     expect(byLabel.text).toContain("page.getByLabel('To', { exact: true }) matches one element: use it.")
     const wrongName = await executor.execute(`await state.rolePage.getByRole('button', { name: 'New mail' }).click({ timeout: 500 })`, { timeout: 10000 })
     // Other tests of this file leave pages in state: their buttons are listed too.
-    expect(wrongName.text).toMatch(/The page has \d+ named button elements: .*"New", "Send"/)
+    expect(wrongName.text).toMatch(/The page has \d+ named button elements: "New", "Send"/)
+    const byPattern = await executor.execute(`await state.rolePage.getByRole('button', { name: /send it/i }).click({ timeout: 500 })`, { timeout: 10000 })
+    expect(byPattern.text).toMatch(/The page has \d+ named button elements: "Send", "New"/)
+    const noScope = await executor.execute(`await state.rolePage.getByRole('banner').getByRole('button').last().click({ timeout: 500 })`, { timeout: 10000 })
+    expect(noScope.text).toContain('The page has no element with role banner, the scope of this locator.')
   }, 60000)
 
   it('notes a list that scrolls inside the page and explains an index past the last row', async () => {
