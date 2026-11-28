@@ -77,6 +77,11 @@ Clipboard paste (`Meta+v`) can silently fail. For file uploads, prefer file inpu
 const fileInput = state.page.locator('input[type="file"]').first()
 await fileInput.setInputFiles('/path/to/image.png')
 
+// No file input until a dialog opens: catch the file chooser of the upload button
+const chooser = state.page.waitForEvent('filechooser')
+await state.page.getByRole('menuitem', { name: 'Upload from this device' }).click()
+await (await chooser).setFiles('/path/to/image.png')
+
 // Unreliable: clipboard paste may silently fail, need to focus textarea first for example
 await state.page.keyboard.press('Meta+v') // always verify with screenshot!
 ```
@@ -286,6 +291,8 @@ for (const cookie of cookies) {
   await cdp.send('Network.deleteCookies', { name: cookie.name, domain: cookie.domain })
 }
 ```
+
+A long string inside a returned object is cut (`... 47 more characters`): return the string itself to see all of it.
 
 **Downloading large data** - console output truncates large strings. Trigger a browser download instead:
 

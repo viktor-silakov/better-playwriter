@@ -186,6 +186,31 @@ describe('agent snapshot views', () => {
     }
   }, 60000)
 
+  it('searches with refs, fails fast on an empty scope, and points to the ref when a role finds nothing', async () => {
+    const result = await executor.execute(`
+      const formPage = await context.newPage()
+      await formPage.setContent('<main><p>Quarterly report is ready</p><div contenteditable aria-label="To"></div><button>Send</button></main>')
+      const found = await snapshot({ page: formPage, search: 'send' })
+      const text = await snapshot({ page: formPage, search: /quarterly/i })
+      const started = Date.now()
+      const empty = await snapshot({ locator: formPage.getByRole('navigation') }).catch((error) => error.message)
+      const emptyMs = Date.now() - started
+      state.formPage = formPage
+      return JSON.stringify({ found, text, empty, emptyMs })
+    `, { timeout: 30000 })
+    expect(result.isError).toBe(false)
+    const { found, text, empty, emptyMs } = JSON.parse(result.text.replace('[return value] ', ''))
+    expect(found).toMatch(/button "Send" @e\d+/)
+    expect(found).not.toContain('role=')
+    expect(text).toContain('Quarterly report is ready')
+    expect(empty).toContain('snapshot: the locator matched 0 elements')
+    expect(emptyMs).toBeLessThan(4000)
+    const miss = await executor.execute(`await state.formPage.getByRole('textbox', { name: 'Recipient' }).click({ timeout: 500 })`, { timeout: 10000 })
+    expect(miss.isError).toBe(true)
+    expect(miss.text).toContain('act on its ref instead')
+    await executor.execute('await state.formPage.close()')
+  }, 60000)
+
   it('names visible iframes that a page snapshot does not include', async () => {
     const server = await createSimpleServer({
       routes: {

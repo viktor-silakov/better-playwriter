@@ -452,7 +452,7 @@ describe('Session tab groups', () => {
       headers: JSON_HEADERS,
       body: JSON.stringify({ sessionId: first, closeCreatedTabs: true }),
     })
-    expect(await deleteResponse.json()).toEqual({ success: true })
+    expect(await deleteResponse.json()).toEqual({ success: true, closedTabs: 2 })
 
     // first session's tab and its popup are closed, second session's two tabs stay
     const groups = await waitForGroups((g) => g.find((group) => group.title === 'agent-shared')?.tabCount === 2)

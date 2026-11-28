@@ -27,7 +27,7 @@ Create your own tab unless the user points to an existing one. Save the tab in `
 
 ## Find, act, and verify
 
-For an unfamiliar page, get a short accessibility snapshot. Use a returned ref or a specific accessible role and name to act, then check the outcome. Scope a long snapshot to a `locator` or use `search` to find the relevant content.
+For an unfamiliar page, get a short accessibility snapshot. Act on a returned ref, then check the outcome. Without a ref, use a specific accessible role and name; snapshot roles come from Chrome and `getByRole` can disagree, so fall back to the ref or `getByLabel`. Scope a long snapshot to a `locator` or use `search` to find the relevant content. End with `session delete <id> --close-created-tabs`.
 
 ```js
 return await snapshot({ page: state.page })

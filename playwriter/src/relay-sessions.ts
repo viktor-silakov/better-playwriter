@@ -383,14 +383,15 @@ export async function newSession(options: NewSessionOptions): Promise<NewSession
     return created({ id: result.id, mode: 'direct', label })
   }
 
-  const createExtension = async (extensionId: string | null) => {
+  const createExtension = async (extensionId: string | null, profileName?: string) => {
     const result = await postRelay<RelaySessionResponse>({
       relay,
       path: '/cli/session/new',
       body: { extensionId, cwd, tabGroup, tabGroupColor, patchright: patchright || undefined, ...clientField },
     })
     collect(result, { tabGroupRequested: Boolean(tabGroup || tabGroupColor) })
-    return created({ id: result.id, mode: 'extension', label: '' })
+    // The profile the session is bound to, so a caller can check it without a second command.
+    return created({ id: result.id, mode: 'extension', label: profileName ? `profile ${profileName}` : '' })
   }
 
   const createHeadless = async () => {
@@ -415,7 +416,7 @@ export async function newSession(options: NewSessionOptions): Promise<NewSession
       warnExtensionOnly('direct CDP sessions')
       return createDirect({ cdpEndpoint: option.wsUrl!, label: `direct CDP, ${option.browser} ${option.profile}`, instance: { browser: option.browser, profiles: option.profiles || [] } })
     }
-    return createExtension(option.extensionId ?? null)
+    return createExtension(option.extensionId ?? null, option.profileName)
   }
 
   if (remote) {
@@ -645,8 +646,8 @@ export async function deleteSession({
   closeCreatedTabs?: boolean
   /** Detach and ungroup this session's tabs while keeping them open */
   releaseCreatedTabs?: boolean
-}): Promise<{ warning?: string }> {
-  return postRelay<{ warning?: string }>({
+}): Promise<{ warning?: string; closedTabs?: number }> {
+  return postRelay<{ warning?: string; closedTabs?: number }>({
     relay,
     path: '/cli/session/delete',
     body: { sessionId, closeCreatedTabs: closeCreatedTabs || undefined, releaseCreatedTabs: releaseCreatedTabs || undefined },

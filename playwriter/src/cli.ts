@@ -545,7 +545,8 @@ cli
       if (options.closeCreatedTabs && options.releaseCreatedTabs) throw new Error('Choose only one tab cleanup option')
       const result = await deleteSession({ relay: { host: options.host, token: options.token }, sessionId: String(sessionId), closeCreatedTabs: Boolean(options.closeCreatedTabs), releaseCreatedTabs: Boolean(options.releaseCreatedTabs) })
       if (result.warning) console.warn(result.warning)
-      console.log(`Session ${sessionId} deleted.`)
+      const closed = result.closedTabs === undefined ? '' : ` Closed ${result.closedTabs} ${result.closedTabs === 1 ? 'tab' : 'tabs'}.`
+      console.log(`Session ${sessionId} deleted.${closed}`)
     } catch (error: any) {
       console.error(`Error: ${error.message}`)
       process.exit(1)

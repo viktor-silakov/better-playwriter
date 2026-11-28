@@ -10,9 +10,9 @@ return await snapshot({ page: state.page })
 - `mode: 'compact'` keeps meaningful text and controls while dropping empty structure.
 - `mode: 'full'` requests the full accessibility snapshot with Playwright locator strings.
 - `locator` scopes the snapshot to one subtree. Pass a locator and omit `page` if convenient. Use `frame` to inspect an iframe: a page snapshot ends with a note for each visible one.
-- `search` accepts a case-insensitive string or a regular expression. It matches against the full tree by default. Combine it with a `locator` to search within a known region.
+- `search` accepts a case-insensitive string or a regular expression. It reads the compact view of the whole page and returns matching lines with their refs. Combine it with a `locator` to search within a known region.
 - `maxDepth` caps the rendered depth. Prefer a locator when you need a control inside a deeply nested page.
-- `maxChars` controls the text budget. The interactive and compact modes default to 4,000 characters. Give an integer of at least 100. A snapshot over the budget first drops disabled, repeated and empty lines, then reports what it omitted. If the control is missing, narrow the scope or search for it.
+- `maxChars` controls the text budget. The interactive and compact modes default to 4,000 characters. Give an integer of at least 100. A snapshot over the budget first drops disabled, repeated and empty lines, then reports what it omitted. If the control is missing, narrow the scope or search for it. In a large app the page chrome can use up the budget: take `mode: 'compact'` with a larger `maxChars`, or scope to the pane with `getByLabel('Message list')`. A locator that matches nothing fails after 2 seconds.
 
 ```js
 const form = state.page.getByRole('form', { name: 'Lookup' })

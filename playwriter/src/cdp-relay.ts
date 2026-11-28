@@ -3906,6 +3906,7 @@ export async function startPlayWriterCDPRelayServer({
     try {
       removeSavedSessionOnDisk(sessionId)
       let warning: string | undefined
+      let closedTabs: number | undefined
       if ((cleanup.closeCreatedTabs || cleanup.releaseCreatedTabs) && extensionId) {
         try {
           const result = (await sendToExtension({
@@ -3916,6 +3917,8 @@ export async function startPlayWriterCDPRelayServer({
           })) as CloseTabsForKeyResult | undefined
           if (result?.success !== true) {
             warning = 'Your Better Playwriter extension cannot clean up session tabs. Update the extension.'
+          } else if (cleanup.closeCreatedTabs && typeof result.closedTabs === 'number') {
+            closedTabs = result.closedTabs
           }
         } catch (error) {
           warning = `Could not clean up session tabs: ${error instanceof Error ? error.message : String(error)}`
@@ -3930,7 +3933,7 @@ export async function startPlayWriterCDPRelayServer({
         executionRuns.deleteSession(sessionId)
         if (extensionId) releaseSessionAssignments(sessionId, extensionId)
       }
-      return { sessionId, warning }
+      return { sessionId, warning, closedTabs }
     } finally {
       deletingSessions.delete(sessionId)
     }
@@ -3975,8 +3978,8 @@ export async function startPlayWriterCDPRelayServer({
       }
 
       if (body.closeCreatedTabs && body.releaseCreatedTabs) return c.json({ error: 'Choose only one tab cleanup option' }, 400)
-      const { warning } = await deleteSessionAndTabs(manager, sessionId, body)
-      return c.json({ success: true, warning })
+      const { warning, closedTabs } = await deleteSessionAndTabs(manager, sessionId, body)
+      return c.json({ success: true, warning, closedTabs })
     } catch (error: any) {
       logger?.error('Delete session endpoint error:', error)
       return c.json({ error: error.message }, 500)

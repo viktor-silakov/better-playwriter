@@ -519,6 +519,7 @@ const SNAPSHOT_SETTLE_QUIET_MS = 500
 // A page that is still fetching may be a shell waiting for its data, so its content has to hold still longer.
 const SNAPSHOT_SETTLE_STABLE_MS = 750
 const SNAPSHOT_SETTLE_POLL_MS = 150
+const SNAPSHOT_SCOPE_WAIT_MS = 2000
 const SNAPSHOT_SETTLE_APP_START_MS = 2500
 
 /** Whether two looks at a page saw content of about the same size: rows still arriving change it by more. */
@@ -1836,14 +1837,15 @@ export class PlaywrightExecutor {
         /** Right after a navigation, wait up to 3 s for the page to stop loading. Default true. */
         waitForLoad?: boolean
       } = {}) => {
-        const usesLegacyView = Boolean(options.search) || options.interactiveOnly !== undefined || options.format === 'raw'
+        const usesLegacyView = options.interactiveOnly !== undefined || options.format === 'raw'
         const {
           page: targetPage,
           frame,
           locator,
           search,
           showDiffSinceLastCall = !search,
-          mode = usesLegacyView ? undefined : 'interactive',
+          // A search looks for text as often as for a control, so it reads the compact view: text and refs.
+          mode = usesLegacyView ? undefined : options.search ? 'compact' : 'interactive',
           interactiveOnly,
           maxDepth,
           maxChars = mode && mode !== 'full' ? DEFAULT_SNAPSHOT_MAX_CHARS : undefined,
@@ -1855,6 +1857,14 @@ export class PlaywrightExecutor {
           throw new Error(`snapshot maxChars must be an integer of at least ${MIN_SNAPSHOT_MAX_CHARS}`)
         }
         const resolvedPage = resolveSandboxPage({ helper: 'snapshot', page: targetPage, locator, frame })
+        if (locator && (await locator.count()) === 0) {
+          // The region may still be rendering, but a selector that matches nothing must not cost the whole timeout.
+          await locator.first().waitFor({ state: 'attached', timeout: SNAPSHOT_SCOPE_WAIT_MS }).catch(() => {
+            throw new Error(
+              `snapshot: the locator matched 0 elements (${locator}). Take a snapshot of the page to find the region, or find it by its label with getByLabel().`,
+            )
+          })
+        }
         // goto(..., { waitUntil: 'domcontentloaded' }) returns on the empty shell of a single-page app.
         // A snapshot taken then would show a progress bar and cost the agent a second call.
         const navigatedAt = this.lastNavigationAt.get(resolvedPage)
@@ -2689,6 +2699,11 @@ export class PlaywrightExecutor {
 
       const resetHint = (() => {
         const message = error instanceof Error ? error.message : String(error)
+        // Snapshot roles come from Chrome. Playwright computes its own, and the two differ for some elements,
+        // such as an editable div without a role.
+        if (/Timeout \d+ms exceeded/.test(message) && /waiting for .*getByRole\(/.test(message)) {
+          return '\n\n[HINT: No element matched this role and name. If it came from a snapshot, act on its ref instead: elementForRef({ ref, page }). Chrome and Playwright can name the role differently.]'
+        }
         if (/\b(?:Target|Page) crashed\b/i.test(message)) {
           return '\n\n[HINT: This tab crashed. Create a new tab with context.newPage(), replace the crashed reference in state, and navigate to the intended URL. Do not reset the session or repeat the last script: first check whether its actions completed.]'
         }
@@ -2710,7 +2725,8 @@ export class PlaywrightExecutor {
       })()
 
       // timeout stacks are internal noise (Promise.race / setTimeout); only show the message
-      const errorText = isTimeoutError ? error.message : errorStack
+      // Playwright dims its call log with ANSI codes: noise when the reader is not a terminal.
+      const errorText = (isTimeoutError ? error.message : errorStack).replace(/\u001b\[[0-9;]*m/g, '')
       return {
         text: boundExecuteOutput({
           before: outputText + logsText,
