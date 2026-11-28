@@ -1573,6 +1573,52 @@ export class PlaywrightExecutor {
     return text ? ` Get its ref with snapshot({ page, search: '${text.slice(0, 40)}' }).` : ''
   }
 
+  /**
+   * What the page has now for a role that getByRole did not find: a label locator that does match the
+   * name, and the names this role has. A guess at a name then costs one failed call, not two.
+   */
+  private async describeLiveRole(message: string): Promise<string> {
+    const call = [...message.matchAll(/getByRole\('([a-z]+)'(?:, \{ name: '((?:[^'\\]|\\.)*)')?/g)].at(-1)
+    // The page saved in state last is the likeliest one the failed call was about.
+    const pages = [...new Set(Object.values(this.userState).filter((value): value is Page => this.pagesWithListeners.has(value as Page)))]
+      .reverse()
+      .slice(0, 4)
+    if (!call || pages.length === 0) {
+      return ''
+    }
+    const [, role, text] = call
+    const notes: string[] = []
+    const chromium = await getChromium({ patchright: this.patchright })
+    await chromium
+      .runWithAbortSignal(AbortSignal.timeout(2000), async () => {
+        for (const page of pages) {
+          if (page.isClosed()) {
+            continue
+          }
+          if (text) {
+            const byLabel = await page.getByLabel(text, { exact: true }).count()
+            if (byLabel > 0) {
+              notes.push(` page.getByLabel('${text}', { exact: true }) matches ${byLabel === 1 ? 'one element' : `${byLabel} elements`}: use it.`)
+              return
+            }
+          }
+          const names = await page.getByRole(role as Parameters<Page['getByRole']>[0]).evaluateAll((elements: any[]) => {
+            return elements
+              .filter((element) => (element.checkVisibility ? element.checkVisibility() : true))
+              .map((element) => (element.getAttribute('aria-label') || element.innerText || element.value || '').trim().replace(/\s+/g, ' ').slice(0, 30))
+              .filter(Boolean)
+          })
+          const unique = [...new Set(names)]
+          if (unique.length) {
+            notes.push(` The page has ${unique.length} named ${role} elements: ${unique.slice(0, 12).map((name) => `"${name}"`).join(', ')}${unique.length > 12 ? ', …' : ''}.`)
+            return
+          }
+        }
+      })
+      .catch(() => {})
+    return notes.join('')
+  }
+
   private invalidateSnapshotState(page: Page) {
     this.lastSnapshots.delete(page)
     this.lastRefToLocator.delete(page)
@@ -3249,6 +3295,8 @@ export class PlaywrightExecutor {
       const coveringDialog = /intercepts pointer events/.test(error instanceof Error ? error.message : String(error))
         ? await this.describeOpenDialog()
         : undefined
+      const failedRole = /Timeout \d+ms exceeded/.test(String(error?.message)) && /waiting for .*getByRole\(/.test(String(error?.message))
+      const liveRole = failedRole ? await this.describeLiveRole(String(error.message)).catch(() => '') : ''
       const resetHint = (() => {
         const message = error instanceof Error ? error.message : String(error)
         if (/intercepts pointer events/.test(message)) {
@@ -3268,7 +3316,7 @@ export class PlaywrightExecutor {
         }
         // Only when the role is the last step: a row looked up inside a list found by role is another case.
         if (/Timeout \d+ms exceeded/.test(message) && /waiting for .*getByRole\((?:(?!\)\.(?:locator|getBy)).)*$/m.test(message)) {
-          return `\n\n[HINT: No element matched this role and name.${this.describeSnapshotRole(message)} If it came from a snapshot, act on its ref instead: elementForRef({ ref, page }). A line without a ref can be found by its name: page.getByLabel(name, { exact: true }). Chrome and Playwright can name the role differently.]`
+          return `\n\n[HINT: No element matched this role and name.${liveRole || this.describeSnapshotRole(message)} If it came from a snapshot, act on its ref instead: elementForRef({ ref, page }). A line without a ref can be found by its name: page.getByLabel(name, { exact: true }). Chrome and Playwright can name the role differently.]`
         }
         if (/\b(?:Target|Page) crashed\b/i.test(message)) {
           return '\n\n[HINT: This tab crashed. Create a new tab with context.newPage(), replace the crashed reference in state, and navigate to the intended URL. Do not reset the session or repeat the last script: first check whether its actions completed.]'
