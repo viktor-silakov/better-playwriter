@@ -14,6 +14,19 @@ import {
 } from './executor.js'
 import { trimStackForAgent } from './process-guard.js'
 
+describe('a snapshot over its budget keeps the main region', () => {
+  it('gives the main landmark most of the budget and the page chrome the rest', () => {
+    const nav = Array.from({ length: 60 }, (_, i) => `  - link "Section number ${i + 1}" @e${i + 1}`)
+    const rows = Array.from({ length: 60 }, (_, i) => `  - button "Content row ${i + 1}" @e${i + 100}`)
+    const snapshot = ['- navigation "Sections":', ...nav, '- main "Content":', ...rows].join('\n')
+    const out = limitSnapshotOutput({ snapshot, maxChars: 1500 })
+    expect(out.length).toBeLessThanOrEqual(1500)
+    const count = (text: string) => out.split('\n').filter((line) => line.includes(text)).length
+    expect(count('Content row')).toBeGreaterThan(count('Section number'))
+    expect(count('Section number')).toBeGreaterThan(3)
+  })
+})
+
 describe('shortenUrlForOutput', () => {
   it('keeps a short query and cuts a long one', () => {
     expect(shortenUrlForOutput('https://example.com/list?page=2#top')).toBe('https://example.com/list?page=2#top')

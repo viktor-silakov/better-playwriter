@@ -804,6 +804,10 @@ export function limitSnapshotOutput({
   const ancestors: Array<{ index: number; indent: number }> = []
   const priority: number[] = []
   let priorityIndent: number | undefined
+  // The main landmark holds what the page is about. Navigation and toolbars come first in the page and
+  // used to take the whole budget, so the content was the part that got cut.
+  const main: number[] = []
+  let mainIndent: number | undefined
 
   for (const [index, line] of lines.entries()) {
     const body = line.trimStart()
@@ -823,6 +827,15 @@ export function limitSnapshotOutput({
     if (priorityIndent !== undefined) {
       priority.push(index)
     }
+    if (mainIndent !== undefined && indent <= mainIndent) {
+      mainIndent = undefined
+    }
+    if (/^- main\b/i.test(body)) {
+      mainIndent ??= indent
+    }
+    if (mainIndent !== undefined) {
+      main.push(index)
+    }
   }
 
   const included = new Set<number>()
@@ -841,6 +854,13 @@ export function limitSnapshotOutput({
     }
   }
   priority.forEach(include)
+  // Content gets most of what is left, not all: the page chrome holds the controls that change the view.
+  if (main.length && main.length < lines.length) {
+    const forOthers = Math.round(remaining * 0.3)
+    remaining -= forOthers
+    main.forEach(include)
+    remaining += forOthers
+  }
   for (const index of lines.keys()) {
     include(index)
   }
@@ -1039,7 +1059,12 @@ export function searchSnapshot({ snapshot, search }: { snapshot: string; search:
   // In a tree the lines above a match that matter are its ancestors, which say where it is. Its
   // neighbours are other controls: showing them spent the output on the page chrome.
   const isTree = lines.filter((line) => /^\s*- /.test(line)).length * 2 > lines.length
-  const shown = matchIndices.slice(0, isTree ? SNAPSHOT_SEARCH_MAX_TREE_MATCHES : SNAPSHOT_SEARCH_MAX_MATCHES)
+  // With more matches than fit, a control is the likelier target than a description line.
+  const shown = isTree
+    ? [...matchIndices.filter((i) => / @e\d+\b/.test(lines[i]!)), ...matchIndices.filter((i) => !/ @e\d+\b/.test(lines[i]!))]
+        .slice(0, SNAPSHOT_SEARCH_MAX_TREE_MATCHES)
+        .sort((a, b) => a - b)
+    : matchIndices.slice(0, SNAPSHOT_SEARCH_MAX_MATCHES)
   const includedLines = new Set<number>()
   for (const idx of shown) {
     if (isTree) {
@@ -3045,7 +3070,7 @@ export class PlaywrightExecutor {
         // such as an editable div without a role.
         // An index past the last match waits like a missing element. A list that keeps only the rows near
         // the viewport in the page is the usual cause.
-        if (/Timeout \d+ms exceeded/.test(message) && /waiting for .*\.(?:nth\(\d+\)|last\(\)|first\(\))/.test(message)) {
+        if (/Timeout \d+ms exceeded/.test(message) && /waiting for .*\.nth\([1-9]\d*\)/.test(message)) {
           return '\n\n[HINT: The locator ends with an index. Fewer elements may match than the index needs: check count() first. A long list often keeps only the rows near the viewport in the page; scroll it with page.mouse.wheel over it to load more.]'
         }
         if (/Timeout \d+ms exceeded/.test(message) && /waiting for .*getByRole\(/.test(message)) {
