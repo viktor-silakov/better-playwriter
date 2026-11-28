@@ -575,6 +575,7 @@ export function shortenUrlForOutput(url: string): string {
 }
 
 const SNAPSHOT_SEARCH_MAX_MATCHES = 10
+const SNAPSHOT_SEARCH_MAX_TREE_MATCHES = 25
 const SNAPSHOT_SEARCH_CONTEXT_LINES = 5
 const DEFAULT_SNAPSHOT_MAX_CHARS = 4000
 const MIN_SNAPSHOT_MAX_CHARS = 100
@@ -1005,21 +1006,38 @@ export function searchSnapshot({ snapshot, search }: { snapshot: string; search:
   const lines = snapshot.split('\n')
   const needle = typeof search === 'string' ? search.toLowerCase() : ''
   const isMatch = (line: string) => {
+    // A ref is an address, not content: "@" or "e12" must not match every control.
+    const text = line.replace(/ @e\d+\b/g, '')
     if (typeof search === 'string') {
-      return line.toLowerCase().includes(needle)
+      return text.toLowerCase().includes(needle)
     }
     // A /g or /y regex keeps lastIndex between test() calls and skips matches
     search.lastIndex = 0
-    return search.test(line)
+    return search.test(text)
   }
   const matchIndices = lines.flatMap((line, i) => (isMatch(line) ? [i] : []))
   if (matchIndices.length === 0) {
     return 'No matches found'
   }
 
-  const shown = matchIndices.slice(0, SNAPSHOT_SEARCH_MAX_MATCHES)
+  // In a tree the lines above a match that matter are its ancestors, which say where it is. Its
+  // neighbours are other controls: showing them spent the output on the page chrome.
+  const isTree = lines.filter((line) => /^\s*- /.test(line)).length * 2 > lines.length
+  const shown = matchIndices.slice(0, isTree ? SNAPSHOT_SEARCH_MAX_TREE_MATCHES : SNAPSHOT_SEARCH_MAX_MATCHES)
   const includedLines = new Set<number>()
   for (const idx of shown) {
+    if (isTree) {
+      includedLines.add(idx)
+      let indent = lines[idx]!.search(/\S/)
+      for (let i = idx - 1; i >= 0 && indent > 0; i--) {
+        const lineIndent = lines[i]!.search(/\S/)
+        if (lineIndent >= 0 && lineIndent < indent) {
+          includedLines.add(i)
+          indent = lineIndent
+        }
+      }
+      continue
+    }
     const start = Math.max(0, idx - SNAPSHOT_SEARCH_CONTEXT_LINES)
     const end = Math.min(lines.length - 1, idx + SNAPSHOT_SEARCH_CONTEXT_LINES)
     for (let i = start; i <= end; i++) {
@@ -1036,7 +1054,7 @@ export function searchSnapshot({ snapshot, search }: { snapshot: string; search:
   const sortedIndices = [...includedLines].sort((a, b) => a - b)
   for (let i = 0; i < sortedIndices.length; i++) {
     const lineIdx = sortedIndices[i]
-    if (i > 0 && sortedIndices[i - 1] !== lineIdx - 1) {
+    if (!isTree && i > 0 && sortedIndices[i - 1] !== lineIdx - 1) {
       result.push('---')
     }
     result.push(lines[lineIdx])

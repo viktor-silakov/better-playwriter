@@ -222,14 +222,13 @@ describe('searchSnapshot', () => {
         "3 matches
         - link "A"
         - link "B"
-        - text: x
         - link "C""
       `)
   })
 
   it('matches strings case-insensitively and caps shown matches', () => {
     const out = searchSnapshot({ snapshot, search: 'BUTTON "item 1' })
-    expect(out.split('\n')[0]).toMatchInlineSnapshot(`"11 matches (showing 10). Use a more specific search to see the rest."`)
+    expect(out.split('\n')[0]).toMatchInlineSnapshot(`"11 matches"`)
   })
 
   it('reports no matches', () => {
