@@ -2111,7 +2111,7 @@ describe('Relay Core Tests', () => {
       name: 'execute',
       arguments: {
         code: js`
-          await state.errorTestPage.click('#invisible', { timeout: 100 });
+          await state.errorTestPage.click('#invisible', { timeout: 1000 });
         `,
       },
     })
@@ -2120,7 +2120,7 @@ describe('Relay Core Tests', () => {
     const text = (result.content as any)[0].text as string
     expect(text.slice(0, text.indexOf('Call log:'))).toMatchInlineSnapshot(`
       "
-      Error executing code: page.click: Timeout 100ms exceeded. Element is not visible — it may be hidden by CSS, inside a collapsed <details>, inactive tab, or closed accordion. Try: interact with the page to reveal it first, or use { force: true } to skip visibility checks
+      Error executing code: page.click: Timeout 1000ms exceeded. Element is not visible — it may be hidden by CSS, inside a collapsed <details>, inactive tab, or closed accordion. Try: interact with the page to reveal it first, or use { force: true } to skip visibility checks
       "
     `)
     expect(text).toContain('element is not visible')

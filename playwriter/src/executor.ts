@@ -712,6 +712,14 @@ export function limitSnapshotOutput({
   const ancestors: Array<{ index: number; indent: number }> = []
   const priority: number[] = []
   let priorityIndent: number | undefined
+  // A log grows at its end, so its last lines are the newest: when it does not fit, cut its start.
+  let logStart: number | undefined
+  const newestFirst = () => {
+    if (logStart !== undefined) {
+      priority.push(...priority.splice(logStart + 1).reverse())
+      logStart = undefined
+    }
+  }
 
   for (const [index, line] of lines.entries()) {
     const body = line.trimStart()
@@ -724,14 +732,20 @@ export function limitSnapshotOutput({
 
     if (priorityIndent !== undefined && indent <= priorityIndent) {
       priorityIndent = undefined
+      newestFirst()
     }
     if (/^- (?:alert|alertdialog|dialog|status|log)\b/i.test(body)) {
+      if (priorityIndent === undefined && /^- log\b/i.test(body)) {
+        logStart = priority.length
+      }
       priorityIndent ??= indent
     }
     if (priorityIndent !== undefined) {
       priority.push(index)
     }
   }
+
+  newestFirst()
 
   const included = new Set<number>()
   const include = (index: number) => {
