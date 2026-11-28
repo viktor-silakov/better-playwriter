@@ -17,7 +17,7 @@ better-playwriter session new --browser 'Work' --tab-group docs
 better-playwriter -s 1 -e 'state.page = await context.newPage(); await state.page.goto("https://example.com", { waitUntil: "domcontentloaded" }); return await snapshot({ page: state.page })'
 ```
 
-An execute stops after 10 seconds. For a slow page or a long wait pass `--timeout 30000`.
+An execute stops after 10 seconds. For a slow page or a long wait pass `--timeout 30000`; there is no upper limit. Actions give up after 15 seconds at most unless you pass them a `timeout`.
 
 Use one short word for tab groups. To load details, run `better-playwriter skill --ref snapshots` and substitute another topic from the table below.
 

@@ -1540,7 +1540,11 @@ export class PlaywrightExecutor {
     if (same.length) {
       return ` Your last snapshot has ${same.slice(0, 3).map(show).join(', ')}: Playwright gives that element another role, so use the ref.`
     }
-    return found.size ? ` Your last snapshot has these with role ${role}: ${[...found].slice(0, 8).map(show).join(', ')}.` : ''
+    if (found.size) {
+      return ` Your last snapshot has these with role ${role}: ${[...found].slice(0, 8).map(show).join(', ')}.`
+    }
+    // No snapshot to read: give the call that returns the ref.
+    return text ? ` Get its ref with snapshot({ page, search: '${text.slice(0, 40)}' }).` : ''
   }
 
   private invalidateSnapshotState(page: Page) {
