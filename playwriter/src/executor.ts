@@ -697,7 +697,7 @@ export async function describeHiddenRegions(page: Page): Promise<string> {
  * Lists that scroll inside the page. An app often keeps only the rows near the viewport in the page, so a
  * snapshot of such a list looks complete while most of its rows are missing.
  */
-function findScrollingLists(root: any): Array<{ role: string; name: string; rows: number; total: number; shown: number; atEnd: boolean }> {
+function findScrollingLists(root: any): Array<{ role: string; name: string; rows: number; total: number; shown: number; atEnd: boolean; key: string }> {
   const view = (globalThis as any).window
   const listSelector = '[role=listbox],[role=list],[role=grid],[role=treegrid],[role=tree],[role=feed],[role=log],[role=table],ul,ol,table,[aria-label],[aria-labelledby]'
   const rowSelector = '[role=option],[role=row],[role=listitem],[role=treeitem],[role=article],li,tr'
@@ -718,7 +718,27 @@ function findScrollingLists(root: any): Array<{ role: string; name: string; rows
     around.push(element)
   }
   const all: any[] = [...around, ...root.querySelectorAll('*')].slice(0, 6000)
-  const found: Array<{ role: string; name: string; rows: number; total: number; shown: number; atEnd: boolean; height: number }> = []
+  // An attribute the page gives each row with a value of its own: what to track a row by while the list redraws.
+  const rowKey = (rows: any[]) => {
+    const sample = rows.slice(0, 12)
+    const values = new Map<string, Set<string>>()
+    for (const row of sample) {
+      const own = new Set<string>()
+      for (const element of [row, ...[...row.querySelectorAll('*')].slice(0, 15)] as any[]) {
+        for (const attribute of element.attributes as Iterable<any>) {
+          const isKey = attribute.name === 'id' || attribute.name.startsWith('data-')
+          if (!isKey || !attribute.value || attribute.value.length > 80 || own.has(attribute.name)) {
+            continue
+          }
+          own.add(attribute.name)
+          values.set(attribute.name, (values.get(attribute.name) ?? new Set()).add(attribute.value))
+        }
+      }
+    }
+    const distinct = [...values].filter(([, seen]) => sample.length >= 3 && seen.size >= sample.length - 1).map(([name]) => name)
+    return distinct.find((name) => /(?:^|-)(?:id|key|mid|uid)$/i.test(name)) ?? distinct[0] ?? ''
+  }
+  const found: Array<{ role: string; name: string; rows: number; total: number; shown: number; atEnd: boolean; key: string; height: number }> = []
   for (const scroller of all) {
     if (scroller.clientHeight <= 40 || scroller.scrollHeight <= scroller.clientHeight * 1.5 || scroller === view.document.body) {
       continue
@@ -757,13 +777,14 @@ function findScrollingLists(root: any): Array<{ role: string; name: string; rows
       shown: Math.round((scroller.clientHeight / scroller.scrollHeight) * 100),
       // A history opens at its end: the rows that are not in the page yet are above.
       atEnd: scroller.scrollTop > (scroller.scrollHeight - scroller.clientHeight) / 2,
+      key: rowKey(rowElements),
       height: scroller.scrollHeight,
     })
   }
   return found
     .sort((a, b) => b.height - a.height)
     .slice(0, 3)
-    .map(({ role, name, rows, total, shown, atEnd }) => ({ role, name, rows, total, shown, atEnd }))
+    .map(({ role, name, rows, total, shown, atEnd, key }) => ({ role, name, rows, total, shown, atEnd, key }))
 }
 
 export async function describeScrollingLists(target: Page | Locator): Promise<string> {
@@ -782,7 +803,7 @@ export async function describeScrollingLists(target: Page | Locator): Promise<st
         : LOCATABLE_REGION_ROLES.has(list.role)
           ? `page.getByRole('${list.role}', { name: /^${start}/ }).first()`
           : `page.getByLabel(/^${start}/).first()`
-      return `[scrolls: ${list.role}${name} has ${count} in the page and shows ${list.shown}% of its height. More rows load as it scrolls: await scrollRegion({ locator: ${locator}, by: ${list.atEnd ? '-1500 }) to go up' : '1500 }) to go down'}. Recipe: skill --ref snapshots, "Collect a list".]`
+      return `[scrolls: ${list.role}${name} has ${count} in the page and shows ${list.shown}% of its height. More rows load as it scrolls: await scrollRegion({ locator: ${locator}, by: ${list.atEnd ? '-1500 }) to go up' : '1500 }) to go down'}.${list.key ? ` Track rows by [${list.key}].` : ''} Recipe: skill --ref snapshots, "Collect a list".]`
     })
     .join('\n')
 }
@@ -1157,6 +1178,7 @@ export class PlaywrightExecutor {
   /** When the main frame of a page last navigated, so a snapshot taken right after can wait for the content. */
   private lastNavigationAt: WeakMap<Page, number> = new WeakMap()
   private outputEvents: OutputEvent[] = []
+  private shownPageErrors = new Set<string>()
   private nextOutputEventId = 0
   private lastDeliveredOutputEventId = 0
 
@@ -1413,10 +1435,14 @@ export class PlaywrightExecutor {
         lines.push(`[WARNING${event.late ? ' from an earlier call' : ''}] ${event.message}`)
         continue
       }
-      if (pageErrors.has(event.message)) {
+      // The same error of a page's own script comes back on every call: say it once in a session.
+      if (pageErrors.has(event.message) || this.shownPageErrors.has(event.message)) {
         continue
       }
       pageErrors.add(event.message)
+      if (this.shownPageErrors.size < 500) {
+        this.shownPageErrors.add(event.message)
+      }
       if (pageErrors.size > MAX_PAGE_ERRORS_PER_CALL) {
         hiddenPageErrors += 1
         continue
@@ -3240,7 +3266,8 @@ export class PlaywrightExecutor {
         if (/Timeout \d+ms exceeded/.test(message) && /waiting for .*\.nth\([1-9]\d*\)/.test(message)) {
           return '\n\n[HINT: The locator ends with an index. Fewer elements may match than the index needs: check count() first. A long list often keeps only the rows near the viewport in the page; scroll it with page.mouse.wheel over it to load more.]'
         }
-        if (/Timeout \d+ms exceeded/.test(message) && /waiting for .*getByRole\(/.test(message)) {
+        // Only when the role is the last step: a row looked up inside a list found by role is another case.
+        if (/Timeout \d+ms exceeded/.test(message) && /waiting for .*getByRole\((?:(?!\)\.(?:locator|getBy)).)*$/m.test(message)) {
           return `\n\n[HINT: No element matched this role and name.${this.describeSnapshotRole(message)} If it came from a snapshot, act on its ref instead: elementForRef({ ref, page }). A line without a ref can be found by its name: page.getByLabel(name, { exact: true }). Chrome and Playwright can name the role differently.]`
         }
         if (/\b(?:Target|Page) crashed\b/i.test(message)) {
@@ -3251,6 +3278,9 @@ export class PlaywrightExecutor {
         }
         if (/net::ERR_/i.test(message)) {
           return '\n\n[HINT: Navigation failed. Check page.url() and the network error before retrying. Do not reset the session or replay a script that may have submitted a form or changed data.]'
+        }
+        if (/Timeout \d+ms exceeded/.test(message) && /waiting for /.test(message)) {
+          return '\n\n[HINT: Nothing matched this locator. A list that scrolls inside the page drops the rows that leave the view and redraws the rest: bring the row back with scrollRegion({ locator, by }), or take a snapshot to see what is there now.]'
         }
         if (isTimeoutError) return ''
         if (NAVIGATION_RACE_ERROR.test(message)) {

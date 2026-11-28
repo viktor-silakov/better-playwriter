@@ -40,7 +40,7 @@ Use the ref with the page that returned it. A surviving DOM node keeps its ref w
 
 Plain text of one region: `await locator.innerText()`.
 
-**Open each row of a list and read the pane it fills.** In an app a click loads the pane without a navigation, and the list redraws its rows, so a row found by `nth()`, by `.all()` or by an attribute you set yourself is soon another row or gone. Use an attribute the page gives the row, and read the pane until it has changed and stopped changing:
+**Open each row of a list and read the pane it fills.** In an app a click loads the pane without a navigation, and the list redraws its rows, so a row found by `nth()`, by `.all()` or by an attribute you set yourself is soon another row or gone. Use an attribute the page gives the row, and read the pane until it has changed and stopped changing. Read the whole pane, not one element in it: some rows open in another layout. If "the first 10" are not all in the page, collect the ids with the next recipe first.
 
 ```js
 const list = state.page.getByRole('listbox').first()
@@ -55,7 +55,7 @@ for (const id of ids.slice(0, 10)) {
   for (let i = 0, same = 0; i < 40 && same < 2; i++) {
     await state.page.waitForTimeout(250)
     const now = await pane.innerText()
-    same = now !== before && now === text ? same + 1 : 0
+    same = now.trim() && now !== before && now === text ? same + 1 : 0
     text = now
   }
   sizes.push(text.length)

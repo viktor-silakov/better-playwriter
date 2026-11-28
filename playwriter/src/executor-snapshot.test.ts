@@ -203,7 +203,7 @@ describe('agent snapshot views', () => {
   it('notes a list that scrolls inside the page and explains an index past the last row', async () => {
     const result = await executor.execute(`
       const listPage = await context.newPage()
-      const rows = Array.from({ length: 40 }, (_, i) => '<div role="option" style="height:30px">Row ' + (i + 1) + '</div>').join('')
+      const rows = Array.from({ length: 40 }, (_, i) => '<div role="option" data-id="row-' + i + '" style="height:30px">Row ' + (i + 1) + '</div>').join('')
       await listPage.setContent('<main><div style="height:120px;overflow-y:auto"><div role="listbox" aria-label="Rows">' + rows + '</div></div><ul><li>One</li><li>Two</li></ul></main>')
       state.listPage = listPage
       const whole = await snapshot({ page: listPage, mode: 'compact', showDiffSinceLastCall: false })
@@ -214,7 +214,7 @@ describe('agent snapshot views', () => {
     const { whole, scoped } = JSON.parse(result.text.replace('[return value] ', ''))
     expect(whole).toMatchInlineSnapshot(`
       [
-        "[scrolls: listbox "Rows" has 40 rows in the page and shows 10% of its height. More rows load as it scrolls: await scrollRegion({ locator: page.getByRole('listbox', { name: /^Rows/ }).first(), by: 1500 }) to go down. Recipe: skill --ref snapshots, "Collect a list".]",
+        "[scrolls: listbox "Rows" has 40 rows in the page and shows 10% of its height. More rows load as it scrolls: await scrollRegion({ locator: page.getByRole('listbox', { name: /^Rows/ }).first(), by: 1500 }) to go down. Track rows by [data-id]. Recipe: skill --ref snapshots, "Collect a list".]",
       ]
     `)
     expect(scoped).toEqual(whole)
