@@ -13,16 +13,6 @@ import {
 } from './executor.js'
 import { trimStackForAgent } from './process-guard.js'
 
-describe('a log in a snapshot over its budget', () => {
-  it('cuts the start of a log, not its end', () => {
-    const snapshot = ['- main "Console":', '  - log "Output":', ...Array.from({ length: 60 }, (_, i) => `    - listitem "Line number ${i + 1} of the output"`), '  - button "Clear" @e1'].join('\n')
-    const out = limitSnapshotOutput({ snapshot, maxChars: 1000 })
-    expect(out).toContain('Line number 60 of the output')
-    expect(out).not.toContain('"Line number 1 of the output"')
-    expect(out).toContain('- log "Output":')
-  })
-})
-
 describe('error text for an agent', () => {
   it('keeps frames of agent code without paths and drops internal ones', () => {
     const stack = [
@@ -299,7 +289,8 @@ describe('what a bounded answer says about its cuts', () => {
     ].join('\n')
     const out = limitSnapshotOutput({ snapshot, maxChars: 1200, condense: false })
     expect(out.length).toBeLessThanOrEqual(1200)
-    expect(out.split('\n').at(-1)).toMatch(/^\[Cut: list "Messages" \(\d+ lines\)/)
+    expect(out.split('\n').at(-2)).toMatch(/^\[Cut: list "Messages" \(\d+ lines\)/)
+    expect(out.split('\n').at(-1)).toBe(`[Read it: snapshot({ locator: page.getByRole('list', { name: 'Messages' }).first() })]`)
   })
 
   it('says how to get a string that was cut inside a returned object', () => {

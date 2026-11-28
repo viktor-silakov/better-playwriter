@@ -707,19 +707,12 @@ export function limitSnapshotOutput({
   }
   // Room for the names of the regions that get cut, so the reader knows where to look next.
   const cutRoom = maxChars >= 1000 ? 220 : 0
-  let remaining = maxChars - notice(originalLineCount).length - cutRoom
+  const readCallRoom = cutRoom ? 130 : 0
+  let remaining = maxChars - notice(originalLineCount).length - cutRoom - readCallRoom
   const parents: number[] = []
   const ancestors: Array<{ index: number; indent: number }> = []
   const priority: number[] = []
   let priorityIndent: number | undefined
-  // A log grows at its end, so its last lines are the newest: when it does not fit, cut its start.
-  let logStart: number | undefined
-  const newestFirst = () => {
-    if (logStart !== undefined) {
-      priority.push(...priority.splice(logStart + 1).reverse())
-      logStart = undefined
-    }
-  }
 
   for (const [index, line] of lines.entries()) {
     const body = line.trimStart()
@@ -732,20 +725,14 @@ export function limitSnapshotOutput({
 
     if (priorityIndent !== undefined && indent <= priorityIndent) {
       priorityIndent = undefined
-      newestFirst()
     }
     if (/^- (?:alert|alertdialog|dialog|status|log)\b/i.test(body)) {
-      if (priorityIndent === undefined && /^- log\b/i.test(body)) {
-        logStart = priority.length
-      }
       priorityIndent ??= indent
     }
     if (priorityIndent !== undefined) {
       priority.push(index)
     }
   }
-
-  newestFirst()
 
   const included = new Set<number>()
   const include = (index: number) => {
@@ -792,7 +779,20 @@ export function limitSnapshotOutput({
       const name = match?.[3] ? ` "${match[3].length > 30 ? `${match[3].slice(0, 30)}…` : match[3]}"` : ''
       return `${match?.[2] ?? 'region'}${name} (${size} lines)`
     })
-  const cutNote = cutRoom && cut.length ? `\n[Cut: ${cut.join(', ')}]`.slice(0, cutRoom) : ''
+  // A ready call for the largest cut region that Playwright can find by role and name.
+  const largest = [...cutSizes]
+    .filter(([, size]) => size >= 3)
+    .sort((a, b) => b[1] - a[1])
+    .map(([index]) => SNAPSHOT_LINE.exec(lines[index]!))
+    .find((match) => match?.[3] && LOCATABLE_REGION_ROLES.has(match[2]!.replace(/:$/, '')))
+  const readCall = (() => {
+    if (!largest) {
+      return ''
+    }
+    const name = largest[3]!.replace(/\\(.)/g, '$1').slice(0, 40).replace(/[\\']/g, (char) => `\\${char}`)
+    return `\n[Read it: snapshot({ locator: page.getByRole('${largest[2]!.replace(/:$/, '')}', { name: '${name}' }).first() })]`
+  })()
+  const cutNote = cutRoom && cut.length ? `\n[Cut: ${cut.join(', ')}]`.slice(0, cutRoom) + readCall : ''
   return [...lines.filter((_, i) => included.has(i)), notice(originalLineCount - included.size)].join('\n') + cutNote
 }
 
@@ -801,6 +801,8 @@ const EMPTY_LEAF_ROLES = new Set(['status', 'alert', 'log', 'labeltext'])
 const EMPTY_CONTAINER_ROLES = new Set(['group', 'generic', 'toolbar', 'tablist', 'tabpanel', 'list', 'region', 'navigation'])
 const UNNAMED_CONTAINER_ROLES = new Set(['row', 'rowgroup', 'grid', 'table', 'listitem'])
 const NUMBERED_GRID_ROLES = new Set(['button', 'gridcell', 'link'])
+/** Roles that page.getByRole finds and that hold a region worth a snapshot of its own. */
+const LOCATABLE_REGION_ROLES = new Set(['list', 'listbox', 'tree', 'grid', 'treegrid', 'table', 'navigation', 'main', 'region', 'toolbar', 'tablist', 'tabpanel', 'dialog', 'group', 'log', 'menu', 'feed', 'complementary', 'form', 'article'])
 const NUMBERED_GRID_MIN = 15
 const MAX_CONDENSED_NAME_CHARS = 120
 const REPEATED_CONTROLS_KEPT = 3
