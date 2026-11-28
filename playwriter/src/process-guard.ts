@@ -49,6 +49,29 @@ export function describeThrown(value: unknown): string {
   }
 }
 
+/**
+ * The same text for an agent: the message and the frames of its own code, without paths.
+ * Frames of this package and of Playwright say nothing an agent can act on and carry local paths.
+ */
+export function describeThrownForAgent(value: unknown): string {
+  return trimStackForAgent(describeThrown(value))
+}
+
+export function trimStackForAgent(stack: string): string {
+  const kept: string[] = []
+  for (const line of stack.split('\n')) {
+    if (!/^\s+at\s/.test(line)) {
+      kept.push(line)
+      continue
+    }
+    const position = line.match(new RegExp(SANDBOX_FILENAME.replace(/\./g, '\\.') + ':(\\d+):(\\d+)'))
+    if (position) {
+      kept.push(`    at your code, line ${position[1]}, column ${position[2]}`)
+    }
+  }
+  return kept.join('\n').trimEnd()
+}
+
 function isContainedException(error: unknown): boolean {
   const stack = describeThrown(error)
   return stack.includes(SANDBOX_FILENAME) || /[/\\](playwright|patchright)-core[/\\]/.test(stack)
@@ -87,7 +110,7 @@ export function installProcessGuard({ logger }: { logger: GuardLogger }) {
   process.on('unhandledRejection', (reason) => {
     const owner = ownerStore.getStore()
     owner?.enqueueWarning(
-      `Unhandled promise rejection in your code (missing await?): ${describeThrown(reason)}`,
+      `Unhandled promise rejection in your code (missing await?): ${describeThrownForAgent(reason)}`,
       { fromAgentCode: true },
     )
     logContainedFault({ kind: 'unhandledRejection', error: reason, owned: Boolean(owner) })
@@ -101,7 +124,7 @@ export function installProcessGuard({ logger }: { logger: GuardLogger }) {
     }
     // A throw from a sandbox callback keeps the async context of the code that registered it.
     const owner = ownerStore.getStore()
-    owner?.enqueueWarning(`Uncaught exception in your code: ${describeThrown(error)}`, { fromAgentCode: true })
+    owner?.enqueueWarning(`Uncaught exception in your code: ${describeThrownForAgent(error)}`, { fromAgentCode: true })
     logContainedFault({ kind: 'uncaughtException', error, owned: Boolean(owner) })
   })
 

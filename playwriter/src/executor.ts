@@ -31,7 +31,7 @@ import { Editor } from './editor.js'
 import { getStylesForLocator, formatStylesAsText, type StylesResult } from './styles.js'
 import { getReactSource, getReactComponentInfo, type ReactSourceLocation } from './react-source.js'
 import { ScopedFS } from './scoped-fs.js'
-import { SANDBOX_FILENAME, describeThrown, runAsFaultOwner } from './process-guard.js'
+import { SANDBOX_FILENAME, describeThrown, runAsFaultOwner, trimStackForAgent } from './process-guard.js'
 import {
   screenshotWithAccessibilityLabels,
   getAriaSnapshot,
@@ -467,6 +467,48 @@ const INSPECT_OPTIONS: util.InspectOptions = {
   maxArrayLength: 100,
   maxStringLength: 4000,
   breakLength: 80,
+}
+
+const CALL_LOG_MAX_LINES = 14
+const CALL_LOG_MAX_LINE_CHARS = 220
+
+/**
+ * Playwright's call log repeats the same retry lines and quotes the covering element's whole text each time.
+ * Keep each distinct line once, cut long ones, and say how many were dropped.
+ */
+export function shortenCallLog(text: string): string {
+  const start = text.indexOf('Call log:')
+  if (start === -1) {
+    return text
+  }
+  const lines = text.slice(start).split('\n')
+  const seen = new Set<string>()
+  const kept: string[] = [lines[0]]
+  let dropped = 0
+  let end = lines.length
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i]
+    // The log is an indented list. The first line outside it ends the log.
+    if (line.trim() && !/^\s+/.test(line)) {
+      end = i
+      break
+    }
+    if (!line.trim()) {
+      continue
+    }
+    const key = line.trim().replace(/^\d+ × /, '').replace(/\d+ms/g, 'Nms')
+    if (seen.has(key) || kept.length > CALL_LOG_MAX_LINES) {
+      dropped += 1
+      continue
+    }
+    seen.add(key)
+    kept.push(line.length > CALL_LOG_MAX_LINE_CHARS ? `${line.slice(0, CALL_LOG_MAX_LINE_CHARS)}…` : line)
+  }
+  if (dropped > 0) {
+    kept.push(`  [${dropped} repeated or further call log lines left out]`)
+  }
+  const rest = lines.slice(end).join('\n')
+  return text.slice(0, start) + kept.join('\n') + (rest ? `\n${rest}` : '')
 }
 
 export function formatValue(value: unknown): string {
@@ -1006,7 +1048,7 @@ export class PlaywrightExecutor {
       } catch (error) {
         const message = describeThrown(error)
         this.logger.error(`[sandbox] ${kind} callback threw:`, message)
-        this.enqueueWarning(`${kind} callback threw: ${message}`, { fromAgentCode: true })
+        this.enqueueWarning(`${kind} callback threw: ${trimStackForAgent(message)}`, { fromAgentCode: true })
       }
     }
     const assertFunction = (callback: unknown) => {
@@ -2879,7 +2921,10 @@ export class PlaywrightExecutor {
 
       // timeout stacks are internal noise (Promise.race / setTimeout); only show the message
       // Playwright dims its call log with ANSI codes: noise when the reader is not a terminal.
-      const errorText = (isTimeoutError ? error.message : errorStack).replace(/\u001b\[[0-9;]*m/g, '')
+      // Frames of this package carry local paths and nothing the agent can act on: keep those of its own code.
+      const errorText = shortenCallLog(
+        trimStackForAgent(String(isTimeoutError ? error.message : errorStack).replace(/\u001b\[[0-9;]*m/g, '')),
+      )
       return {
         text: boundExecuteOutput({
           before: outputText + logsText,

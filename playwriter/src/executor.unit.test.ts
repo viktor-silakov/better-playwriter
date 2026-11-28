@@ -9,7 +9,46 @@ import {
   formatValue,
   condenseSnapshotLines,
   searchSnapshot,
+  shortenCallLog,
 } from './executor.js'
+import { trimStackForAgent } from './process-guard.js'
+
+describe('error text for an agent', () => {
+  it('keeps frames of agent code without paths and drops internal ones', () => {
+    const stack = [
+      'TypeError: x is not a function',
+      '    at run (/srv/app/.playwriter-eval.js:3:17)',
+      '    at async file:///srv/app/dist/executor.js:2276:28',
+      '    at async PlaywrightExecutor.executeInternal (file:///srv/app/dist/executor.js:2266:28)',
+    ].join('\n')
+    expect(trimStackForAgent(stack)).toMatchInlineSnapshot(`
+      "TypeError: x is not a function
+          at your code, line 3, column 17"
+    `)
+  })
+
+  it('keeps each call log line once and cuts long ones', () => {
+    const cover = `      - <div class="row">${'word '.repeat(100)}</div> intercepts pointer events`
+    const retry = ['    - retrying click action', '    - waiting 100ms', '      - element is visible, enabled and stable', cover]
+    const text = [
+      'locator.click: Timeout 1000ms exceeded.',
+      'Call log:',
+      "  - waiting for getByRole('button', { name: 'Go' })",
+      '  - attempting click action',
+      ...retry,
+      ...retry.map((line) => line.replace('100ms', '500ms')),
+      ...retry,
+      '',
+      '[HINT: after the log]',
+    ].join('\n')
+    const out = shortenCallLog(text)
+    expect(out.length).toBeLessThan(700)
+    expect(out.match(/<div class="row">/g)?.length).toBe(1)
+    expect(out).toContain('[8 repeated or further call log lines left out]')
+    expect(out.endsWith('[HINT: after the log]')).toBe(true)
+    expect(shortenCallLog('no log here')).toBe('no log here')
+  })
+})
 
 describe('limitSnapshotOutput', () => {
   it('omits whole lines and keeps late dialogs and status messages with their parents', () => {
