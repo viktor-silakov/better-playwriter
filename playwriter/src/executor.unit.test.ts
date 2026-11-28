@@ -12,6 +12,7 @@ import {
   shortenCallLog,
   shortenUrlForOutput,
   describeActionCap,
+  navigationTimeoutFor,
 } from './executor.js'
 import { trimStackForAgent } from './process-guard.js'
 
@@ -25,6 +26,14 @@ describe('a snapshot over its budget keeps the main region', () => {
     const count = (text: string) => out.split('\n').filter((line) => line.includes(text)).length
     expect(count('Content row')).toBeGreaterThan(count('Section number'))
     expect(count('Section number')).toBeGreaterThan(3)
+  })
+})
+
+describe('navigationTimeoutFor', () => {
+  it('keeps 10 s for a short call and grows with a longer one', () => {
+    expect(navigationTimeoutFor(10000)).toBe(10000)
+    expect(navigationTimeoutFor(40000)).toBe(30000)
+    expect(navigationTimeoutFor(120000)).toBe(90000)
   })
 })
 

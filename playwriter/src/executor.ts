@@ -548,6 +548,14 @@ export function actionTimeoutFor(executeTimeout: number): number {
   return Math.min(ACTION_TIMEOUT_CAP_MS, Math.max(1000, Math.round(executeTimeout / 2)))
 }
 
+/**
+ * Three quarters of the execute timeout, at least 10 s: a slow page (a sign-in redirect, a heavy portal) needs
+ * more than 10 s to load, and a call given a longer timeout for it should not still fail its goto at 10 s.
+ */
+export function navigationTimeoutFor(executeTimeout: number): number {
+  return Math.max(10000, Math.round(executeTimeout * 0.75))
+}
+
 /** A longer execute timeout no longer lengthens an action past the cap: say so when the cap cut a wait short. */
 export function describeActionCap(message: string, executeTimeout: number): string {
   const capped = Math.round(executeTimeout / 2) > ACTION_TIMEOUT_CAP_MS
@@ -709,7 +717,7 @@ export async function describeHiddenRegions(page: Page): Promise<string> {
  * Lists that scroll inside the page. An app often keeps only the rows near the viewport in the page, so a
  * snapshot of such a list looks complete while most of its rows are missing.
  */
-function findScrollingLists(root: any): Array<{ role: string; name: string; rows: number; total: number; shown: number; atEnd: boolean; key: string }> {
+function findScrollingLists(root: any): Array<{ role: string; name: string; rows: number; total: number; shown: number; atEnd: boolean; key: string; keyed: number }> {
   const view = (globalThis as any).window
   const listSelector = '[role=listbox],[role=list],[role=grid],[role=treegrid],[role=tree],[role=feed],[role=log],[role=table],ul,ol,table,[aria-label],[aria-labelledby]'
   const rowSelector = '[role=option],[role=row],[role=listitem],[role=treeitem],[role=article],li,tr'
@@ -731,9 +739,11 @@ function findScrollingLists(root: any): Array<{ role: string; name: string; rows
   }
   const all: any[] = [...around, ...root.querySelectorAll('*')].slice(0, 6000)
   // An attribute the page gives each row with a value of its own: what to track a row by while the list redraws.
+  // A history mixes rows of messages with date separators and notices, so most rows having it is enough.
   const rowKey = (rows: any[]) => {
-    const sample = rows.slice(0, 12)
+    const sample = rows.slice(0, 24)
     const values = new Map<string, Set<string>>()
+    const carriers = new Map<string, number>()
     for (const row of sample) {
       const own = new Set<string>()
       for (const element of [row, ...[...row.querySelectorAll('*')].slice(0, 60)] as any[]) {
@@ -743,14 +753,22 @@ function findScrollingLists(root: any): Array<{ role: string; name: string; rows
             continue
           }
           own.add(attribute.name)
+          carriers.set(attribute.name, (carriers.get(attribute.name) ?? 0) + 1)
           values.set(attribute.name, (values.get(attribute.name) ?? new Set()).add(attribute.value))
         }
       }
     }
-    const distinct = [...values].filter(([, seen]) => sample.length >= 3 && seen.size >= sample.length - 1).map(([name]) => name)
-    return distinct.find((name) => /(?:^|-)(?:id|key|mid|uid)$/i.test(name)) ?? distinct[0] ?? ''
+    const idLike = (name: string) => (/(?:^|-)(?:id|key|mid|uid)$/i.test(name) ? 1 : 0)
+    const key =
+      [...values]
+        .map(([name, seen]) => ({ name, seen: seen.size, carried: carriers.get(name) ?? 0 }))
+        .filter(({ seen, carried }) => carried >= 3 && carried >= sample.length * 0.4 && seen >= carried - 1)
+        .sort((a, b) => b.carried - a.carried || idLike(b.name) - idLike(a.name))[0]?.name ?? ''
+    const selector = key ? `[${view.CSS.escape(key)}]` : ''
+    const keyed = selector ? rows.filter((row) => row.matches(selector) || row.querySelector(selector)).length : 0
+    return { key, keyed }
   }
-  const found: Array<{ role: string; name: string; rows: number; total: number; shown: number; atEnd: boolean; key: string; height: number }> = []
+  const found: Array<{ role: string; name: string; rows: number; total: number; shown: number; atEnd: boolean; key: string; keyed: number; height: number }> = []
   for (const scroller of all) {
     if (scroller.clientHeight <= 40 || scroller.scrollHeight <= scroller.clientHeight * 1.5 || scroller === view.document.body) {
       continue
@@ -797,14 +815,14 @@ function findScrollingLists(root: any): Array<{ role: string; name: string; rows
       shown: Math.round((scroller.clientHeight / scroller.scrollHeight) * 100),
       // A history opens at its end: the rows that are not in the page yet are above.
       atEnd: scroller.scrollTop > (scroller.scrollHeight - scroller.clientHeight) / 2,
-      key: rowKey(rowElements),
+      ...rowKey(rowElements),
       height: scroller.scrollHeight,
     })
   }
   return found
     .sort((a, b) => b.height - a.height)
     .slice(0, 3)
-    .map(({ role, name, rows, total, shown, atEnd, key }) => ({ role, name, rows, total, shown, atEnd, key }))
+    .map(({ role, name, rows, total, shown, atEnd, key, keyed }) => ({ role, name, rows, total, shown, atEnd, key, keyed }))
 }
 
 export async function describeScrollingLists(target: Page | Locator): Promise<string> {
@@ -823,7 +841,7 @@ export async function describeScrollingLists(target: Page | Locator): Promise<st
         : LOCATABLE_REGION_ROLES.has(list.role)
           ? `page.getByRole('${list.role}', { name: /^${start}/ }).first()`
           : `page.getByLabel(/^${start}/).first()`
-      return `[scrolls: ${list.role}${name} has ${count} in the page and shows ${list.shown}% of its height. More rows load as it scrolls: await scrollRegion({ locator: ${locator}, by: ${list.atEnd ? '-1500 }) to go up' : '1500 }) to go down'}.${list.key ? ` Track rows by [${list.key}].` : ''} Recipe: skill --ref snapshots, "Collect a list".]`
+      return `[scrolls: ${list.role}${name} has ${count} in the page and shows ${list.shown}% of its height. More rows load as it scrolls: await scrollRegion({ locator: ${locator}, by: ${list.atEnd ? '-1500 }) to go up' : '1500 }) to go down'}.${list.key ? ` Track rows by [${list.key}]${list.keyed < list.rows ? ` (${list.keyed} of ${list.rows} rows have it)` : ''}.` : ''} Recipe: skill --ref snapshots, "Collect a list".]`
     })
     .join('\n')
 }
@@ -1759,10 +1777,25 @@ export class PlaywrightExecutor {
     // a preview of its properties, and the two arrive in no fixed order, so a bare class name waits briefly.
     const thrownObjects = new Map<string, string[]>()
     const takeThrownObject = (className: string) => thrownObjects.get(className)?.shift()
+    // Playwright reads a thrown string as "Name: message", split at its first colon, and drops the character
+    // after that colon: "Loader:Create failed" became "reate failed". The raw event keeps the whole string.
+    const thrownStrings: string[] = []
+    const takeThrownString = (error: Error) => {
+      const index = thrownStrings.findIndex((text) => text.startsWith(`${error.name}:`) && text.endsWith(error.message))
+      return index === -1 ? undefined : thrownStrings.splice(index, 1)[0]
+    }
+    const takeThrown = (error: Error) => takeThrownObject(error.message) ?? takeThrownString(error)
     let previewsArrive = false
     getCDPSessionForPage({ page })
       .then((cdp) => {
         cdp.on('Runtime.exceptionThrown', ({ exceptionDetails }) => {
+          if (exceptionDetails.exception?.type === 'string') {
+            thrownStrings.push(String(exceptionDetails.exception.value))
+            if (thrownStrings.length > 20) {
+              thrownStrings.shift()
+            }
+            return
+          }
           const text = describeThrownObject(exceptionDetails.exception)
           const className = exceptionDetails.exception?.description
           if (!text || !className) {
@@ -1776,13 +1809,15 @@ export class PlaywrightExecutor {
       .catch(() => {})
 
     page.on('pageerror', (error) => {
-      const text = takeThrownObject(error.message)
-      if (text || !previewsArrive || !/^[A-Z][\w$]*$/.test(error.message)) {
+      const text = takeThrown(error)
+      // A bare class name may be a thrown object; a name other than Error with no stack, a split string.
+      const mayWait = /^[A-Z][\w$]*$/.test(error.message) || (!error.stack && error.name !== 'Error')
+      if (text || !previewsArrive || !mayWait) {
         this.addPageError({ page, message: text ?? error.message })
         return
       }
       setTimeout(() => {
-        this.addPageError({ page, message: takeThrownObject(error.message) ?? error.message })
+        this.addPageError({ page, message: takeThrown(error) ?? error.message })
       }, THROWN_OBJECT_PREVIEW_WAIT_MS)
     })
   }
@@ -1813,6 +1848,7 @@ export class PlaywrightExecutor {
               message:
                 describeThrownObject(exceptionDetails.exception) ??
                 exceptionDetails.exception?.description?.split('\n')[0] ??
+                (exceptionDetails.exception?.type === 'string' ? String(exceptionDetails.exception.value) : undefined) ??
                 exceptionDetails.text,
             })
           }
@@ -2282,6 +2318,7 @@ export class PlaywrightExecutor {
         throw new ExecuteCancelledError()
       }
       context.setDefaultTimeout(actionTimeoutFor(timeout))
+      context.setDefaultNavigationTimeout(navigationTimeoutFor(timeout))
 
       this.logger.log('Executing code:', code)
 
@@ -3343,7 +3380,7 @@ export class PlaywrightExecutor {
         // An index past the last match waits like a missing element. A list that keeps only the rows near
         // the viewport in the page is the usual cause.
         if (/Timeout \d+ms exceeded/.test(message) && /waiting for .*\.nth\([1-9]\d*\)/.test(message)) {
-          return '\n\n[HINT: The locator ends with an index. Fewer elements may match than the index needs: check count() first. A long list often keeps only the rows near the viewport in the page; scroll it with page.mouse.wheel over it to load more.]'
+          return '\n\n[HINT: The locator ends with an index. Fewer elements may match than the index needs: check count() first. A long list often keeps only the rows near the viewport in the page; load more with scrollRegion({ locator, by }).]'
         }
         // Only when the role is the last step: a row looked up inside a list found by role is another case.
         if (/Timeout \d+ms exceeded/.test(message) && /waiting for .*getByRole\((?:(?!\)\.(?:locator|getBy)).)*$/m.test(message)) {

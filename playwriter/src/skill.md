@@ -17,7 +17,7 @@ better-playwriter session new --browser 'Work' --tab-group docs
 better-playwriter -s 1 -e 'state.page = await context.newPage(); await state.page.goto("https://example.com", { waitUntil: "domcontentloaded" }); return await snapshot({ page: state.page })'
 ```
 
-An execute stops after 10 seconds. For a slow page or a long wait pass `--timeout 30000`; there is no upper limit. Actions give up after 15 seconds at most unless you pass them a `timeout`.
+An execute stops after 10 seconds. For a slow page or a long wait pass `--timeout 30000`; there is no upper limit. Navigation waits up to three quarters of it; actions give up after 15 seconds at most unless you pass them a `timeout`.
 
 Use one short word for tab groups. To load details, run `better-playwriter skill --ref snapshots` and substitute another topic from the table below.
 
@@ -29,13 +29,13 @@ Create your own tab unless the user points to an existing one. Save the tab in `
 
 ## Find, act, and verify
 
-For an unfamiliar page, get a short accessibility snapshot. Act on a returned ref, then check the outcome. Without a ref, use a specific accessible role and name; snapshot roles come from Chrome and `getByRole` can disagree, so fall back to the ref or `getByLabel`; a line marked `[use ref]` is one `getByRole` never finds. Scope a long snapshot to a `locator` or use `search` to find the relevant content. End with `session delete <id> --close-created-tabs`.
+For an unfamiliar page, get a short accessibility snapshot. Act on a returned ref, then check the outcome. Without a ref, use a specific accessible role and name; snapshot roles come from Chrome and `getByRole` can disagree, so fall back to the ref or `getByLabel`; a line marked `[use ref]` is one `getByRole` never finds. Take names from a snapshot, not from memory: a guessed name waits out the whole timeout. Wait by name only for what is not on the page yet, such as a status or a new row. Scope a long snapshot to a `locator` or use `search` to find the relevant content. End with `session delete <id> --close-created-tabs`.
 
 ```js
 return await snapshot({ page: state.page })
 ```
 
-To act on a returned ref, use `await (await elementForRef({ page: state.page, ref: '@e5' })).click()`. A list that scrolls inside the page (history, feed) holds only some rows: `await scrollRegion({ locator, by: -1500 })` loads more, see `snapshots`.
+To act on a returned ref, use `await (await elementForRef({ page: state.page, ref: '@e5' })).click()`: it returns an ElementHandle, not a Locator. A list that scrolls inside the page (history, feed) holds only some rows: `await scrollRegion({ locator, by: -1500 })` loads more, see `snapshots`.
 
 When you already know the unique control and expected outcome, combine the action and verification in the same execute. Return just the result:
 

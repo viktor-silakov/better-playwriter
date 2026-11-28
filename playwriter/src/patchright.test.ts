@@ -297,6 +297,7 @@ describe('Patchright and verification pages', () => {
           state.page = await context.newPage();
           await state.page.goto('${server!.baseUrl}/input');
           await state.page.evaluate(() => { setTimeout(() => { throw { code: 42, reason: 'no access' } }, 0) });
+          await state.page.evaluate(() => { setTimeout(() => { throw 'Loader:Create failed' }, 0) });
           await state.page.waitForTimeout(300);
           const logs = await getLatestLogs({ page: state.page, sinceLastCall: true });
           await state.page.close();
@@ -306,9 +307,14 @@ describe('Patchright and verification pages', () => {
       await post('/cli/session/delete', { sessionId: session.id })
       return result.text as string
     }
-    expect(await thrown(false)).toContain('[ERROR IN PAGE SCRIPT] Object { code: 42, reason: "no access" }')
+    const plain = await thrown(false)
+    expect(plain).toContain('[ERROR IN PAGE SCRIPT] Object { code: 42, reason: "no access" }')
+    // A thrown string keeps its text before the first colon and the character after it
+    expect(plain).toContain('[ERROR IN PAGE SCRIPT] Loader:Create failed')
     // Patchright reads exceptions from Chrome's replay, which carries no preview of the object
-    expect(await thrown(true)).toContain('[ERROR IN PAGE SCRIPT] Object')
+    const patched = await thrown(true)
+    expect(patched).toContain('[ERROR IN PAGE SCRIPT] Object')
+    expect(patched).toContain('[ERROR IN PAGE SCRIPT] Loader:Create failed')
   }, 60000)
 
   it('switches a session to Patchright and back mid-run, tabs stay open', async () => {

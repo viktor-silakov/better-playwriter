@@ -230,7 +230,7 @@ describe('agent snapshot views', () => {
     const scrolled = await executor.execute(`
       const down = await scrollRegion({ locator: state.listPage.getByRole('listbox'), by: 300 })
       const again = await scrollRegion({ locator: state.listPage.getByRole('option').first(), by: 100000 })
-      await state.listPage.setContent('<div aria-label="Thread" style="height:100px;overflow-y:auto"><div>' + Array.from({ length: 30 }, (_, i) => '<div style="height:30px">Message ' + i + '</div>').join('') + '</div></div>')
+      await state.listPage.setContent('<div aria-label="Thread" style="height:100px;overflow-y:auto"><div>' + Array.from({ length: 30 }, (_, i) => (i % 3 ? '<div data-mid="m' + i + '" style="height:30px">Message ' + i + '</div>' : '<div style="height:30px">Day ' + i + '</div>')).join('') + '</div></div>')
       const plain = await snapshot({ page: state.listPage, mode: 'compact', showDiffSinceLastCall: false })
       return JSON.stringify({ down, again, plain: plain.split('\\n').filter((line) => line.startsWith('[scrolls')) })
     `, { timeout: 30000 })
@@ -240,7 +240,7 @@ describe('agent snapshot views', () => {
     expect(again).toMatchObject({ scrolled: true, atEnd: true })
     expect(plain).toMatchInlineSnapshot(`
       [
-        "[scrolls: div "Thread" has 30 rows in the page and shows 11% of its height. More rows load as it scrolls: await scrollRegion({ locator: page.getByLabel(/^Thread/).first(), by: 1500 }) to go down. Recipe: skill --ref snapshots, "Collect a list".]",
+        "[scrolls: div "Thread" has 30 rows in the page and shows 11% of its height. More rows load as it scrolls: await scrollRegion({ locator: page.getByLabel(/^Thread/).first(), by: 1500 }) to go down. Track rows by [data-mid] (20 of 30 rows have it). Recipe: skill --ref snapshots, "Collect a list".]",
       ]
     `)
     await executor.execute(`
