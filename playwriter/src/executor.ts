@@ -775,7 +775,13 @@ export async function describeScrollingLists(target: Page | Locator): Promise<st
     .map((list) => {
       const name = list.name ? ` "${list.name}"` : ''
       const count = list.total > list.rows ? `${list.rows} of about ${list.total} rows` : `${list.rows} rows`
-      const locator = list.name ? `page.getByLabel('${list.name.replace(/[\\']/g, (char) => `\\${char}`)}', { exact: true }).first()` : 'a row of it'
+      // The start of the name: a list often appends its state ("3 selected") to it.
+      const start = list.name.slice(0, 24).replace(/\s+\S*$/, (tail) => (list.name.length > 24 ? '' : tail)).replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')
+      const locator = !list.name
+        ? 'a row of it'
+        : LOCATABLE_REGION_ROLES.has(list.role)
+          ? `page.getByRole('${list.role}', { name: /^${start}/ }).first()`
+          : `page.getByLabel(/^${start}/).first()`
       return `[scrolls: ${list.role}${name} has ${count} in the page and shows ${list.shown}% of its height. More rows load as it scrolls: await scrollRegion({ locator: ${locator}, by: ${list.atEnd ? '-1500 }) to go up' : '1500 }) to go down'}. Recipe: skill --ref snapshots, "Collect a list".]`
     })
     .join('\n')

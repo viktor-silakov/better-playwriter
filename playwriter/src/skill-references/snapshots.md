@@ -40,14 +40,27 @@ Use the ref with the page that returned it. A surviving DOM node keeps its ref w
 
 Plain text of one region: `await locator.innerText()`.
 
-**Click, then read the pane that changes.** In an app a click loads a region without a navigation:
+**Open each row of a list and read the pane it fills.** In an app a click loads the pane without a navigation, and the list redraws its rows, so a row found by `nth()`, by `.all()` or by an attribute you set yourself is soon another row or gone. Use an attribute the page gives the row, and read the pane until it has changed and stopped changing:
 
 ```js
+const list = state.page.getByRole('listbox').first()
 const pane = state.page.getByRole('main')
-const before = await pane.innerText()
-await (await elementForRef({ ref: '@e12', page: state.page })).click()
-await state.page.waitForFunction(({ el, old }) => el.innerText !== old, { el: await pane.elementHandle(), old: before })
-return (await pane.innerText()).slice(0, 4000)
+const ids = await list.locator('[data-id]').evaluateAll((rows) =>
+  rows.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top).map((row) => row.dataset.id))
+const sizes = []
+for (const id of ids.slice(0, 10)) {
+  const before = await pane.innerText()
+  await list.locator(`[data-id="${id}"]`).click()
+  let text = before
+  for (let i = 0, same = 0; i < 40 && same < 2; i++) {
+    await state.page.waitForTimeout(250)
+    const now = await pane.innerText()
+    same = now !== before && now === text ? same + 1 : 0
+    text = now
+  }
+  sizes.push(text.length)
+}
+return sizes
 ```
 
 **Collect a list that loads more as it scrolls** (history, feed, long table). It keeps only the rows near the viewport in the page, and a snapshot ends with a `[scrolls: …]` note for it. Keep what you saw in `state`, keyed by a stable attribute of the row, and scroll until nothing new comes:
