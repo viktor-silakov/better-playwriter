@@ -10,8 +10,18 @@ import {
   condenseSnapshotLines,
   searchSnapshot,
   shortenCallLog,
+  shortenUrlForOutput,
 } from './executor.js'
 import { trimStackForAgent } from './process-guard.js'
+
+describe('shortenUrlForOutput', () => {
+  it('keeps a short query and cuts a long one', () => {
+    expect(shortenUrlForOutput('https://example.com/list?page=2#top')).toBe('https://example.com/list?page=2#top')
+    expect(shortenUrlForOutput(`https://example.com/signin?state=${'a'.repeat(300)}`)).toBe(
+      'https://example.com/signin?… (306 more characters: page.url())',
+    )
+  })
+})
 
 describe('error text for an agent', () => {
   it('keeps frames of agent code without paths and drops internal ones', () => {

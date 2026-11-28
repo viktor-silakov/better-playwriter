@@ -410,6 +410,25 @@ await waitForHandoff({ page: state.page }) // manual handoff: waits for Done
 await clearHandoff({ page: state.page }) // remove the card without waiting
 ```
 
+**Collect a list that loads more as it scrolls** (history, feed, long table). Such a list keeps only the rows near the viewport, so one read never has them all. Keep what you saw in `state`, keyed by a stable attribute of the row, and scroll until the count stops growing:
+
+```js
+state.rows ??= new Map()
+const list = state.page.getByRole('list', { name: 'History' }) // the scrolling region, by role and name
+for (let round = 0; round < 20; round++) {
+  const before = state.rows.size
+  const seen = await list.locator('[data-id]').evaluateAll((rows) => rows.map((row) => [row.dataset.id, row.innerText]))
+  seen.forEach(([id, text]) => state.rows.set(id, text))
+  if (state.rows.size >= 100 || (round > 0 && state.rows.size === before)) break
+  await list.hover()
+  await state.page.mouse.wheel(0, -1500) // up through a history; a positive number goes down a feed
+  await state.page.waitForTimeout(700)
+}
+return state.rows.size
+```
+
+Find the row attribute first with one `getCleanHTML` of a single row. A snapshot ends with a `[scrolls: …]` note for such a list. Rows can sit in the page in another order than on screen: to act on "the first 10", sort them by `getBoundingClientRect().top`, and check `count()` before `nth()`. Setting `scrollTop` often loads nothing; the mouse wheel does.
+
 ## page.evaluate
 
 Code inside `page.evaluate()` runs in the browser - use plain JavaScript only, no TypeScript syntax. Return values and log outside (console.log inside evaluate runs in browser, not visible):

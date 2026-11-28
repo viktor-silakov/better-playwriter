@@ -133,7 +133,7 @@ export class CodeExecutionTimeoutError extends Error {
   constructor(timeout: number) {
     super(
       `Code execution timed out after ${timeout}ms and was aborted: its running and later Playwright calls fail and \`signal\` is aborted. ` +
-        `Check the page before retrying.`,
+        `Check the page before retrying. A slow page needs a higher limit: --timeout <ms> on the CLI, the timeout argument in MCP.`,
     )
     this.name = 'CodeExecutionTimeoutError'
   }
@@ -559,6 +559,21 @@ export function formatConsoleLogs({
 }
 
 
+const MAX_PAGE_ERRORS_PER_CALL = 3
+const URL_QUERY_MAX_CHARS = 80
+
+/**
+ * The URL line of a snapshot. A long query or hash is mostly state and tokens of a sign-in or tracking
+ * redirect: it costs output and puts ids into the reader's context. page.url() still has all of it.
+ */
+export function shortenUrlForOutput(url: string): string {
+  const at = url.search(/[?#]/)
+  if (at === -1 || url.length - at <= URL_QUERY_MAX_CHARS) {
+    return url.length > 512 ? `${url.slice(0, 512)}…` : url
+  }
+  return `${url.slice(0, Math.min(at, 512))}${url[at]}… (${url.length - at - 1} more characters: page.url())`
+}
+
 const SNAPSHOT_SEARCH_MAX_MATCHES = 10
 const SNAPSHOT_SEARCH_CONTEXT_LINES = 5
 const DEFAULT_SNAPSHOT_MAX_CHARS = 4000
@@ -662,6 +677,65 @@ export async function describeHiddenRegions(page: Page): Promise<string> {
   return regions
     .map((region) => {
       return `[visible region not included: the page hides it from the accessibility tree (${region.controls} controls). Read it with getCleanHTML({ locator: page.locator('${region.selector}') })]`
+    })
+    .join('\n')
+}
+
+/**
+ * Lists that scroll inside the page. An app often keeps only the rows near the viewport in the page, so a
+ * snapshot of such a list looks complete while most of its rows are missing.
+ */
+function findScrollingLists(root: any): Array<{ role: string; name: string; rows: number; shown: number }> {
+  const view = (globalThis as any).window
+  const listSelector = '[role=listbox],[role=list],[role=grid],[role=treegrid],[role=tree],[role=feed],[role=log],[role=table],ul,ol,table'
+  const rowSelector = '[role=option],[role=row],[role=listitem],[role=treeitem],[role=article],li,tr'
+  const candidates: any[] = [...(root.matches?.(listSelector) ? [root] : []), ...root.querySelectorAll(listSelector)].slice(0, 400)
+  const seen = new Set<any>()
+  const found: Array<{ role: string; name: string; rows: number; shown: number; height: number }> = []
+  for (const list of candidates) {
+    if (list.checkVisibility && !list.checkVisibility()) {
+      continue
+    }
+    // The scroller is the list or a wrapper a few levels up, never the page itself.
+    let scroller: any
+    for (let element = list, level = 0; element && level < 5 && element !== view.document.body; element = element.parentElement, level++) {
+      const overflow = view.getComputedStyle(element).overflowY
+      if ((overflow === 'auto' || overflow === 'scroll') && element.scrollHeight > element.clientHeight * 1.5 && element.clientHeight > 40) {
+        scroller = element
+        break
+      }
+    }
+    if (!scroller || seen.has(scroller)) {
+      continue
+    }
+    seen.add(scroller)
+    const rows = list.querySelectorAll(rowSelector).length
+    if (rows < 2) {
+      continue
+    }
+    found.push({
+      role: list.getAttribute('role') || list.tagName.toLowerCase(),
+      name: (list.getAttribute('aria-label') || '').slice(0, 30),
+      rows,
+      shown: Math.round((scroller.clientHeight / scroller.scrollHeight) * 100),
+      height: scroller.scrollHeight,
+    })
+  }
+  return found
+    .sort((a, b) => b.height - a.height)
+    .slice(0, 2)
+    .map(({ role, name, rows, shown }) => ({ role, name, rows, shown }))
+}
+
+export async function describeScrollingLists(target: Page | Locator): Promise<string> {
+  const lists =
+    'goto' in target
+      ? await evaluateIsolated({ target, fn: `(${findScrollingLists.toString()})(document)` })
+      : await evaluateIsolated({ target: target.first(), fn: findScrollingLists })
+  return (lists as ReturnType<typeof findScrollingLists>)
+    .map((list) => {
+      const name = list.name ? ` "${list.name}"` : ''
+      return `[scrolls: ${list.role}${name} shows about ${list.shown}% of its height (${list.rows} rows in the page). Rows off screen may not be in the page yet: scroll with page.mouse.wheel over it and read again; check count() before nth().]`
     })
     .join('\n')
 }
@@ -1237,12 +1311,30 @@ export class PlaywrightExecutor {
       return ''
     }
 
-    return `${relevantEvents
-      .map((event) => {
-        const label = event.type === 'warning' ? 'WARNING' : 'PAGE ERROR'
-        return `[${label}${event.late ? ' from an earlier call' : ''}] ${event.message}`
-      })
-      .join('\n')}\n`
+    // A page can throw the same error many times, and its own script errors are rarely what the agent
+    // came for: print each one once and only the first few.
+    const lines: string[] = []
+    const pageErrors = new Set<string>()
+    let hiddenPageErrors = 0
+    for (const event of relevantEvents) {
+      if (event.type === 'warning') {
+        lines.push(`[WARNING${event.late ? ' from an earlier call' : ''}] ${event.message}`)
+        continue
+      }
+      if (pageErrors.has(event.message)) {
+        continue
+      }
+      pageErrors.add(event.message)
+      if (pageErrors.size > MAX_PAGE_ERRORS_PER_CALL) {
+        hiddenPageErrors += 1
+        continue
+      }
+      lines.push(`[PAGE ERROR] ${event.message.length > 300 ? `${event.message.slice(0, 300)}…` : event.message}`)
+    }
+    if (hiddenPageErrors > 0) {
+      lines.push(`[${hiddenPageErrors} more page errors: getLatestLogs({ page, search: /pageerror/ })]`)
+    }
+    return `${lines.join('\n')}\n`
   }
 
   private pruneDeliveredOutputEvents() {
@@ -2085,19 +2177,24 @@ export class PlaywrightExecutor {
           }
         }
         const frameNotes =
-          !frame && !locator && mode !== undefined
+          !frame && mode !== undefined
             ? (
-                await Promise.all([
-                  describeChildFrames(resolvedPage).catch(() => ''),
-                  describeHiddenRegions(resolvedPage).catch(() => ''),
-                ])
+                await Promise.all(
+                  locator
+                    ? [describeScrollingLists(locator).catch(() => '')]
+                    : [
+                        describeChildFrames(resolvedPage).catch(() => ''),
+                        describeHiddenRegions(resolvedPage).catch(() => ''),
+                        describeScrollingLists(resolvedPage).catch(() => ''),
+                      ],
+                )
               )
                 .filter(Boolean)
                 .join('\n')
             : ''
         const withPageUrl = (body: string, { condense = false }: { condense?: boolean } = {}) => {
           const url = resolvedPage.url()
-          const boundedUrl = maxChars !== undefined && url.length > 512 ? `${url.slice(0, 512)}…` : url
+          const boundedUrl = maxChars !== undefined ? shortenUrlForOutput(url) : url
           // The iframe notes are part of the answer, so they come out of the same budget.
           const budget =
             maxChars === undefined ? undefined : Math.max(MIN_SNAPSHOT_MAX_CHARS, maxChars - (frameNotes ? frameNotes.length + 1 : 0))
@@ -2912,6 +3009,11 @@ export class PlaywrightExecutor {
         }
         // Snapshot roles come from Chrome. Playwright computes its own, and the two differ for some elements,
         // such as an editable div without a role.
+        // An index past the last match waits like a missing element. A list that keeps only the rows near
+        // the viewport in the page is the usual cause.
+        if (/Timeout \d+ms exceeded/.test(message) && /waiting for .*\.(?:nth\(\d+\)|last\(\)|first\(\))/.test(message)) {
+          return '\n\n[HINT: The locator ends with an index. Fewer elements may match than the index needs: check count() first. A long list often keeps only the rows near the viewport in the page; scroll it with page.mouse.wheel over it to load more.]'
+        }
         if (/Timeout \d+ms exceeded/.test(message) && /waiting for .*getByRole\(/.test(message)) {
           return '\n\n[HINT: No element matched this role and name. If it came from a snapshot, act on its ref instead: elementForRef({ ref, page }). A line without a ref can be found by its name: page.getByLabel(name, { exact: true }). Chrome and Playwright can name the role differently.]'
         }

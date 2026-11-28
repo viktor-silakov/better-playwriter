@@ -186,6 +186,29 @@ describe('agent snapshot views', () => {
     }
   }, 60000)
 
+  it('notes a list that scrolls inside the page and explains an index past the last row', async () => {
+    const result = await executor.execute(`
+      const listPage = await context.newPage()
+      const rows = Array.from({ length: 40 }, (_, i) => '<div role="option" style="height:30px">Row ' + (i + 1) + '</div>').join('')
+      await listPage.setContent('<main><div style="height:120px;overflow-y:auto"><div role="listbox" aria-label="Rows">' + rows + '</div></div><ul><li>One</li><li>Two</li></ul></main>')
+      state.listPage = listPage
+      const whole = await snapshot({ page: listPage, mode: 'compact', showDiffSinceLastCall: false })
+      const scoped = await snapshot({ locator: listPage.getByRole('listbox'), mode: 'compact', showDiffSinceLastCall: false })
+      return JSON.stringify({ whole: whole.split('\\n').filter((line) => line.startsWith('[scrolls')), scoped: scoped.split('\\n').filter((line) => line.startsWith('[scrolls')) })
+    `, { timeout: 30000 })
+    expect(result.isError).toBe(false)
+    const { whole, scoped } = JSON.parse(result.text.replace('[return value] ', ''))
+    expect(whole).toMatchInlineSnapshot(`
+      [
+        "[scrolls: listbox "Rows" shows about 10% of its height (40 rows in the page). Rows off screen may not be in the page yet: scroll with page.mouse.wheel over it and read again; check count() before nth().]",
+      ]
+    `)
+    expect(scoped).toEqual(whole)
+    const miss = await executor.execute(`await state.listPage.getByRole('option').nth(60).click({ timeout: 500 })`, { timeout: 10000 })
+    expect(miss.isError).toBe(true)
+    expect(miss.text).toContain('check count() first')
+  }, 60000)
+
   it('searches with refs, fails fast on an empty scope, and points to the ref when a role finds nothing', async () => {
     const result = await executor.execute(`
       const formPage = await context.newPage()
