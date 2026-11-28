@@ -186,6 +186,19 @@ describe('agent snapshot views', () => {
     }
   }, 60000)
 
+  it('names the ref or the other names of a role that getByRole did not find', async () => {
+    const result = await executor.execute(`
+      state.rolePage = await context.newPage()
+      await state.rolePage.setContent('<main><div contenteditable aria-label="To"></div><button>New</button><button>Send</button></main>')
+      await snapshot({ page: state.rolePage, showDiffSinceLastCall: false })
+    `, { timeout: 30000 })
+    expect(result.isError).toBe(false)
+    const sameName = await executor.execute(`await state.rolePage.getByRole('textbox', { name: /^To$/ }).click({ timeout: 500 })`, { timeout: 10000 })
+    expect(sameName.text).toMatch(/Your last snapshot has textbox "To" @e\d+: Playwright gives that element another role, so use the ref\./)
+    const wrongName = await executor.execute(`await state.rolePage.getByRole('button', { name: 'New mail' }).click({ timeout: 500 })`, { timeout: 10000 })
+    expect(wrongName.text).toMatch(/Your last snapshot has these with role button: button "New" @e\d+, button "Send" @e\d+\./)
+  }, 60000)
+
   it('notes a list that scrolls inside the page and explains an index past the last row', async () => {
     const result = await executor.execute(`
       const listPage = await context.newPage()

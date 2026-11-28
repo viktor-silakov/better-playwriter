@@ -1487,6 +1487,46 @@ export class PlaywrightExecutor {
     })
   }
 
+  /**
+   * What the snapshots the agent already has say about a role that getByRole did not find: the ref of the
+   * line it meant, or the names this role does have. Saves the snapshot call that would come next.
+   */
+  private describeSnapshotRole(message: string): string {
+    const call = [...message.matchAll(/getByRole\('([a-z]+)'(?:, \{ name: (?:'((?:[^'\\]|\\.)*)'|\/((?:[^/\\]|\\.)+)\/([a-z]*)))?/g)].at(-1)
+    if (!call) {
+      return ''
+    }
+    const [, role, text, pattern, flags] = call
+    const wanted = (name: string) => {
+      if (text !== undefined) {
+        return name.toLowerCase().includes(text.toLowerCase())
+      }
+      try {
+        return pattern ? new RegExp(pattern, flags.replace(/[gy]/g, '')).test(name) : false
+      } catch {
+        return false
+      }
+    }
+    const line = new RegExp(`^\\s*- ${role} "((?:[^"\\\\]|\\\\.)*)".* (@e\\d+)\\b`)
+    const found = new Map<string, string>()
+    for (const page of Object.values(this.userState)) {
+      for (const snapshot of this.lastSnapshots.get(page as Page)?.values() ?? []) {
+        for (const snapshotLine of snapshot.split('\n')) {
+          const match = line.exec(snapshotLine)
+          if (match) {
+            found.set(match[2]!, match[1]!)
+          }
+        }
+      }
+    }
+    const show = ([ref, name]: [string, string]) => `${role} "${name.length > 40 ? `${name.slice(0, 40)}…` : name}" ${ref}`
+    const same = [...found].filter(([, name]) => wanted(name))
+    if (same.length) {
+      return ` Your last snapshot has ${same.slice(0, 3).map(show).join(', ')}: Playwright gives that element another role, so use the ref.`
+    }
+    return found.size ? ` Your last snapshot has these with role ${role}: ${[...found].slice(0, 8).map(show).join(', ')}.` : ''
+  }
+
   private invalidateSnapshotState(page: Page) {
     this.lastSnapshots.delete(page)
     this.lastRefToLocator.delete(page)
@@ -3175,7 +3215,7 @@ export class PlaywrightExecutor {
           return '\n\n[HINT: The locator ends with an index. Fewer elements may match than the index needs: check count() first. A long list often keeps only the rows near the viewport in the page; scroll it with page.mouse.wheel over it to load more.]'
         }
         if (/Timeout \d+ms exceeded/.test(message) && /waiting for .*getByRole\(/.test(message)) {
-          return '\n\n[HINT: No element matched this role and name. If it came from a snapshot, act on its ref instead: elementForRef({ ref, page }). A line without a ref can be found by its name: page.getByLabel(name, { exact: true }). Chrome and Playwright can name the role differently.]'
+          return `\n\n[HINT: No element matched this role and name.${this.describeSnapshotRole(message)} If it came from a snapshot, act on its ref instead: elementForRef({ ref, page }). A line without a ref can be found by its name: page.getByLabel(name, { exact: true }). Chrome and Playwright can name the role differently.]`
         }
         if (/\b(?:Target|Page) crashed\b/i.test(message)) {
           return '\n\n[HINT: This tab crashed. Create a new tab with context.newPage(), replace the crashed reference in state, and navigate to the intended URL. Do not reset the session or repeat the last script: first check whether its actions completed.]'
