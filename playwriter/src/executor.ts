@@ -415,6 +415,27 @@ function describeRemoteObject(arg: Protocol.Runtime.RemoteObject): string {
   return String(arg.value)
 }
 
+/**
+ * Text for an exception that is a plain object (`throw { code: 42 }`), built from Chrome's preview of its
+ * properties. Chrome describes such an object only by its class name, so the page error read "Object".
+ */
+export function describeThrownObject(exception: Protocol.Runtime.RemoteObject | undefined): string | undefined {
+  if (exception?.type !== 'object' || exception.subtype === 'error' || !exception.preview?.properties.length) {
+    return undefined
+  }
+  const properties = exception.preview.properties.map((property) => {
+    const value = property.type === 'string' ? JSON.stringify(property.value ?? '') : (property.value ?? property.type)
+    return `${property.name}: ${value}`
+  })
+  if (exception.preview.overflow) {
+    properties.push('…')
+  }
+  return `${exception.description ?? 'Object'} { ${properties.join(', ')} }`
+}
+
+/** How long a page error that may be a thrown plain object waits for Chrome's preview of that object. */
+const THROWN_OBJECT_PREVIEW_WAIT_MS = 50
+
 function isPromise(value: any): value is Promise<unknown> {
   return typeof value === 'object' && value !== null && typeof value.then === 'function'
 }
@@ -1236,8 +1257,35 @@ export class PlaywrightExecutor {
       }
     })
 
+    // Playwright's pageerror names a thrown plain object only by its class ("Object"). The raw CDP event has
+    // a preview of its properties, and the two arrive in no fixed order, so a bare class name waits briefly.
+    const thrownObjects = new Map<string, string[]>()
+    const takeThrownObject = (className: string) => thrownObjects.get(className)?.shift()
+    let previewsArrive = false
+    getCDPSessionForPage({ page })
+      .then((cdp) => {
+        cdp.on('Runtime.exceptionThrown', ({ exceptionDetails }) => {
+          const text = describeThrownObject(exceptionDetails.exception)
+          const className = exceptionDetails.exception?.description
+          if (!text || !className) {
+            return
+          }
+          const waiting = thrownObjects.get(className) ?? []
+          thrownObjects.set(className, [...waiting.slice(-20), text])
+        })
+        previewsArrive = true
+      })
+      .catch(() => {})
+
     page.on('pageerror', (error) => {
-      this.addPageError({ page, message: error.message })
+      const text = takeThrownObject(error.message)
+      if (text || !previewsArrive || !/^[A-Z][\w$]*$/.test(error.message)) {
+        this.addPageError({ page, message: text ?? error.message })
+        return
+      }
+      setTimeout(() => {
+        this.addPageError({ page, message: takeThrownObject(error.message) ?? error.message })
+      }, THROWN_OBJECT_PREVIEW_WAIT_MS)
     })
   }
 
@@ -1262,7 +1310,13 @@ export class PlaywrightExecutor {
         })
         cdp.on('Runtime.exceptionThrown', ({ timestamp, exceptionDetails }) => {
           if (isNew(timestamp)) {
-            this.addPageError({ page, message: exceptionDetails.exception?.description?.split('\n')[0] ?? exceptionDetails.text })
+            this.addPageError({
+              page,
+              message:
+                describeThrownObject(exceptionDetails.exception) ??
+                exceptionDetails.exception?.description?.split('\n')[0] ??
+                exceptionDetails.text,
+            })
           }
         })
       })

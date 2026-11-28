@@ -287,6 +287,30 @@ describe('Patchright and verification pages', () => {
     await post('/cli/session/delete', { sessionId: playwright.id })
   }, 60000)
 
+  it('a thrown plain object shows its properties in page errors, with and without Patchright', async () => {
+    const thrown = async (patchright: boolean) => {
+      const session = await post('/cli/session/new', patchright ? { patchright: true } : {})
+      const result = await post('/cli/execute', {
+        sessionId: session.id,
+        timeout: 30000,
+        code: js`
+          state.page = await context.newPage();
+          await state.page.goto('${server!.baseUrl}/input');
+          await state.page.evaluate(() => { setTimeout(() => { throw { code: 42, reason: 'no access' } }, 0) });
+          await state.page.waitForTimeout(300);
+          const logs = await getLatestLogs({ page: state.page, sinceLastCall: true });
+          await state.page.close();
+          return logs;
+        `,
+      })
+      await post('/cli/session/delete', { sessionId: session.id })
+      return result.text as string
+    }
+    expect(await thrown(false)).toContain('[PAGE ERROR] Object { code: 42, reason: "no access" }')
+    // Patchright reads exceptions from Chrome's replay, which carries no preview of the object
+    expect(await thrown(true)).toContain('[PAGE ERROR] Object')
+  }, 60000)
+
   it('switches a session to Patchright and back mid-run, tabs stay open', async () => {
     const session = await post('/cli/session/new', {})
     const run = async (code: string) => {
