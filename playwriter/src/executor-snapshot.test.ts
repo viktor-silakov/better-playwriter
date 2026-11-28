@@ -116,6 +116,16 @@ describe('agent snapshot views', () => {
           })
           next()
         `),
+        // Content is on screen at once, and the app keeps fetching in the background for good.
+        '/busy': fetching(`document.querySelector('#root').innerHTML = '<button>Inbox</button>'; setInterval(() => fetch('/data?' + Date.now()), 100)`),
+        // A shell with a menu, whose rows arrive 600 ms later while it keeps fetching.
+        '/shell': fetching(`
+          document.querySelector('#root').innerHTML = '<nav><a href="#m">Mail</a></nav><ul></ul>'
+          setInterval(() => fetch('/data?' + Date.now()), 100)
+          setTimeout(() => { document.querySelector('ul').innerHTML = Array.from({ length: 20 }, (_, i) => '<li><a href="#' + i + '">Message ' + i + '</a></li>').join('') }, 600)
+        `),
+        // A splash that fetches nothing for almost two seconds while the app's scripts start.
+        '/splash': fetching(`document.querySelector('#root').insertAdjacentHTML('beforebegin', '<div style="display:none"><button>Hidden</button></div>'); setTimeout(() => { document.querySelector('#root').innerHTML = '<button>Chats</button>' }, 1800)`),
         '/heartbeat': fetching(`setInterval(() => fetch('/data?' + Date.now()), 100)`),
         // A sign-in hop: the first document is complete and quiet, then leaves for the real app.
         '/hop': '<title>Hop</title><script>setTimeout(() => location.replace("/app"), 300)</script>',
@@ -136,18 +146,32 @@ describe('agent snapshot views', () => {
         const early = await snapshot({ page: appPage, waitForLoad: false })
         await appPage.goto(${JSON.stringify(server.baseUrl)} + '/app', { waitUntil: 'domcontentloaded' })
         const settled = await snapshot({ page: appPage })
+        await appPage.goto(${JSON.stringify(server.baseUrl)} + '/busy', { waitUntil: 'domcontentloaded' })
+        const busyStart = Date.now()
+        const busy = await snapshot({ page: appPage })
+        const busyMs = Date.now() - busyStart
+        await appPage.goto(${JSON.stringify(server.baseUrl)} + '/shell', { waitUntil: 'domcontentloaded' })
+        const rows = await snapshot({ page: appPage })
+        await appPage.goto(${JSON.stringify(server.baseUrl)} + '/splash', { waitUntil: 'domcontentloaded' })
+        const splash = await snapshot({ page: appPage })
         await appPage.goto(${JSON.stringify(server.baseUrl)} + '/hop')
         const hop = await waitForPageLoad({ page: appPage })
         const hopButtons = await loadedButtons()
         await appPage.goto(${JSON.stringify(server.baseUrl)} + '/heartbeat')
         const heartbeat = await waitForPageLoad({ page: appPage, timeout: 20000 })
         await appPage.close()
-        return JSON.stringify({ shell, shellButtons, app, appButtons, early, settled, hop, hopButtons, heartbeat })
+        return JSON.stringify({ shell, shellButtons, app, appButtons, early, settled, busy, busyMs, rows, splash, hop, hopButtons, heartbeat })
       `, { timeout: 40000 })
       expect(result.isError).toBe(false)
-      const { shell, shellButtons, app, appButtons, early, settled, hop, hopButtons, heartbeat } = JSON.parse(result.text.replace('[return value] ', ''))
+      const { shell, shellButtons, app, appButtons, early, settled, busy, busyMs, rows, splash, hop, hopButtons, heartbeat } = JSON.parse(result.text.replace('[return value] ', ''))
       expect(early).not.toContain('Loaded')
       expect(settled).toContain('button "Loaded"')
+      // Content that holds still is enough: the snapshot does not wait out the background fetching.
+      expect(busy).toContain('button "Inbox"')
+      expect(busyMs).toBeLessThan(2500)
+      // A shell that is still fetching gets time for its rows.
+      expect(rows).toContain('Message 19')
+      expect(splash).toContain('button "Chats"')
       // Without the quiet wait the page counts as loaded while it is still empty.
       expect({ success: shell.success, shellButtons }).toEqual({ success: true, shellButtons: 0 })
       expect({ success: app.success, appButtons }).toEqual({ success: true, appButtons: 1 })

@@ -516,6 +516,19 @@ const SNAPSHOT_NAVIGATION_RETRY_MS = 5000
 const SNAPSHOT_SETTLE_WINDOW_MS = 5000
 const SNAPSHOT_SETTLE_TIMEOUT_MS = 4000
 const SNAPSHOT_SETTLE_QUIET_MS = 500
+// A page that is still fetching may be a shell waiting for its data, so its content has to hold still longer.
+const SNAPSHOT_SETTLE_STABLE_MS = 750
+const SNAPSHOT_SETTLE_POLL_MS = 150
+const SNAPSHOT_SETTLE_APP_START_MS = 2500
+
+/** Whether two looks at a page saw content of about the same size: rows still arriving change it by more. */
+export function isSameContentSize(
+  before: { text: number; controls: number },
+  after: { text: number; controls: number },
+): boolean {
+  const close = (a: number, b: number, share: number, floor: number) => Math.abs(a - b) <= Math.max(floor, Math.max(a, b) * share)
+  return close(before.text, after.text, 0.02, 20) && close(before.controls, after.controls, 0.05, 3)
+}
 
 /**
  * A page snapshot stops at the border of an iframe, and embedded apps keep all their content in one
@@ -1847,45 +1860,65 @@ export class PlaywrightExecutor {
         const navigatedAt = this.lastNavigationAt.get(resolvedPage)
         if (options.waitForLoad !== false && navigatedAt !== undefined && Date.now() - navigatedAt < SNAPSHOT_SETTLE_WINDOW_MS) {
           const settleUntil = Date.now() + SNAPSHOT_SETTLE_TIMEOUT_MS
-          const settle = () => {
-            return waitForPageLoad({
-              page: resolvedPage,
-              timeout: Math.max(300, settleUntil - Date.now()),
-              quietMs: SNAPSHOT_SETTLE_QUIET_MS,
-              minWait: 100,
-              network: () => getNetworkActivity(resolvedPage),
-            }).catch(() => {})
-          }
-          await settle()
-          // A splash screen is complete and quiet while the app's scripts are still starting: it has no text
-          // at all. Wait for the first text, then for the page to settle again.
-          const isBlank = () => {
+          // Mail and chat apps keep fetching for many seconds after their content is on screen, so a quiet
+          // network is a late signal. The content itself is the signal: its size stops changing.
+          const measure = () => {
             return evaluateIsolated({
               target: resolvedPage,
-              // No text and nothing to act on. A page of icon buttons has no text either, but it is ready.
               fn: () => {
-                const body = (globalThis as any).document?.body
-                return !body || (body.innerText.trim().length === 0 && !body.querySelector('a[href],button,input,select,textarea,[contenteditable]'))
+                const doc = (globalThis as any).document
+                const body = doc?.body
+                return {
+                  text: body ? body.innerText.trim().length : 0,
+                  controls: body ? body.querySelectorAll('a[href],button,input,select,textarea,[contenteditable]').length : 0,
+                  // A splash screen can hold the app's hidden controls: only one that shows counts as content.
+                  shown: body
+                    ? [...body.querySelectorAll('a[href],button,input,select,textarea,[contenteditable]')]
+                        .slice(0, 50)
+                        .some((element: any) => {
+                          return element.checkVisibility
+                            ? element.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })
+                            : element.getClientRects().length > 0
+                        })
+                    : false,
+                  complete: doc?.readyState === 'complete',
+                  scripts: doc?.scripts?.length ?? 0,
+                }
               },
               // A redirect destroyed the document under the check: the next one is still on its way.
-            }).catch((error: unknown) => {
-              return NAVIGATION_RACE_ERROR.test(error instanceof Error ? error.message : String(error))
-            })
+            }).catch(() => undefined)
           }
-          let wasBlank = false
-          const blankSince = Date.now()
-          while (Date.now() < settleUntil && (await isBlank())) {
-            wasBlank = true
-            // An image, a canvas or an empty document stays blank for good. Once nothing has been
-            // fetched for a second, this is the page.
+          const settleStart = Date.now()
+          let base: { text: number; controls: number } | undefined
+          let stableSince = 0
+          while (Date.now() < settleUntil) {
+            const size = await measure()
             const network = getNetworkActivity(resolvedPage)
-            if (Date.now() - blankSince >= 1000 && network.inFlight === 0 && network.quietForMs >= 1000) {
-              break
+            const networkIdle = network.inFlight === 0 && network.quietForMs >= SNAPSHOT_SETTLE_QUIET_MS
+            // No text and nothing to act on: a splash screen, complete and quiet while the app's scripts start.
+            if (!size || (size.text === 0 && !size.shown)) {
+              base = undefined
+              // An image or an empty document stays blank for good: once nothing has been fetched for a
+              // second, this is the page. A blank page with scripts is an app starting, and a chat app's
+              // splash was seen to fetch nothing for almost two seconds before its content came.
+              const blankQuietMs = size && size.scripts > 0 ? SNAPSHOT_SETTLE_APP_START_MS : 1000
+              if (size && Date.now() - settleStart >= blankQuietMs && network.inFlight === 0 && network.quietForMs >= blankQuietMs) {
+                break
+              }
+              await sleep(SNAPSHOT_SETTLE_POLL_MS)
+              continue
             }
-            await sleep(200)
-          }
-          if (wasBlank) {
-            await settle()
+            if (base && isSameContentSize(base, size)) {
+              const stableFor = Date.now() - stableSince
+              // A loaded page that fetches nothing is ready after one confirming look.
+              if (stableFor >= SNAPSHOT_SETTLE_STABLE_MS || (size.complete && networkIdle)) {
+                break
+              }
+            } else {
+              base = size
+              stableSince = Date.now()
+            }
+            await sleep(SNAPSHOT_SETTLE_POLL_MS)
           }
         }
         const frameNotes = !frame && !locator && mode !== undefined ? await describeChildFrames(resolvedPage).catch(() => '') : ''
