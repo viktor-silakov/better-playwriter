@@ -130,7 +130,7 @@ await state.page.waitForSelector('article', { timeout: 10000 })
 await waitForPageLoad({ page: state.page, timeout: 5000 })
 ```
 
-Actions and waits give up after half the execute timeout (5 seconds by default). For slow content pass `timeout` to the action or raise the execute timeout.
+Actions and waits give up after half the execute timeout: 5 seconds by default, 15 at most. For slow content pass `timeout` to the action or the wait.
 
 **8. Not using better-playwriter for JS-rendered sites**
 Use the rendered page for single-page apps:
@@ -408,6 +408,16 @@ Wait in a separate execute with a long timeout, in the background if you can. It
 await waitForHandoff({ page: state.page, until: /\/channels\/@me/ }) // URL RegExp, or a function run in the page
 await waitForHandoff({ page: state.page }) // manual handoff: waits for Done
 await clearHandoff({ page: state.page }) // remove the card without waiting
+```
+
+**Click, then read the pane that changes.** In an app the click loads a region without a navigation. Read the region's text, click, and wait until the text differs:
+
+```js
+const pane = state.page.getByRole('main')
+const before = await pane.innerText()
+await (await elementForRef({ ref: '@e12', page: state.page })).click()
+await state.page.waitForFunction(({ el, old }) => el.innerText !== old, { el: await pane.elementHandle(), old: before })
+return (await pane.innerText()).slice(0, 4000)
 ```
 
 **Collect a list that loads more as it scrolls** (history, feed, long table). Such a list keeps only the rows near the viewport, so one read never has them all. Keep what you saw in `state`, keyed by a stable attribute of the row, and scroll until the count stops growing:

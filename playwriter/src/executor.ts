@@ -502,7 +502,9 @@ export function shortenCallLog(text: string): string {
       continue
     }
     seen.add(key)
-    kept.push(line.length > CALL_LOG_MAX_LINE_CHARS ? `${line.slice(0, CALL_LOG_MAX_LINE_CHARS)}…` : line)
+    // An element is quoted with its attributes: a title or a src can hold page content and ids.
+    const masked = line.replace(/(\s[\w:-]+=")[^"]{24,}"/g, '$1…"')
+    kept.push(masked.length > CALL_LOG_MAX_LINE_CHARS ? `${masked.slice(0, CALL_LOG_MAX_LINE_CHARS)}…` : masked)
   }
   if (dropped > 0) {
     kept.push(`  [${dropped} repeated or further call log lines left out]`)
@@ -531,7 +533,9 @@ export const DEFAULT_ACTION_TIMEOUT_MS = 5000
 
 /** Half of the execute timeout, so a call with a longer timeout also waits longer for slow elements. */
 export function actionTimeoutFor(executeTimeout: number): number {
-  return Math.min(60000, Math.max(1000, Math.round(executeTimeout / 2)))
+  // An action that has not found its element in 15 seconds will not find it in 60: a long execute
+  // timeout is for long scripts, and one wrong locator should not spend half of it.
+  return Math.min(15000, Math.max(1000, Math.round(executeTimeout / 2)))
 }
 
 export function formatConsoleLogs({
@@ -686,38 +690,49 @@ export async function describeHiddenRegions(page: Page): Promise<string> {
  * Lists that scroll inside the page. An app often keeps only the rows near the viewport in the page, so a
  * snapshot of such a list looks complete while most of its rows are missing.
  */
-function findScrollingLists(root: any): Array<{ role: string; name: string; rows: number; shown: number }> {
+function findScrollingLists(root: any): Array<{ role: string; name: string; rows: number; total: number; shown: number }> {
   const view = (globalThis as any).window
   const listSelector = '[role=listbox],[role=list],[role=grid],[role=treegrid],[role=tree],[role=feed],[role=log],[role=table],ul,ol,table'
   const rowSelector = '[role=option],[role=row],[role=listitem],[role=treeitem],[role=article],li,tr'
   const candidates: any[] = [...(root.matches?.(listSelector) ? [root] : []), ...root.querySelectorAll(listSelector)].slice(0, 400)
   const seen = new Set<any>()
-  const found: Array<{ role: string; name: string; rows: number; shown: number; height: number }> = []
+  const found: Array<{ role: string; name: string; rows: number; total: number; shown: number; height: number }> = []
+  const scrolls = (element: any) => {
+    const overflow = view.getComputedStyle(element).overflowY
+    return (overflow === 'auto' || overflow === 'scroll') && element.scrollHeight > element.clientHeight * 1.5 && element.clientHeight > 40
+  }
   for (const list of candidates) {
     if (list.checkVisibility && !list.checkVisibility()) {
       continue
     }
-    // The scroller is the list or a wrapper a few levels up, never the page itself.
+    // The scroller is the list, a wrapper a few levels up or down, never the page itself.
     let scroller: any
     for (let element = list, level = 0; element && level < 5 && element !== view.document.body; element = element.parentElement, level++) {
-      const overflow = view.getComputedStyle(element).overflowY
-      if ((overflow === 'auto' || overflow === 'scroll') && element.scrollHeight > element.clientHeight * 1.5 && element.clientHeight > 40) {
+      if (scrolls(element)) {
         scroller = element
         break
       }
+    }
+    for (let level = 0, layer: any[] = [list]; !scroller && level < 3 && layer.length && layer.length < 20; level++) {
+      layer = layer.flatMap((element) => [...element.children])
+      scroller = layer.find(scrolls)
     }
     if (!scroller || seen.has(scroller)) {
       continue
     }
     seen.add(scroller)
-    const rows = list.querySelectorAll(rowSelector).length
+    const rowElements: any[] = [...list.querySelectorAll(rowSelector)]
+    const rows = rowElements.length
     if (rows < 2) {
       continue
     }
+    // The page may say how many rows the whole list has.
+    const total = Math.max(0, ...rowElements.slice(0, 50).map((row) => Number(row.getAttribute('aria-setsize')) || 0))
     found.push({
       role: list.getAttribute('role') || list.tagName.toLowerCase(),
       name: (list.getAttribute('aria-label') || '').slice(0, 30),
       rows,
+      total,
       shown: Math.round((scroller.clientHeight / scroller.scrollHeight) * 100),
       height: scroller.scrollHeight,
     })
@@ -725,7 +740,7 @@ function findScrollingLists(root: any): Array<{ role: string; name: string; rows
   return found
     .sort((a, b) => b.height - a.height)
     .slice(0, 2)
-    .map(({ role, name, rows, shown }) => ({ role, name, rows, shown }))
+    .map(({ role, name, rows, total, shown }) => ({ role, name, rows, total, shown }))
 }
 
 export async function describeScrollingLists(target: Page | Locator): Promise<string> {
@@ -736,7 +751,8 @@ export async function describeScrollingLists(target: Page | Locator): Promise<st
   return (lists as ReturnType<typeof findScrollingLists>)
     .map((list) => {
       const name = list.name ? ` "${list.name}"` : ''
-      return `[scrolls: ${list.role}${name} shows about ${list.shown}% of its height (${list.rows} rows in the page). Rows off screen may not be in the page yet: scroll with page.mouse.wheel over it and read again; check count() before nth().]`
+      const count = list.total > list.rows ? `${list.rows} of about ${list.total} rows` : `${list.rows} rows`
+      return `[scrolls: ${list.role}${name} has ${count} in the page and shows ${list.shown}% of its height. More rows load as it scrolls: page.mouse.wheel over it. Recipe: skill --ref actions, "Collect a list".]`
     })
     .join('\n')
 }

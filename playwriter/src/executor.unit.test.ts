@@ -57,6 +57,7 @@ describe('error text for an agent', () => {
     expect(out).toContain('[8 repeated or further call log lines left out]')
     expect(out.endsWith('[HINT: after the log]')).toBe(true)
     expect(shortenCallLog('no log here')).toBe('no log here')
+    expect(shortenCallLog('x\nCall log:\n  - <img title="A long title that holds page content" src="s.png"> intercepts')).toContain('<img title="…" src="s.png">')
   })
 })
 

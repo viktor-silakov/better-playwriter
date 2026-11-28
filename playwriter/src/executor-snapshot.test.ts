@@ -200,7 +200,7 @@ describe('agent snapshot views', () => {
     const { whole, scoped } = JSON.parse(result.text.replace('[return value] ', ''))
     expect(whole).toMatchInlineSnapshot(`
       [
-        "[scrolls: listbox "Rows" shows about 10% of its height (40 rows in the page). Rows off screen may not be in the page yet: scroll with page.mouse.wheel over it and read again; check count() before nth().]",
+        "[scrolls: listbox "Rows" has 40 rows in the page and shows 10% of its height. More rows load as it scrolls: page.mouse.wheel over it. Recipe: skill --ref actions, "Collect a list".]",
       ]
     `)
     expect(scoped).toEqual(whole)
