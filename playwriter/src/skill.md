@@ -35,7 +35,7 @@ For an unfamiliar page, get a short accessibility snapshot. Act on a returned re
 return await snapshot({ page: state.page })
 ```
 
-To act on a returned ref, use `await (await elementForRef({ page: state.page, ref: '@e5' })).click()`.
+To act on a returned ref, use `await (await elementForRef({ page: state.page, ref: '@e5' })).click()`. A list that scrolls inside the page (history, feed) holds only some rows: `await scrollRegion({ locator, by: -1500 })` loads more, see `snapshots`.
 
 When you already know the unique control and expected outcome, combine the action and verification in the same execute. Return just the result:
 

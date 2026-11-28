@@ -214,7 +214,7 @@ describe('agent snapshot views', () => {
     const { whole, scoped } = JSON.parse(result.text.replace('[return value] ', ''))
     expect(whole).toMatchInlineSnapshot(`
       [
-        "[scrolls: listbox "Rows" has 40 rows in the page and shows 10% of its height. More rows load as it scrolls: await scrollRegion({ locator: page.getByLabel('Rows', { exact: true }).first(), by: 1500 }) to go down. Recipe: skill --ref actions, "Collect a list".]",
+        "[scrolls: listbox "Rows" has 40 rows in the page and shows 10% of its height. More rows load as it scrolls: await scrollRegion({ locator: page.getByLabel('Rows', { exact: true }).first(), by: 1500 }) to go down. Recipe: skill --ref snapshots, "Collect a list".]",
       ]
     `)
     expect(scoped).toEqual(whole)
@@ -232,7 +232,7 @@ describe('agent snapshot views', () => {
     expect(again).toMatchObject({ scrolled: true, atEnd: true })
     expect(plain).toMatchInlineSnapshot(`
       [
-        "[scrolls: div "Thread" has 30 rows in the page and shows 11% of its height. More rows load as it scrolls: await scrollRegion({ locator: page.getByLabel('Thread', { exact: true }).first(), by: 1500 }) to go down. Recipe: skill --ref actions, "Collect a list".]",
+        "[scrolls: div "Thread" has 30 rows in the page and shows 11% of its height. More rows load as it scrolls: await scrollRegion({ locator: page.getByLabel('Thread', { exact: true }).first(), by: 1500 }) to go down. Recipe: skill --ref snapshots, "Collect a list".]",
       ]
     `)
     await executor.execute(`

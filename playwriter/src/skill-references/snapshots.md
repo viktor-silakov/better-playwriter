@@ -38,7 +38,35 @@ Use the ref with the page that returned it. A surviving DOM node keeps its ref w
 
 ## Read the page text
 
-Plain text of one region: `await locator.innerText()`. A long list that scrolls inside the page: `await scrollRegion({ locator, by: -1500 })` loads more rows (see `actions`, "Collect a list").
+Plain text of one region: `await locator.innerText()`.
+
+**Click, then read the pane that changes.** In an app a click loads a region without a navigation:
+
+```js
+const pane = state.page.getByRole('main')
+const before = await pane.innerText()
+await (await elementForRef({ ref: '@e12', page: state.page })).click()
+await state.page.waitForFunction(({ el, old }) => el.innerText !== old, { el: await pane.elementHandle(), old: before })
+return (await pane.innerText()).slice(0, 4000)
+```
+
+**Collect a list that loads more as it scrolls** (history, feed, long table). It keeps only the rows near the viewport in the page, and a snapshot ends with a `[scrolls: …]` note for it. Keep what you saw in `state`, keyed by a stable attribute of the row, and scroll until nothing new comes:
+
+```js
+state.rows ??= new Map()
+const list = state.page.getByLabel('History', { exact: true }).first() // the list, or any element inside it
+for (let round = 0; round < 30 && state.rows.size < 100; round++) {
+  const seen = await list.locator('[data-id]').evaluateAll((rows) => rows.map((row) => [row.dataset.id, row.innerText]))
+  const before = state.rows.size
+  seen.forEach(([id, text]) => state.rows.set(id, text))
+  const moved = await scrollRegion({ locator: list, by: -1500 }) // negative is up; or { ref: '@e12', page, by }
+  await state.page.waitForTimeout(600)
+  if (!moved.scrolled && state.rows.size === before) break
+}
+return state.rows.size
+```
+
+`scrollRegion` scrolls the element that really scrolls at, inside or above the locator and returns `{ scrolled, top, height, viewHeight, atStart, atEnd }`. Find the row attribute first with one `getCleanHTML` of a single row. Rows can sit in the page in another order than on screen and are reused as the list scrolls: track a row by its attribute, not by `nth()`, and sort by `getBoundingClientRect().top` for "the first 10".
 
 **getCleanHTML** - get cleaned HTML from a locator or page, with search and diffing:
 

@@ -410,34 +410,6 @@ await waitForHandoff({ page: state.page }) // manual handoff: waits for Done
 await clearHandoff({ page: state.page }) // remove the card without waiting
 ```
 
-**Click, then read the pane that changes.** In an app the click loads a region without a navigation. Read the region's text, click, and wait until the text differs:
-
-```js
-const pane = state.page.getByRole('main')
-const before = await pane.innerText()
-await (await elementForRef({ ref: '@e12', page: state.page })).click()
-await state.page.waitForFunction(({ el, old }) => el.innerText !== old, { el: await pane.elementHandle(), old: before })
-return (await pane.innerText()).slice(0, 4000)
-```
-
-**Collect a list that loads more as it scrolls** (history, feed, long table). Such a list keeps only the rows near the viewport in the page, so one read never has them all. A snapshot ends with a `[scrolls: …]` note for it. Keep what you saw in `state`, keyed by a stable attribute of the row, and scroll with `scrollRegion` until nothing new comes:
-
-```js
-state.rows ??= new Map()
-const list = state.page.getByLabel('History', { exact: true }).first() // the list, or any element inside it
-for (let round = 0; round < 30 && state.rows.size < 100; round++) {
-  const seen = await list.locator('[data-id]').evaluateAll((rows) => rows.map((row) => [row.dataset.id, row.innerText]))
-  const before = state.rows.size
-  seen.forEach(([id, text]) => state.rows.set(id, text))
-  const moved = await scrollRegion({ locator: list, by: -1500 }) // negative is up; a ref works too: { ref: '@e12', page }
-  await state.page.waitForTimeout(600)
-  if (!moved.scrolled && state.rows.size === before) break
-}
-return state.rows.size
-```
-
-`scrollRegion` finds the scrolling element at, above or inside the locator, scrolls it and returns `{ scrolled, top, height, viewHeight, atStart, atEnd }`. Find the row attribute first with one `getCleanHTML` of a single row. Rows can sit in the page in another order than on screen: to act on "the first 10", go to the start (`by: -100000`), sort the rows by `getBoundingClientRect().top`, and check `count()` before `nth()`.
-
 ## page.evaluate
 
 Code inside `page.evaluate()` runs in the browser - use plain JavaScript only, no TypeScript syntax. Return values and log outside (console.log inside evaluate runs in browser, not visible):

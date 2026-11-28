@@ -776,7 +776,7 @@ export async function describeScrollingLists(target: Page | Locator): Promise<st
       const name = list.name ? ` "${list.name}"` : ''
       const count = list.total > list.rows ? `${list.rows} of about ${list.total} rows` : `${list.rows} rows`
       const locator = list.name ? `page.getByLabel('${list.name.replace(/[\\']/g, (char) => `\\${char}`)}', { exact: true }).first()` : 'a row of it'
-      return `[scrolls: ${list.role}${name} has ${count} in the page and shows ${list.shown}% of its height. More rows load as it scrolls: await scrollRegion({ locator: ${locator}, by: ${list.atEnd ? '-1500 }) to go up' : '1500 }) to go down'}. Recipe: skill --ref actions, "Collect a list".]`
+      return `[scrolls: ${list.role}${name} has ${count} in the page and shows ${list.shown}% of its height. More rows load as it scrolls: await scrollRegion({ locator: ${locator}, by: ${list.atEnd ? '-1500 }) to go up' : '1500 }) to go down'}. Recipe: skill --ref snapshots, "Collect a list".]`
     })
     .join('\n')
 }
