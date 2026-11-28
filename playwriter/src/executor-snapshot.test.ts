@@ -208,6 +208,7 @@ describe('agent snapshot views', () => {
     const miss = await executor.execute(`await state.formPage.getByRole('textbox', { name: 'Recipient' }).click({ timeout: 500 })`, { timeout: 10000 })
     expect(miss.isError).toBe(true)
     expect(miss.text).toContain('act on its ref instead')
+    expect(miss.text).toContain('page.getByLabel(name, { exact: true })')
     // A search in between does not count as having seen the page: the next snapshot still shows what changed.
     const afterSearch = await executor.execute(`
       await state.formPage.setContent('<button aria-expanded="false" onclick="this.setAttribute(\\'aria-expanded\\', \\'true\\')">Apps</button><p>Text</p>')
@@ -243,6 +244,16 @@ describe('agent snapshot views', () => {
       return checked
     `, { timeout: 15000 })
     expect(styled.text).toContain('true')
+    // A file list: the row's selection cell lies over its own checkbox and toggles it.
+    const cell = await executor.execute(`
+      await state.formPage.setContent('<div role="row"><div role="gridcell" onclick="this.querySelector(\\'input\\').checked = true" style="width:32px;height:32px"><input type="checkbox" aria-label="Select file" style="pointer-events:none"></div><div role="gridcell"><button>report.txt</button></div></div>')
+      const ref = /checkbox "Select file"[^@]*(@e\\d+)/.exec(await snapshot({ page: state.formPage, showDiffSinceLastCall: false }))[1]
+      await (await elementForRef({ ref, page: state.formPage })).click({ timeout: 2000 })
+      const checked = await state.formPage.getByLabel('Select file').isChecked()
+      await state.formPage.setContent('<main><p>Quarterly report is ready</p><div contenteditable aria-label="To"></div><button>Send</button></main>')
+      return checked
+    `, { timeout: 15000 })
+    expect(cell.text).toContain('true')
     const html = await executor.execute(`
       const ref = /button "Send" (@e\\d+)/.exec(await snapshot({ page: state.formPage, showDiffSinceLastCall: false }))[1]
       return await getCleanHTML({ ref, page: state.formPage, showDiffSinceLastCall: false })
@@ -250,7 +261,7 @@ describe('agent snapshot views', () => {
     expect(html.text).toContain('<button>Send</button>')
     // Covered with no dialog open: a hover-only control, reachable from the keyboard.
     const hover = await executor.execute(`
-      await state.formPage.setContent('<button>More</button><div role="dialog" aria-label="Details" style="position:fixed;inset:0"></div>')
+      await state.formPage.setContent('<button>More</button><div role="dialog" aria-label="Details" style="position:fixed;inset:0"></div><div role="dialog" aria-modal="true" aria-label="Closed" style="visibility:hidden;position:fixed;inset:0"></div>')
       await state.formPage.getByRole('button', { name: 'More' }).click({ timeout: 800 })
     `, { timeout: 10000 })
     // A side panel with the dialog role is not a modal: the hint must not blame it.

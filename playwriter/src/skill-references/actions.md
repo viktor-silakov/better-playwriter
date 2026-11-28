@@ -189,7 +189,7 @@ When something doesn't respond to a click, do NOT start inspecting CDP event lis
 4. Only investigate DOM internals if correct interaction patterns produce zero response after 2–3 attempts
 
 **13. Mail and chat apps**
-Text read from the page can start with icon-font and zero-width characters that `trim()` keeps: strip them before matching (`text.replace(/[^\p{L}\p{N}\p{P}\p{Z}]/gu, '').trim()`). After Delete a mail app opens the next message by itself, which can mark it read: leave the folder right away. Long lists render only the rows on screen and keep their scroll position. A message's menu button shows only on hover: focus it and press Enter.
+Text read from the page can start with icon-font and zero-width characters that `trim()` keeps: strip them before matching (`text.replace(/[^\p{L}\p{N}\p{P}\p{Z}]/gu, '').trim()`). After Delete a mail app opens the next message by itself, which can mark it read: leave the folder right away. Long lists render only the rows on screen and keep their scroll position. Selecting a row rebuilds the list, and a menu closes between calls: take the snapshot and click in the same execute, and open a menu and choose its item in the same execute. A message's menu button shows only on hover: focus it and press Enter once, then take a snapshot. Some chat apps open a reactions toolbar with a reaction focused instead of the menu: never press Enter again, click the toolbar's "More options" by ref.
 
 ## selector best practices
 

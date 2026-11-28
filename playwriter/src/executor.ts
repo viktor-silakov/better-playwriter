@@ -2172,11 +2172,13 @@ export class PlaywrightExecutor {
             if (!top || top === node || input.contains(top)) {
               return null
             }
-            // Only a cover that is part of this control: its label, or a sibling inside the same small wrapper.
+            // Only a cover that is part of this control: its label, a sibling inside the same small wrapper, or
+            // a cell around it (a file list's row-selection cell) that holds no other control.
             const inLabel = [...(input.labels ?? [])].some((label: any) => label.contains(top))
             const wrapper = input.parentElement
-            const inWrapper = wrapper && wrapper.contains(top) && wrapper.querySelectorAll('input,button,a[href],select,textarea').length === 1
-            return inLabel || inWrapper ? top : null
+            const scope = top.contains(node) ? top : wrapper && wrapper.contains(top) ? wrapper : null
+            const ownScope = scope && scope.querySelectorAll('input,button,a[href],select,textarea').length === 1
+            return inLabel || ownScope ? top : null
           }).then((handle) => handle.asElement()).catch(() => null)
           if (ownCover) {
             return await ownCover.click(clickOptions)
@@ -2846,7 +2848,7 @@ export class PlaywrightExecutor {
         // Snapshot roles come from Chrome. Playwright computes its own, and the two differ for some elements,
         // such as an editable div without a role.
         if (/Timeout \d+ms exceeded/.test(message) && /waiting for .*getByRole\(/.test(message)) {
-          return '\n\n[HINT: No element matched this role and name. If it came from a snapshot, act on its ref instead: elementForRef({ ref, page }). Chrome and Playwright can name the role differently.]'
+          return '\n\n[HINT: No element matched this role and name. If it came from a snapshot, act on its ref instead: elementForRef({ ref, page }). A line without a ref can be found by its name: page.getByLabel(name, { exact: true }). Chrome and Playwright can name the role differently.]'
         }
         if (/\b(?:Target|Page) crashed\b/i.test(message)) {
           return '\n\n[HINT: This tab crashed. Create a new tab with context.newPage(), replace the crashed reference in state, and navigate to the intended URL. Do not reset the session or repeat the last script: first check whether its actions completed.]'
@@ -2892,8 +2894,13 @@ export class PlaywrightExecutor {
       const name = await Promise.race([
         page.evaluate(() => {
           const doc = (globalThis as any).document
+          // Apps keep closed dialogs in the page: only one a person can see counts.
           const dialog = [...doc.querySelectorAll('[role=dialog][aria-modal=true],[role=alertdialog],dialog[open]')].find((element: any) => {
-            return element.getClientRects().length > 0
+            const shown = element.checkVisibility
+              ? element.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })
+              : element.getClientRects().length > 0
+            const box = element.getBoundingClientRect()
+            return shown && box.width > 0 && box.height > 0 && !element.closest('[aria-hidden="true"]')
           }) as any
           if (!dialog) {
             return undefined
